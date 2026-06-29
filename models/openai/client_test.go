@@ -72,7 +72,10 @@ func TestClientGeneratePostsResponses(t *testing.T) {
 		Input []struct {
 			Type    string `json:"type"`
 			Role    string `json:"role"`
-			Content string `json:"content"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
 		} `json:"input"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,11 +112,66 @@ func TestClientGeneratePostsResponses(t *testing.T) {
 	if got.Model != "test-model" || len(got.Input) != 1 || got.Input[0].Type != "message" || got.Input[0].Role != "user" {
 		t.Fatalf("request = %#v, want one user message", got)
 	}
+	if len(got.Input[0].Content) != 1 || got.Input[0].Content[0].Type != "input_text" || got.Input[0].Content[0].Text != "hi" {
+		t.Fatalf("content = %#v, want input_text hi", got.Input[0].Content)
+	}
 	if response.Message.Text() != "hello from responses" {
 		t.Fatalf("Message.Text() = %q, want responses text", response.Message.Text())
 	}
 	if response.Usage.TotalTokens != 3 {
 		t.Fatalf("Usage.TotalTokens = %d, want 3", response.Usage.TotalTokens)
+	}
+}
+
+func TestClientGenerateResponsesPostsImagePart(t *testing.T) {
+	var got struct {
+		Input []struct {
+			Content []struct {
+				Type     string `json:"type"`
+				Text     string `json:"text"`
+				ImageURL string `json:"image_url"`
+			} `json:"content"`
+		} `json:"input"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		_, _ = w.Write([]byte(`{"output_text": "saw it"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Options{
+		Provider: "openai",
+		BaseURL:  server.URL,
+		APIKey:   "token",
+		API:      APIResponses,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = client.Generate(context.Background(), gopact.ModelRequest{
+		Model: "test-model",
+		Messages: []gopact.Message{{
+			Role: gopact.RoleUser,
+			Parts: []gopact.ContentPart{
+				gopact.ImagePart("https://example.test/image.png", "image/png"),
+				gopact.TextPart("what is this?"),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if len(got.Input) != 1 || len(got.Input[0].Content) != 2 {
+		t.Fatalf("input = %#v, want two content parts", got.Input)
+	}
+	if got.Input[0].Content[0].Type != "input_image" || got.Input[0].Content[0].ImageURL != "https://example.test/image.png" {
+		t.Fatalf("image part = %#v, want input_image", got.Input[0].Content[0])
+	}
+	if got.Input[0].Content[1].Type != "input_text" || got.Input[0].Content[1].Text != "what is this?" {
+		t.Fatalf("text part = %#v, want input_text", got.Input[0].Content[1])
 	}
 }
 

@@ -234,14 +234,20 @@ type responsesRequest struct {
 }
 
 type responsesInputItem struct {
-	Type      string `json:"type"`
-	Role      string `json:"role,omitempty"`
-	Content   string `json:"content,omitempty"`
-	CallID    string `json:"call_id,omitempty"`
-	ID        string `json:"id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
-	Output    string `json:"output,omitempty"`
+	Type      string                  `json:"type"`
+	Role      string                  `json:"role,omitempty"`
+	Content   []responsesInputContent `json:"content,omitempty"`
+	CallID    string                  `json:"call_id,omitempty"`
+	ID        string                  `json:"id,omitempty"`
+	Name      string                  `json:"name,omitempty"`
+	Arguments string                  `json:"arguments,omitempty"`
+	Output    string                  `json:"output,omitempty"`
+}
+
+type responsesInputContent struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 type responsesTool struct {
@@ -395,11 +401,11 @@ func convertResponsesInput(messages []gopact.Message) []responsesInputItem {
 			})
 			continue
 		}
-		if text := message.Text(); text != "" || len(message.ToolCalls) == 0 {
+		if content := convertResponsesContent(message); len(content) > 0 || len(message.ToolCalls) == 0 {
 			converted = append(converted, responsesInputItem{
 				Type:    "message",
 				Role:    string(message.Role),
-				Content: text,
+				Content: content,
 			})
 		}
 		for _, toolCall := range message.ToolCalls {
@@ -410,6 +416,26 @@ func convertResponsesInput(messages []gopact.Message) []responsesInputItem {
 				Name:      toolCall.Name,
 				Arguments: string(toolCall.Arguments),
 			})
+		}
+	}
+	return converted
+}
+
+func convertResponsesContent(message gopact.Message) []responsesInputContent {
+	if len(message.Parts) == 0 {
+		if message.Content == "" {
+			return nil
+		}
+		return []responsesInputContent{{Type: "input_text", Text: message.Content}}
+	}
+
+	converted := make([]responsesInputContent, 0, len(message.Parts))
+	for _, part := range message.Parts {
+		switch part.Type {
+		case gopact.ContentPartText:
+			converted = append(converted, responsesInputContent{Type: "input_text", Text: part.Text})
+		case gopact.ContentPartImage:
+			converted = append(converted, responsesInputContent{Type: "input_image", ImageURL: part.URI})
 		}
 	}
 	return converted
