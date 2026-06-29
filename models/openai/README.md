@@ -5,7 +5,7 @@ OpenAI-shaped Chat Completions and Responses provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.4.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.0
 ```
 
 ## Usage
@@ -16,21 +16,22 @@ client, err := openai.NewClient(
 	"https://openrouter.ai/api/v1",
 	appSecrets.OpenRouterAPIKey,
 	openai.WithChatCompletionsAPI(),
-	openai.WithMaxOutputTokens(1024),
-	openai.WithThinkingType("enabled"),
-	openai.WithModel("openai/gpt-4o-mini"),
-	openai.EnableToolCalling(),
+	gopact.WithModel("openai/gpt-4o-mini"),
+	gopact.WithMaxOutputTokens(1024),
+	gopact.WithThinkingType("enabled"),
+	gopact.EnableToolCalling(),
 )
 if err != nil {
 	return err
 }
 
-response, err := client.Generate(ctx, gopact.ModelRequest{
-	Messages: []gopact.Message{{
+response, err := client.Generate(ctx, gopact.NewModelRequest(
+	gopact.WithMessages(gopact.Message{
 		Role:    gopact.RoleUser,
 		Content: "Say hello",
-	}},
-}, openai.WithTemperature(0.2))
+	}),
+	gopact.WithTemperature(0.2),
+))
 if err != nil {
 	return err
 }
@@ -46,7 +47,7 @@ Supported:
 - Chat Completions and Responses via `Generate`.
 - SSE streaming via `Stream` for Chat Completions and Responses.
 - Tool definitions, assistant `tool_calls`, and streamed function call arguments.
-- `MaxOutputTokens`, request `Budget.MaxOutputTokens`, `Temperature`, `TopP`, `ThinkingType`, and `ReasoningEffort` as client defaults or per-call options.
+- `gopact.ModelRequest` options for model, capabilities, budget, sampling, thinking, and reasoning parameters.
 - Text and image content parts for Responses requests.
 - Reasoning summaries mapped to `gopact.ContentPartReasoning`.
 - Usage metadata and provider error classification.

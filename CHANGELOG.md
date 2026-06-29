@@ -1,5 +1,16 @@
 # Changelog
 
+## models/openai/v0.5.0 - 2026-06-30
+
+- Require `github.com/gopact-ai/gopact v0.0.3` and align provider calls with `gopact.ModelRequestOption`.
+- Remove OpenAI request-option aliases such as `openai.WithTemperature`; use `gopact.NewModelRequest` and `gopact.WithTemperature` for per-call parameters.
+- Keep OpenAI-specific options focused on API/client behavior such as `WithResponsesAPI`, `WithChatCompletionsAPI`, and `WithHTTPClient`.
+- Change `Generate` and `Stream` to accept a complete `gopact.ModelRequest` without trailing request options.
+
+## models/ark/v0.2.0 - 2026-06-30
+
+- Require `github.com/gopact-ai/gopact v0.0.3` and update the provider contract to accept complete `gopact.ModelRequest` values.
+
 ## models/openai/v0.4.0 - 2026-06-30
 
 - Require `github.com/gopact-ai/gopact v0.0.2` and use core `gopact.ModelOption` for client defaults and per-call overrides.

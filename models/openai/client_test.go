@@ -35,7 +35,7 @@ func TestClientGeneratePostsChatCompletion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient("openrouter", server.URL, "token", WithModel("test-model"))
+	client, err := NewClient("openrouter", server.URL, "token", gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -89,7 +89,7 @@ func TestClientGeneratePostsResponses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), WithModel("test-model"))
+	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -164,12 +164,12 @@ func TestClientGeneratePostsParameters(t *testing.T) {
 				server.URL,
 				"token",
 				WithAPI(tt.api),
-				WithModel("test-model"),
-				WithMaxOutputTokens(99),
-				WithTemperature(temp),
-				WithTopP(topP),
-				WithThinkingType("enabled"),
-				WithReasoningEffort("high"),
+				gopact.WithModel("test-model"),
+				gopact.WithMaxOutputTokens(99),
+				gopact.WithTemperature(temp),
+				gopact.WithTopP(topP),
+				gopact.WithThinkingType("enabled"),
+				gopact.WithReasoningEffort("high"),
 			)
 			if err != nil {
 				t.Fatalf("NewClient() error = %v", err)
@@ -229,14 +229,14 @@ func TestNewClientAppliesFeatureOptions(t *testing.T) {
 		server.URL,
 		"token",
 		WithResponsesAPI(),
-		WithMaxOutputTokens(9),
-		WithTemperature(0.2),
-		WithTopP(0.8),
-		WithThinkingType("enabled"),
-		WithReasoningEffort("high"),
-		WithModel("ep-test"),
-		EnableToolCalling(),
-		EnableReasoning(),
+		gopact.WithMaxOutputTokens(9),
+		gopact.WithTemperature(0.2),
+		gopact.WithTopP(0.8),
+		gopact.WithThinkingType("enabled"),
+		gopact.WithReasoningEffort("high"),
+		gopact.WithModel("ep-test"),
+		gopact.EnableToolCalling(),
+		gopact.EnableReasoning(),
 	)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -274,8 +274,8 @@ func TestWithModelUsesClientProvider(t *testing.T) {
 		ProviderArk,
 		"https://example.test",
 		"token",
-		WithModel("ep-test"),
-		EnableStreaming(),
+		gopact.WithModel("ep-test"),
+		gopact.EnableStreaming(),
 	)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -292,7 +292,7 @@ func TestWithModelUsesClientProvider(t *testing.T) {
 	if model.Name != "ep-test" || model.Provider != ProviderArk {
 		t.Fatalf("model = %#v, want ark ep-test", model)
 	}
-	if len(model.Capabilities) != 1 || model.Capabilities[0] != CapabilityStreaming {
+	if len(model.Capabilities) != 1 || model.Capabilities[0] != gopact.CapabilityStreaming {
 		t.Fatalf("capabilities = %#v, want streaming", model.Capabilities)
 	}
 }
@@ -322,16 +322,18 @@ func TestStreamUsesDefaultModelAndCallParameters(t *testing.T) {
 		server.URL,
 		"token",
 		WithResponsesAPI(),
-		WithModel("ep-default"),
-		WithTemperature(0.2),
+		gopact.WithModel("ep-default"),
+		gopact.WithTemperature(0.2),
 	)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	events := collectStream(t, client, gopact.ModelRequest{
-		Messages: []gopact.Message{{Role: gopact.RoleUser, Content: "hi"}},
-	}, WithMaxOutputTokens(7), WithTemperature(0.4))
+	events := collectStream(t, client, gopact.NewModelRequest(
+		gopact.WithMessages(gopact.Message{Role: gopact.RoleUser, Content: "hi"}),
+		gopact.WithMaxOutputTokens(7),
+		gopact.WithTemperature(0.4),
+	))
 	if got.Model != "ep-default" {
 		t.Fatalf("model = %q, want default model", got.Model)
 	}
@@ -367,7 +369,7 @@ func TestClientGenerateResponsesPostsImagePart(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), WithModel("test-model"))
+	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -418,7 +420,7 @@ func TestClientStreamChatCompletions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithModel("test-model"))
+	client, err := NewClient(ProviderOpenAI, server.URL, "token", gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -455,7 +457,7 @@ func TestClientStreamResponses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), WithModel("test-model"))
+	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -513,7 +515,7 @@ func TestClientGenerateRoundTripsToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient("openrouter", server.URL, "token", WithModel("test-model"))
+	client, err := NewClient("openrouter", server.URL, "token", gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -549,10 +551,10 @@ func TestClientGenerateRoundTripsToolCalls(t *testing.T) {
 	}
 }
 
-func collectStream(t *testing.T, client *Client, req gopact.ModelRequest, opts ...gopact.ModelOption) []gopact.Event {
+func collectStream(t *testing.T, client *Client, req gopact.ModelRequest) []gopact.Event {
 	t.Helper()
 	var events []gopact.Event
-	for event, err := range client.Stream(context.Background(), req, opts...) {
+	for event, err := range client.Stream(context.Background(), req) {
 		if err != nil {
 			t.Fatalf("Stream() error = %v", err)
 		}
@@ -588,7 +590,7 @@ func TestClientGenerateResponsesRoundTripsToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), WithModel("test-model"))
+	client, err := NewClient(ProviderOpenAI, server.URL, "token", WithResponsesAPI(), gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -633,12 +635,12 @@ func TestClientRejectsInvalidOptions(t *testing.T) {
 		provider string
 		baseURL  string
 		apiKey   string
-		opts     []gopact.ModelOption
+		opts     []gopact.ModelRequestOption
 	}{
 		{name: "missing provider", baseURL: "https://example.com", apiKey: "token"},
 		{name: "missing base url", provider: ProviderOpenAI, apiKey: "token"},
 		{name: "missing api key", provider: ProviderOpenAI, baseURL: "https://example.com"},
-		{name: "unsupported api", provider: ProviderOpenAI, baseURL: "https://example.com", apiKey: "token", opts: []gopact.ModelOption{WithAPI("legacy_completions")}},
+		{name: "unsupported api", provider: ProviderOpenAI, baseURL: "https://example.com", apiKey: "token", opts: []gopact.ModelRequestOption{WithAPI("legacy_completions")}},
 	}
 
 	for _, tt := range tests {
@@ -656,7 +658,7 @@ func TestClientGenerateReturnsProviderErrorForNonOKResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient("openrouter", server.URL, "token", WithModel("test-model"))
+	client, err := NewClient("openrouter", server.URL, "token", gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -689,7 +691,7 @@ func TestClientProviderConformance(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient("openrouter", server.URL, "token", WithModel("test-model"))
+	client, err := NewClient("openrouter", server.URL, "token", gopact.WithModel("test-model"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
