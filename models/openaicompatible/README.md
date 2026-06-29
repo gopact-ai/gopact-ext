@@ -5,7 +5,7 @@ OpenAI-compatible Chat Completions provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openaicompatible
+go get github.com/gopact-ai/gopact-ext/models/openaicompatible@v0.1.0
 ```
 
 ## Usage
@@ -39,3 +39,14 @@ fmt.Println(response.Message.Text())
 ```
 
 `BaseURL` should point at an OpenAI-compatible `/v1` API root. The adapter posts to `BaseURL + "/chat/completions"`.
+
+## v0.1.0 Scope
+
+Supported:
+
+- Non-streaming Chat Completions via `Generate`.
+- Tool definitions and assistant `tool_calls`.
+- Usage metadata and provider error classification.
+- Provider conformance tests.
+
+`Stream` currently emits one final model message event by calling `Generate`; true SSE streaming is intentionally left for a later release.
