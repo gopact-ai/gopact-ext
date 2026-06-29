@@ -1,5 +1,5 @@
-// Package openaicompatible adapts OpenAI-compatible chat completion APIs.
-package openaicompatible
+// Package openai adapts OpenAI-shaped chat completion APIs.
+package openai
 
 import (
 	"bytes"
@@ -38,17 +38,17 @@ type Client struct {
 // New creates an OpenAI-compatible provider client.
 func New(opts Options) (*Client, error) {
 	if opts.Provider == "" {
-		return nil, errors.New("openaicompatible: provider is required")
+		return nil, errors.New("openai: provider is required")
 	}
 	if opts.BaseURL == "" {
-		return nil, errors.New("openaicompatible: base url is required")
+		return nil, errors.New("openai: base url is required")
 	}
 	if opts.APIKey == "" {
-		return nil, errors.New("openaicompatible: api key is required")
+		return nil, errors.New("openai: api key is required")
 	}
 	parsed, err := url.Parse(opts.BaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("openaicompatible: parse base url: %w", err)
+		return nil, fmt.Errorf("openai: parse base url: %w", err)
 	}
 	client := opts.HTTPClient
 	if client == nil {
@@ -82,7 +82,7 @@ func (c *Client) Models(ctx context.Context) ([]provider.ModelInfo, error) {
 
 func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.ModelResponse, error) {
 	if c == nil {
-		return gopact.ModelResponse{}, errors.New("openaicompatible: client is nil")
+		return gopact.ModelResponse{}, errors.New("openai: client is nil")
 	}
 	if err := ctx.Err(); err != nil {
 		return gopact.ModelResponse{}, err
@@ -95,12 +95,12 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return gopact.ModelResponse{}, fmt.Errorf("openaicompatible: marshal request: %w", err)
+		return gopact.ModelResponse{}, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return gopact.ModelResponse{}, fmt.Errorf("openaicompatible: create request: %w", err)
+		return gopact.ModelResponse{}, fmt.Errorf("openai: create request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -115,7 +115,7 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return gopact.ModelResponse{}, fmt.Errorf("openaicompatible: read response: %w", err)
+		return gopact.ModelResponse{}, fmt.Errorf("openai: read response: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return gopact.ModelResponse{}, provider.NewError(classForStatus(resp.StatusCode), errors.New(strings.TrimSpace(string(respBody))), provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
@@ -123,7 +123,7 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 
 	var decoded chatCompletionResponse
 	if err := json.Unmarshal(respBody, &decoded); err != nil {
-		return gopact.ModelResponse{}, fmt.Errorf("openaicompatible: decode response: %w", err)
+		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: %w", err)
 	}
 	if len(decoded.Choices) == 0 {
 		return gopact.ModelResponse{}, provider.NewError(provider.ErrorUnavailable, errors.New("empty choices"), provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))

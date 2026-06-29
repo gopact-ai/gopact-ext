@@ -6,20 +6,20 @@ This repository uses one Git repo with separate Go modules per extension, so use
 
 ## Modules
 
-- `models/openaicompatible`: OpenAI-compatible Chat Completions provider adapter.
+- `models/openai`: OpenAI-shaped Chat Completions provider adapter.
 
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openaicompatible@v0.1.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.1.0
 ```
 
-Extension modules are versioned with Go submodule tags such as `models/openaicompatible/v0.1.0`.
+Extension modules are versioned with Go submodule tags such as `models/openai/v0.1.0`.
 
 ## Development
 
 ```bash
 git diff --check
-go test -count=1 ./models/openaicompatible/...
-go vet ./models/openaicompatible/...
+go test -count=1 ./models/openai/...
+go vet ./models/openai/...
 ```

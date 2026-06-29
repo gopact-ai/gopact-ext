@@ -1,17 +1,17 @@
-# openaicompatible
+# openai
 
-OpenAI-compatible Chat Completions provider adapter for `gopact`.
+OpenAI-shaped Chat Completions provider adapter for `gopact`.
 
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openaicompatible@v0.1.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.1.0
 ```
 
 ## Usage
 
 ```go
-client, err := openaicompatible.New(openaicompatible.Options{
+client, err := openai.New(openai.Options{
 	Provider: "openrouter",
 	BaseURL:  "https://openrouter.ai/api/v1",
 	APIKey:   appSecrets.OpenRouterAPIKey,
