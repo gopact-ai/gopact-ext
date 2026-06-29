@@ -5,17 +5,19 @@ OpenAI-shaped Chat Completions and Responses provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.2.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.3.0
 ```
 
 ## Usage
 
 ```go
 client, err := openai.New(openai.Options{
-	Provider: "openrouter",
-	BaseURL:  "https://openrouter.ai/api/v1",
-	APIKey:   appSecrets.OpenRouterAPIKey,
-	API:      openai.APIChatCompletions,
+	Provider:        "openrouter",
+	BaseURL:         "https://openrouter.ai/api/v1",
+	APIKey:          appSecrets.OpenRouterAPIKey,
+	API:             openai.APIChatCompletions,
+	MaxOutputTokens: 1024,
+	ThinkingType:    "enabled",
 	Models: []provider.ModelInfo{{
 		Name:         "openai/gpt-4o-mini",
 		Provider:     "openrouter",
@@ -45,9 +47,11 @@ fmt.Println(response.Message.Text())
 
 Supported:
 
-- Non-streaming Chat Completions and Responses via `Generate`.
-- Tool definitions and assistant `tool_calls`.
+- Chat Completions and Responses via `Generate`.
+- SSE streaming via `Stream` for Chat Completions and Responses.
+- Tool definitions, assistant `tool_calls`, and streamed function call arguments.
+- `MaxOutputTokens`, request `Budget.MaxOutputTokens`, `Temperature`, `TopP`, `ThinkingType`, and `ReasoningEffort`.
+- Text and image content parts for Responses requests.
+- Reasoning summaries mapped to `gopact.ContentPartReasoning`.
 - Usage metadata and provider error classification.
 - Provider conformance tests.
-
-`Stream` currently emits one final model message event by calling `Generate`; true SSE streaming is intentionally left for a later release.

@@ -86,7 +86,10 @@ func TestClientGeneratePostsResponses(t *testing.T) {
 			t.Fatalf("Decode() error = %v", err)
 		}
 		_, _ = w.Write([]byte(`{
-			"output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello from responses"}]}],
+			"output": [
+				{"type": "reasoning", "summary": [{"type": "summary_text", "text": "thought briefly"}]},
+				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello from responses"}]}
+			],
 			"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}
 		}`))
 	}))
@@ -118,8 +121,95 @@ func TestClientGeneratePostsResponses(t *testing.T) {
 	if response.Message.Text() != "hello from responses" {
 		t.Fatalf("Message.Text() = %q, want responses text", response.Message.Text())
 	}
+	if len(response.Message.Parts) != 2 || response.Message.Parts[0].Type != gopact.ContentPartReasoning || response.Message.Parts[0].Text != "thought briefly" {
+		t.Fatalf("Message.Parts = %#v, want reasoning then text", response.Message.Parts)
+	}
 	if response.Usage.TotalTokens != 3 {
 		t.Fatalf("Usage.TotalTokens = %d, want 3", response.Usage.TotalTokens)
+	}
+}
+
+func TestClientGeneratePostsParameters(t *testing.T) {
+	temp := 0.2
+	topP := 0.9
+	tests := []struct {
+		name string
+		api  API
+		path string
+	}{
+		{name: "chat completions", api: APIChatCompletions, path: "/chat/completions"},
+		{name: "responses", api: APIResponses, path: "/responses"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got struct {
+				MaxTokens       *int     `json:"max_tokens"`
+				MaxOutputTokens *int     `json:"max_output_tokens"`
+				Temperature     *float64 `json:"temperature"`
+				TopP            *float64 `json:"top_p"`
+				Thinking        *struct {
+					Type string `json:"type"`
+				} `json:"thinking"`
+				ReasoningEffort string `json:"reasoning_effort"`
+				Reasoning       *struct {
+					Effort string `json:"effort"`
+				} `json:"reasoning"`
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.path {
+					t.Fatalf("path = %q, want %s", r.URL.Path, tt.path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatalf("Decode() error = %v", err)
+				}
+				if tt.api == APIResponses {
+					_, _ = w.Write([]byte(`{"output_text": "ok"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"choices": [{"message": {"role": "assistant", "content": "ok"}}]}`))
+			}))
+			defer server.Close()
+
+			client, err := New(Options{
+				Provider:        "openai",
+				BaseURL:         server.URL,
+				APIKey:          "token",
+				API:             tt.api,
+				MaxOutputTokens: 99,
+				Temperature:     &temp,
+				TopP:            &topP,
+				ThinkingType:    "enabled",
+				ReasoningEffort: "high",
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			_, err = client.Generate(context.Background(), gopact.ModelRequest{
+				Model:    "test-model",
+				Messages: []gopact.Message{{Role: gopact.RoleUser, Content: "hi"}},
+				Budget:   gopact.Budget{MaxOutputTokens: 7},
+			})
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			if got.Temperature == nil || *got.Temperature != temp || got.TopP == nil || *got.TopP != topP {
+				t.Fatalf("sampling params = temperature %#v top_p %#v, want %v/%v", got.Temperature, got.TopP, temp, topP)
+			}
+			if got.Thinking == nil || got.Thinking.Type != "enabled" {
+				t.Fatalf("thinking = %#v, want enabled", got.Thinking)
+			}
+			if tt.api == APIResponses {
+				if got.MaxOutputTokens == nil || *got.MaxOutputTokens != 7 || got.Reasoning == nil || got.Reasoning.Effort != "high" {
+					t.Fatalf("responses params = %#v reasoning %#v, want max_output_tokens 7 and high", got.MaxOutputTokens, got.Reasoning)
+				}
+				return
+			}
+			if got.MaxTokens == nil || *got.MaxTokens != 7 || got.ReasoningEffort != "high" {
+				t.Fatalf("chat params = %#v reasoning_effort %q, want max_tokens 7 and high", got.MaxTokens, got.ReasoningEffort)
+			}
+		})
 	}
 }
 
@@ -172,6 +262,89 @@ func TestClientGenerateResponsesPostsImagePart(t *testing.T) {
 	}
 	if got.Input[0].Content[1].Type != "input_text" || got.Input[0].Content[1].Text != "what is this?" {
 		t.Fatalf("text part = %#v, want input_text", got.Input[0].Content[1])
+	}
+}
+
+func TestClientStreamChatCompletions(t *testing.T) {
+	var got struct {
+		Stream        bool `json:"stream"`
+		StreamOptions struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\":\\\"\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"docs\\\"}\"}}]}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := New(Options{Provider: "openai", BaseURL: server.URL, APIKey: "token"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	events := collectStream(t, client, gopact.ModelRequest{Model: "test-model"})
+	if !got.Stream || !got.StreamOptions.IncludeUsage {
+		t.Fatalf("stream request = %#v, want stream with usage", got)
+	}
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+	if events[0].Message.Text() != "hel" || events[1].Message.Text() != "lo" {
+		t.Fatalf("stream text = %q %q, want hel lo", events[0].Message.Text(), events[1].Message.Text())
+	}
+	if len(events[2].Message.ToolCalls) != 1 || string(events[2].Message.ToolCalls[0].Arguments) != `{"q":"docs"}` {
+		t.Fatalf("tool event = %#v, want search call", events[2].Message)
+	}
+	if events[2].Usage == nil || events[2].Usage.TotalTokens != 3 {
+		t.Fatalf("usage = %#v, want total 3", events[2].Usage)
+	}
+}
+
+func TestClientStreamResponses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("path = %q, want /responses", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"think\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"search\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{\\\"q\\\":\\\"docs\\\"}\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := New(Options{Provider: "openai", BaseURL: server.URL, APIKey: "token", API: APIResponses})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	events := collectStream(t, client, gopact.ModelRequest{Model: "test-model"})
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+	if len(events[0].Message.Parts) != 1 || events[0].Message.Parts[0].Type != gopact.ContentPartReasoning || events[0].Message.Parts[0].Text != "think" {
+		t.Fatalf("reasoning event = %#v, want reasoning delta", events[0].Message)
+	}
+	if events[1].Message.Text() != "hi" {
+		t.Fatalf("text event = %q, want hi", events[1].Message.Text())
+	}
+	if len(events[2].Message.ToolCalls) != 1 || events[2].Message.ToolCalls[0].ID != "call_1" || string(events[2].Message.ToolCalls[0].Arguments) != `{"q":"docs"}` {
+		t.Fatalf("tool event = %#v, want search call", events[2].Message)
+	}
+	if events[2].Usage == nil || events[2].Usage.TotalTokens != 3 {
+		t.Fatalf("usage = %#v, want total 3", events[2].Usage)
 	}
 }
 
@@ -249,6 +422,18 @@ func TestClientGenerateRoundTripsToolCalls(t *testing.T) {
 	if responseCall.ID != "call_2" || responseCall.Name != "search" || string(responseCall.Arguments) != `{"q":"docs"}` {
 		t.Fatalf("response tool call = %#v, want search call with raw arguments", responseCall)
 	}
+}
+
+func collectStream(t *testing.T, client *Client, req gopact.ModelRequest) []gopact.Event {
+	t.Helper()
+	var events []gopact.Event
+	for event, err := range client.Stream(context.Background(), req) {
+		if err != nil {
+			t.Fatalf("Stream() error = %v", err)
+		}
+		events = append(events, event)
+	}
+	return events
 }
 
 func TestClientGenerateResponsesRoundTripsToolCalls(t *testing.T) {
@@ -365,7 +550,21 @@ func TestClientGenerateReturnsProviderErrorForNonOKResponse(t *testing.T) {
 }
 
 func TestClientProviderConformance(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("Decode() error = %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			return
+		}
 		_, _ = w.Write([]byte(`{
 			"choices": [{"message": {"role": "assistant", "content": "hello"}}]
 		}`))

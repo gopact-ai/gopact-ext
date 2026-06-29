@@ -12,11 +12,11 @@ This repository uses one Git repo with separate Go modules per extension, so use
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.2.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.3.0
 go get github.com/gopact-ai/gopact-ext/models/ark@v0.1.0
 ```
 
-Extension modules are versioned with Go submodule tags such as `models/openai/v0.2.0`.
+Extension modules are versioned with Go submodule tags such as `models/openai/v0.3.0`.
 
 ## Development
 

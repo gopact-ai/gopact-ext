@@ -2,6 +2,7 @@
 package openai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/gopact-ai/gopact"
@@ -19,12 +21,17 @@ import (
 
 // Options configures an OpenAI-compatible provider client.
 type Options struct {
-	Provider   string
-	BaseURL    string
-	APIKey     string
-	API        API
-	HTTPClient *http.Client
-	Models     []provider.ModelInfo
+	Provider        string
+	BaseURL         string
+	APIKey          string
+	API             API
+	MaxOutputTokens int
+	Temperature     *float64
+	TopP            *float64
+	ThinkingType    string
+	ReasoningEffort string
+	HTTPClient      *http.Client
+	Models          []provider.ModelInfo
 }
 
 // API selects the OpenAI API surface used by Generate.
@@ -41,8 +48,17 @@ type Client struct {
 	baseURL    string
 	apiKey     string
 	api        API
+	params     requestParams
 	httpClient *http.Client
 	models     []provider.ModelInfo
+}
+
+type requestParams struct {
+	maxOutputTokens int
+	temperature     *float64
+	topP            *float64
+	thinkingType    string
+	reasoningEffort string
 }
 
 // New creates an OpenAI-compatible provider client.
@@ -72,10 +88,17 @@ func New(opts Options) (*Client, error) {
 		client = http.DefaultClient
 	}
 	return &Client{
-		provider:   opts.Provider,
-		baseURL:    strings.TrimRight(parsed.String(), "/"),
-		apiKey:     opts.APIKey,
-		api:        api,
+		provider: opts.Provider,
+		baseURL:  strings.TrimRight(parsed.String(), "/"),
+		apiKey:   opts.APIKey,
+		api:      api,
+		params: requestParams{
+			maxOutputTokens: opts.MaxOutputTokens,
+			temperature:     opts.Temperature,
+			topP:            opts.TopP,
+			thinkingType:    opts.ThinkingType,
+			reasoningEffort: opts.ReasoningEffort,
+		},
 		httpClient: client,
 		models:     append([]provider.ModelInfo(nil), opts.Models...),
 	}, nil
@@ -106,7 +129,7 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 		return gopact.ModelResponse{}, err
 	}
 
-	path, body, err := c.marshalRequest(req)
+	path, body, err := c.marshalRequest(req, false)
 	if err != nil {
 		return gopact.ModelResponse{}, err
 	}
@@ -137,22 +160,73 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 	return c.decodeResponse(respBody, req.Model)
 }
 
-func (c *Client) marshalRequest(req gopact.ModelRequest) (string, []byte, error) {
+func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, []byte, error) {
 	if c.api == APIResponses {
 		body, err := json.Marshal(responsesRequest{
-			Model: req.Model,
-			Input: convertResponsesInput(req.Messages),
-			Tools: convertResponsesTools(req.Tools),
+			Model:           req.Model,
+			Input:           convertResponsesInput(req.Messages),
+			Tools:           convertResponsesTools(req.Tools),
+			MaxOutputTokens: c.maxOutputTokens(req),
+			Temperature:     c.params.temperature,
+			TopP:            c.params.topP,
+			Stream:          boolPtr(stream),
+			Thinking:        thinkingConfig(c.params.thinkingType),
+			Reasoning:       reasoningConfig(c.params.reasoningEffort),
 		})
 		return "/responses", body, wrapMarshalErr(err)
 	}
 
 	body, err := json.Marshal(chatCompletionRequest{
-		Model:    req.Model,
-		Messages: convertMessages(req.Messages),
-		Tools:    convertTools(req.Tools),
+		Model:           req.Model,
+		Messages:        convertMessages(req.Messages),
+		Tools:           convertTools(req.Tools),
+		MaxTokens:       c.maxOutputTokens(req),
+		Temperature:     c.params.temperature,
+		TopP:            c.params.topP,
+		Stream:          boolPtr(stream),
+		StreamOptions:   streamOptions(stream),
+		Thinking:        thinkingConfig(c.params.thinkingType),
+		ReasoningEffort: c.params.reasoningEffort,
 	})
 	return "/chat/completions", body, wrapMarshalErr(err)
+}
+
+func (c *Client) maxOutputTokens(req gopact.ModelRequest) *int {
+	if req.Budget.MaxOutputTokens > 0 {
+		return &req.Budget.MaxOutputTokens
+	}
+	if c.params.maxOutputTokens > 0 {
+		return &c.params.maxOutputTokens
+	}
+	return nil
+}
+
+func boolPtr(v bool) *bool {
+	if !v {
+		return nil
+	}
+	return &v
+}
+
+func thinkingConfig(thinkingType string) *thinking {
+	if thinkingType == "" {
+		return nil
+	}
+	return &thinking{Type: thinkingType}
+}
+
+func reasoningConfig(effort string) *reasoning {
+	if effort == "" {
+		return nil
+	}
+	return &reasoning{Effort: effort}
+}
+
+func streamOptions(stream bool) *chatStreamOptions {
+	if !stream {
+		return nil
+	}
+	return &chatStreamOptions{IncludeUsage: true}
 }
 
 func wrapMarshalErr(err error) error {
@@ -171,27 +245,84 @@ func (c *Client) decodeResponse(body []byte, model string) (gopact.ModelResponse
 
 func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
-		response, err := c.Generate(ctx, req)
+		if c == nil {
+			err := errors.New("openai: client is nil")
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+			return
+		}
+
+		path, body, err := c.marshalRequest(req, true)
 		if err != nil {
 			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 			return
 		}
-		yield(gopact.Event{Type: gopact.EventModelMessage, IDs: req.IDs, Message: &response.Message, Usage: &response.Usage}, nil)
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+		if err != nil {
+			err = fmt.Errorf("openai: create request: %w", err)
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+			return
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			err = provider.NewError(provider.ErrorUnavailable, err, provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+			return
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+			if readErr != nil {
+				err = fmt.Errorf("openai: read response: %w", readErr)
+			} else {
+				err = provider.NewError(classForStatus(resp.StatusCode), errors.New(strings.TrimSpace(string(respBody))), provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
+			}
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+			return
+		}
+
+		var streamErr error
+		if c.api == APIResponses {
+			streamErr = c.streamResponses(resp.Body, req, yield)
+		} else {
+			streamErr = c.streamChatCompletions(resp.Body, req, yield)
+		}
+		if streamErr != nil {
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: streamErr}, streamErr)
+		}
 	}
 }
 
 type chatCompletionRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-	Tools    []chatTool    `json:"tools,omitempty"`
+	Model           string             `json:"model"`
+	Messages        []chatMessage      `json:"messages"`
+	Tools           []chatTool         `json:"tools,omitempty"`
+	MaxTokens       *int               `json:"max_tokens,omitempty"`
+	Temperature     *float64           `json:"temperature,omitempty"`
+	TopP            *float64           `json:"top_p,omitempty"`
+	Stream          *bool              `json:"stream,omitempty"`
+	StreamOptions   *chatStreamOptions `json:"stream_options,omitempty"`
+	Thinking        *thinking          `json:"thinking,omitempty"`
+	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
 }
 
 type chatMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
-	Name       string         `json:"name,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	Role             string         `json:"role"`
+	Content          string         `json:"content,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	Name             string         `json:"name,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
 }
 
 type chatTool struct {
@@ -216,6 +347,18 @@ type chatToolCallFunction struct {
 	Arguments string `json:"arguments"`
 }
 
+type chatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
+}
+
+type thinking struct {
+	Type string `json:"type"`
+}
+
+type reasoning struct {
+	Effort string `json:"effort,omitempty"`
+}
+
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
@@ -227,10 +370,46 @@ type chatCompletionResponse struct {
 	} `json:"usage"`
 }
 
+type chatCompletionStreamResponse struct {
+	Choices []struct {
+		Delta        chatStreamDelta `json:"delta"`
+		FinishReason string          `json:"finish_reason"`
+	} `json:"choices"`
+	Usage usage `json:"usage"`
+}
+
+type chatStreamDelta struct {
+	Role             string              `json:"role"`
+	Content          string              `json:"content"`
+	ReasoningContent string              `json:"reasoning_content"`
+	ToolCalls        []chatToolCallDelta `json:"tool_calls"`
+}
+
+type chatToolCallDelta struct {
+	Index    int                  `json:"index"`
+	ID       string               `json:"id"`
+	Type     string               `json:"type"`
+	Function chatToolCallFunction `json:"function"`
+}
+
+type usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+}
+
 type responsesRequest struct {
-	Model string               `json:"model"`
-	Input []responsesInputItem `json:"input"`
-	Tools []responsesTool      `json:"tools,omitempty"`
+	Model           string               `json:"model"`
+	Input           []responsesInputItem `json:"input"`
+	Tools           []responsesTool      `json:"tools,omitempty"`
+	MaxOutputTokens *int                 `json:"max_output_tokens,omitempty"`
+	Temperature     *float64             `json:"temperature,omitempty"`
+	TopP            *float64             `json:"top_p,omitempty"`
+	Stream          *bool                `json:"stream,omitempty"`
+	Thinking        *thinking            `json:"thinking,omitempty"`
+	Reasoning       *reasoning           `json:"reasoning,omitempty"`
 }
 
 type responsesInputItem struct {
@@ -271,6 +450,7 @@ type responsesOutputItem struct {
 	Type      string                   `json:"type"`
 	Role      string                   `json:"role,omitempty"`
 	Content   []responsesOutputContent `json:"content,omitempty"`
+	Summary   []responsesOutputContent `json:"summary,omitempty"`
 	CallID    string                   `json:"call_id,omitempty"`
 	ID        string                   `json:"id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
@@ -280,6 +460,14 @@ type responsesOutputItem struct {
 type responsesOutputContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+type responsesStreamEvent struct {
+	Type        string              `json:"type"`
+	Delta       string              `json:"delta"`
+	OutputIndex int                 `json:"output_index"`
+	Item        responsesOutputItem `json:"item"`
+	Response    responsesResponse   `json:"response"`
 }
 
 func decodeChatCompletionResponse(body []byte, providerName, model string) (gopact.ModelResponse, error) {
@@ -307,7 +495,7 @@ func decodeResponsesResponse(body []byte) (gopact.ModelResponse, error) {
 		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: %w", err)
 	}
 
-	message := gopact.Message{Role: gopact.RoleAssistant, Content: decoded.responsesText()}
+	message := messageWithParts(gopact.RoleAssistant, decoded.responsesText(), decoded.responsesReasoning())
 	for _, item := range decoded.Output {
 		if item.Type != "function_call" {
 			continue
@@ -348,18 +536,56 @@ func (r responsesResponse) responsesText() string {
 	return b.String()
 }
 
+func (r responsesResponse) responsesReasoning() string {
+	var b strings.Builder
+	for _, item := range r.Output {
+		if item.Type != "reasoning" {
+			continue
+		}
+		for _, content := range item.Summary {
+			if content.Type == "summary_text" || content.Type == "text" {
+				b.WriteString(content.Text)
+			}
+		}
+	}
+	return b.String()
+}
+
+func messageWithParts(role gopact.Role, text, reasoning string) gopact.Message {
+	message := gopact.Message{Role: role, Content: text}
+	if reasoning == "" {
+		return message
+	}
+	message.Parts = []gopact.ContentPart{gopact.ReasoningPart(reasoning)}
+	if text != "" {
+		message.Parts = append(message.Parts, gopact.TextPart(text))
+	}
+	return message
+}
+
 func convertMessages(messages []gopact.Message) []chatMessage {
 	converted := make([]chatMessage, 0, len(messages))
 	for _, message := range messages {
 		converted = append(converted, chatMessage{
-			Role:       string(message.Role),
-			Content:    message.Text(),
-			Name:       message.Name,
-			ToolCallID: message.ToolCallID,
-			ToolCalls:  convertToolCalls(message.ToolCalls),
+			Role:             string(message.Role),
+			Content:          message.Text(),
+			ReasoningContent: reasoningText(message),
+			Name:             message.Name,
+			ToolCallID:       message.ToolCallID,
+			ToolCalls:        convertToolCalls(message.ToolCalls),
 		})
 	}
 	return converted
+}
+
+func reasoningText(message gopact.Message) string {
+	var b strings.Builder
+	for _, part := range message.Parts {
+		if part.Type == gopact.ContentPartReasoning {
+			b.WriteString(part.Text)
+		}
+	}
+	return b.String()
 }
 
 func convertTools(tools []gopact.ToolSpec) []chatTool {
@@ -457,13 +683,11 @@ func convertToolCalls(toolCalls []gopact.ToolCall) []chatToolCall {
 }
 
 func (m chatMessage) toGopact() gopact.Message {
-	return gopact.Message{
-		Role:       gopact.Role(m.Role),
-		Content:    m.Content,
-		Name:       m.Name,
-		ToolCallID: m.ToolCallID,
-		ToolCalls:  m.toGopactToolCalls(),
-	}
+	message := messageWithParts(gopact.Role(m.Role), m.Content, m.ReasoningContent)
+	message.Name = m.Name
+	message.ToolCallID = m.ToolCallID
+	message.ToolCalls = m.toGopactToolCalls()
+	return message
 }
 
 func (m chatMessage) toGopactToolCalls() []gopact.ToolCall {
@@ -476,6 +700,259 @@ func (m chatMessage) toGopactToolCalls() []gopact.ToolCall {
 		})
 	}
 	return converted
+}
+
+func (c *Client) streamChatCompletions(body io.Reader, req gopact.ModelRequest, yield func(gopact.Event, error) bool) error {
+	tools := map[int]*toolCallAccumulator{}
+	var lastUsage gopact.Usage
+	var keepGoing = true
+
+	err := scanSSE(body, func(data []byte) bool {
+		var chunk chatCompletionStreamResponse
+		if err := json.Unmarshal(data, &chunk); err != nil {
+			return yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+		}
+		if usage := toUsage(chunk.Usage); usage.TotalTokens > 0 {
+			lastUsage = usage
+		}
+		for _, choice := range chunk.Choices {
+			delta := choice.Delta
+			if delta.ReasoningContent != "" {
+				keepGoing = yieldMessage(req, messageWithParts(gopact.RoleAssistant, "", delta.ReasoningContent), nil, yield)
+				if !keepGoing {
+					return false
+				}
+			}
+			if delta.Content != "" {
+				keepGoing = yieldMessage(req, gopact.Message{Role: gopact.RoleAssistant, Content: delta.Content}, nil, yield)
+				if !keepGoing {
+					return false
+				}
+			}
+			mergeChatToolDeltas(tools, delta.ToolCalls)
+		}
+		return true
+	})
+	if err != nil || !keepGoing {
+		return err
+	}
+	if calls := toolCallsFromAccumulators(tools); len(calls) > 0 {
+		message := gopact.Message{Role: gopact.RoleAssistant, ToolCalls: calls}
+		if !yieldMessage(req, message, usagePtr(lastUsage), yield) {
+			return nil
+		}
+		return nil
+	}
+	if usage := usagePtr(lastUsage); usage != nil {
+		yield(gopact.Event{Type: gopact.EventModelMessage, IDs: req.IDs, Usage: usage}, nil)
+	}
+	return nil
+}
+
+func (c *Client) streamResponses(body io.Reader, req gopact.ModelRequest, yield func(gopact.Event, error) bool) error {
+	tools := map[int]*toolCallAccumulator{}
+	var lastUsage gopact.Usage
+	var emittedText bool
+	var emittedReasoning bool
+	var keepGoing = true
+
+	err := scanSSE(body, func(data []byte) bool {
+		var event responsesStreamEvent
+		if err := json.Unmarshal(data, &event); err != nil {
+			return yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+		}
+		switch event.Type {
+		case "response.output_text.delta":
+			emittedText = true
+			keepGoing = yieldMessage(req, gopact.Message{Role: gopact.RoleAssistant, Content: event.Delta}, nil, yield)
+		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+			emittedReasoning = true
+			keepGoing = yieldMessage(req, messageWithParts(gopact.RoleAssistant, "", event.Delta), nil, yield)
+		case "response.function_call_arguments.delta":
+			accumulatorFor(tools, event.OutputIndex).Arguments.WriteString(event.Delta)
+		case "response.output_item.added", "response.output_item.done":
+			mergeResponseToolItem(tools, event.OutputIndex, event.Item)
+		case "response.completed":
+			lastUsage = usageFromResponses(event.Response)
+			mergeResponseToolItems(tools, event.Response.Output)
+			if reasoning := event.Response.responsesReasoning(); reasoning != "" && !emittedReasoning {
+				emittedReasoning = true
+				keepGoing = yieldMessage(req, messageWithParts(gopact.RoleAssistant, "", reasoning), nil, yield)
+			}
+			if text := event.Response.responsesText(); text != "" && !emittedText && keepGoing {
+				emittedText = true
+				keepGoing = yieldMessage(req, gopact.Message{Role: gopact.RoleAssistant, Content: text}, nil, yield)
+			}
+		}
+		return keepGoing
+	})
+	if err != nil || !keepGoing {
+		return err
+	}
+	if calls := toolCallsFromAccumulators(tools); len(calls) > 0 {
+		message := gopact.Message{Role: gopact.RoleAssistant, ToolCalls: calls}
+		if !yieldMessage(req, message, usagePtr(lastUsage), yield) {
+			return nil
+		}
+		return nil
+	}
+	if usage := usagePtr(lastUsage); usage != nil {
+		yield(gopact.Event{Type: gopact.EventModelMessage, IDs: req.IDs, Usage: usage}, nil)
+	}
+	return nil
+}
+
+func scanSSE(body io.Reader, handle func([]byte) bool) error {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	var data strings.Builder
+	flush := func() bool {
+		if data.Len() == 0 {
+			return true
+		}
+		payload := strings.TrimSpace(data.String())
+		data.Reset()
+		if payload == "" || payload == "[DONE]" {
+			return true
+		}
+		return handle([]byte(payload))
+	}
+	for scanner.Scan() {
+		line := strings.TrimSuffix(scanner.Text(), "\r")
+		if line == "" {
+			if !flush() {
+				return nil
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+			}
+			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	flush()
+	return nil
+}
+
+type toolCallAccumulator struct {
+	ID        string
+	Name      string
+	Arguments strings.Builder
+}
+
+func mergeChatToolDeltas(tools map[int]*toolCallAccumulator, deltas []chatToolCallDelta) {
+	for _, delta := range deltas {
+		tool := accumulatorFor(tools, delta.Index)
+		if delta.ID != "" {
+			tool.ID = delta.ID
+		}
+		if delta.Function.Name != "" {
+			tool.Name = delta.Function.Name
+		}
+		if delta.Function.Arguments != "" {
+			tool.Arguments.WriteString(delta.Function.Arguments)
+		}
+	}
+}
+
+func mergeResponseToolItems(tools map[int]*toolCallAccumulator, items []responsesOutputItem) {
+	for i, item := range items {
+		mergeResponseToolItem(tools, i, item)
+	}
+}
+
+func mergeResponseToolItem(tools map[int]*toolCallAccumulator, index int, item responsesOutputItem) {
+	if item.Type != "function_call" {
+		return
+	}
+	tool := accumulatorFor(tools, index)
+	if item.CallID != "" {
+		tool.ID = item.CallID
+	} else if item.ID != "" {
+		tool.ID = item.ID
+	}
+	if item.Name != "" {
+		tool.Name = item.Name
+	}
+	if item.Arguments != "" {
+		tool.Arguments.Reset()
+		tool.Arguments.WriteString(item.Arguments)
+	}
+}
+
+func accumulatorFor(tools map[int]*toolCallAccumulator, index int) *toolCallAccumulator {
+	tool := tools[index]
+	if tool == nil {
+		tool = &toolCallAccumulator{}
+		tools[index] = tool
+	}
+	return tool
+}
+
+func toolCallsFromAccumulators(tools map[int]*toolCallAccumulator) []gopact.ToolCall {
+	if len(tools) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(tools))
+	for index := range tools {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	calls := make([]gopact.ToolCall, 0, len(tools))
+	for _, index := range indexes {
+		tool := tools[index]
+		if tool == nil || tool.Name == "" {
+			continue
+		}
+		calls = append(calls, gopact.ToolCall{
+			ID:        tool.ID,
+			Name:      tool.Name,
+			Arguments: []byte(tool.Arguments.String()),
+		})
+	}
+	return calls
+}
+
+func yieldMessage(req gopact.ModelRequest, message gopact.Message, usage *gopact.Usage, yield func(gopact.Event, error) bool) bool {
+	return yield(gopact.Event{Type: gopact.EventModelMessage, IDs: req.IDs, Message: &message, Usage: usage}, nil)
+}
+
+func toUsage(in usage) gopact.Usage {
+	return gopact.Usage{
+		InputTokens:  firstNonZero(in.PromptTokens, in.InputTokens),
+		OutputTokens: firstNonZero(in.CompletionTokens, in.OutputTokens),
+		TotalTokens:  in.TotalTokens,
+	}
+}
+
+func usageFromResponses(response responsesResponse) gopact.Usage {
+	return gopact.Usage{
+		InputTokens:  response.Usage.InputTokens,
+		OutputTokens: response.Usage.OutputTokens,
+		TotalTokens:  response.Usage.TotalTokens,
+	}
+}
+
+func usagePtr(usage gopact.Usage) *gopact.Usage {
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+		return nil
+	}
+	return &usage
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func classForStatus(status int) provider.ErrorClass {
