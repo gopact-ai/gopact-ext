@@ -20,7 +20,7 @@ jobs:
             git config --global url."https://x-access-token:${GOPACT_GITHUB_TOKEN}@github.com/gopact-ai/".insteadOf "https://github.com/gopact-ai/"
           fi
         env:
-          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN }}
+          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
       - name: Check whitespace
         run: git diff --check
       - name: Test modules
