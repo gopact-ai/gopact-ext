@@ -21,6 +21,9 @@ const (
 	DefaultProvider = "ark"
 	DefaultBaseURL  = "https://ark.cn-beijing.volces.com/api/v3"
 	DefaultRegion   = "cn-beijing"
+
+	apiV3Path        = "/api/v3"
+	versionedAPIPath = "/api/v"
 )
 
 // Options configures an Ark provider client.
@@ -72,7 +75,7 @@ func New(opts Options) (*Client, error) {
 	case opts.AccessKey != "" && opts.SecretKey != "":
 		sdkClient = arkruntime.NewClientWithAkSk(opts.AccessKey, opts.SecretKey, config...)
 	default:
-		return nil, errors.New("ark: set APIKey or both AccessKey and SecretKey")
+		return nil, errors.New("ark: set api key or both access key and secret key")
 	}
 
 	return &Client{
@@ -92,10 +95,10 @@ func normalizeBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("ark: parse base url: %w", err)
 	}
 	baseURL := strings.TrimRight(parsed.String(), "/")
-	if strings.HasSuffix(baseURL, "/api/v3") || strings.Contains(baseURL, "/api/v") {
+	if strings.HasSuffix(baseURL, apiV3Path) || strings.Contains(baseURL, versionedAPIPath) {
 		return baseURL, nil
 	}
-	return baseURL + "/api/v3", nil
+	return baseURL + apiV3Path, nil
 }
 
 func (c *Client) Name() string {

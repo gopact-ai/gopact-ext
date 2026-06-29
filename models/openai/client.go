@@ -42,6 +42,47 @@ const (
 	APIResponses       API = "responses"
 )
 
+const (
+	endpointChatCompletions = "/chat/completions"
+	endpointResponses       = "/responses"
+
+	headerAccept        = "Accept"
+	headerAuthorization = "Authorization"
+	headerContentType   = "Content-Type"
+
+	authBearerPrefix       = "Bearer "
+	contentTypeEventStream = "text/event-stream"
+	contentTypeJSON        = "application/json"
+
+	maxResponseBodyBytes = 4 << 20
+	sseBufferBytes       = 64 * 1024
+	sseDataPrefix        = "data:"
+	sseDonePayload       = "[DONE]"
+)
+
+const (
+	toolTypeFunction = "function"
+
+	responsesItemFunctionCall       = "function_call"
+	responsesItemFunctionCallOutput = "function_call_output"
+	responsesItemMessage            = "message"
+	responsesItemReasoning          = "reasoning"
+
+	responsesContentInputImage  = "input_image"
+	responsesContentInputText   = "input_text"
+	responsesContentOutputText  = "output_text"
+	responsesContentSummaryText = "summary_text"
+	responsesContentText        = "text"
+
+	responsesEventCompleted                  = "response.completed"
+	responsesEventFunctionCallArgumentsDelta = "response.function_call_arguments.delta"
+	responsesEventOutputItemAdded            = "response.output_item.added"
+	responsesEventOutputItemDone             = "response.output_item.done"
+	responsesEventOutputTextDelta            = "response.output_text.delta"
+	responsesEventReasoningSummaryTextDelta  = "response.reasoning_summary_text.delta"
+	responsesEventReasoningTextDelta         = "response.reasoning_text.delta"
+)
+
 // Client is a minimal OpenAI-compatible provider adapter.
 type Client struct {
 	provider   string
@@ -138,8 +179,8 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 	if err != nil {
 		return gopact.ModelResponse{}, fmt.Errorf("openai: create request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set(headerAuthorization, authBearerPrefix+c.apiKey)
+	httpReq.Header.Set(headerContentType, contentTypeJSON)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -149,7 +190,7 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 		_ = resp.Body.Close()
 	}()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	if err != nil {
 		return gopact.ModelResponse{}, fmt.Errorf("openai: read response: %w", err)
 	}
@@ -173,7 +214,7 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 			Thinking:        thinkingConfig(c.params.thinkingType),
 			Reasoning:       reasoningConfig(c.params.reasoningEffort),
 		})
-		return "/responses", body, wrapMarshalErr(err)
+		return endpointResponses, body, wrapMarshalErr(err)
 	}
 
 	body, err := json.Marshal(chatCompletionRequest{
@@ -188,7 +229,7 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 		Thinking:        thinkingConfig(c.params.thinkingType),
 		ReasoningEffort: c.params.reasoningEffort,
 	})
-	return "/chat/completions", body, wrapMarshalErr(err)
+	return endpointChatCompletions, body, wrapMarshalErr(err)
 }
 
 func (c *Client) maxOutputTokens(req gopact.ModelRequest) *int {
@@ -267,9 +308,9 @@ func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[
 			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 			return
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "text/event-stream")
+		httpReq.Header.Set(headerAuthorization, authBearerPrefix+c.apiKey)
+		httpReq.Header.Set(headerContentType, contentTypeJSON)
+		httpReq.Header.Set(headerAccept, contentTypeEventStream)
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
@@ -281,7 +322,7 @@ func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[
 			_ = resp.Body.Close()
 		}()
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 			if readErr != nil {
 				err = fmt.Errorf("openai: read response: %w", readErr)
 			} else {
@@ -497,7 +538,7 @@ func decodeResponsesResponse(body []byte) (gopact.ModelResponse, error) {
 
 	message := messageWithParts(gopact.RoleAssistant, decoded.responsesText(), decoded.responsesReasoning())
 	for _, item := range decoded.Output {
-		if item.Type != "function_call" {
+		if item.Type != responsesItemFunctionCall {
 			continue
 		}
 		id := item.CallID
@@ -528,7 +569,7 @@ func (r responsesResponse) responsesText() string {
 	var b strings.Builder
 	for _, item := range r.Output {
 		for _, content := range item.Content {
-			if content.Type == "output_text" || content.Type == "text" {
+			if content.Type == responsesContentOutputText || content.Type == responsesContentText {
 				b.WriteString(content.Text)
 			}
 		}
@@ -539,11 +580,11 @@ func (r responsesResponse) responsesText() string {
 func (r responsesResponse) responsesReasoning() string {
 	var b strings.Builder
 	for _, item := range r.Output {
-		if item.Type != "reasoning" {
+		if item.Type != responsesItemReasoning {
 			continue
 		}
 		for _, content := range item.Summary {
-			if content.Type == "summary_text" || content.Type == "text" {
+			if content.Type == responsesContentSummaryText || content.Type == responsesContentText {
 				b.WriteString(content.Text)
 			}
 		}
@@ -592,7 +633,7 @@ func convertTools(tools []gopact.ToolSpec) []chatTool {
 	converted := make([]chatTool, 0, len(tools))
 	for _, tool := range tools {
 		converted = append(converted, chatTool{
-			Type: "function",
+			Type: toolTypeFunction,
 			Function: chatFunction{
 				Name:        tool.Name,
 				Description: tool.Description,
@@ -607,7 +648,7 @@ func convertResponsesTools(tools []gopact.ToolSpec) []responsesTool {
 	converted := make([]responsesTool, 0, len(tools))
 	for _, tool := range tools {
 		converted = append(converted, responsesTool{
-			Type:        "function",
+			Type:        toolTypeFunction,
 			Name:        tool.Name,
 			Description: tool.Description,
 			Parameters:  tool.InputSchema,
@@ -621,7 +662,7 @@ func convertResponsesInput(messages []gopact.Message) []responsesInputItem {
 	for _, message := range messages {
 		if message.Role == gopact.RoleTool {
 			converted = append(converted, responsesInputItem{
-				Type:   "function_call_output",
+				Type:   responsesItemFunctionCallOutput,
 				CallID: message.ToolCallID,
 				Output: message.Text(),
 			})
@@ -629,14 +670,14 @@ func convertResponsesInput(messages []gopact.Message) []responsesInputItem {
 		}
 		if content := convertResponsesContent(message); len(content) > 0 || len(message.ToolCalls) == 0 {
 			converted = append(converted, responsesInputItem{
-				Type:    "message",
+				Type:    responsesItemMessage,
 				Role:    string(message.Role),
 				Content: content,
 			})
 		}
 		for _, toolCall := range message.ToolCalls {
 			converted = append(converted, responsesInputItem{
-				Type:      "function_call",
+				Type:      responsesItemFunctionCall,
 				CallID:    toolCall.ID,
 				ID:        toolCall.ID,
 				Name:      toolCall.Name,
@@ -652,16 +693,16 @@ func convertResponsesContent(message gopact.Message) []responsesInputContent {
 		if message.Content == "" {
 			return nil
 		}
-		return []responsesInputContent{{Type: "input_text", Text: message.Content}}
+		return []responsesInputContent{{Type: responsesContentInputText, Text: message.Content}}
 	}
 
 	converted := make([]responsesInputContent, 0, len(message.Parts))
 	for _, part := range message.Parts {
 		switch part.Type {
 		case gopact.ContentPartText:
-			converted = append(converted, responsesInputContent{Type: "input_text", Text: part.Text})
+			converted = append(converted, responsesInputContent{Type: responsesContentInputText, Text: part.Text})
 		case gopact.ContentPartImage:
-			converted = append(converted, responsesInputContent{Type: "input_image", ImageURL: part.URI})
+			converted = append(converted, responsesInputContent{Type: responsesContentInputImage, ImageURL: part.URI})
 		}
 	}
 	return converted
@@ -672,7 +713,7 @@ func convertToolCalls(toolCalls []gopact.ToolCall) []chatToolCall {
 	for _, toolCall := range toolCalls {
 		converted = append(converted, chatToolCall{
 			ID:   toolCall.ID,
-			Type: "function",
+			Type: toolTypeFunction,
 			Function: chatToolCallFunction{
 				Name:      toolCall.Name,
 				Arguments: string(toolCall.Arguments),
@@ -762,17 +803,17 @@ func (c *Client) streamResponses(body io.Reader, req gopact.ModelRequest, yield 
 			return yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 		}
 		switch event.Type {
-		case "response.output_text.delta":
+		case responsesEventOutputTextDelta:
 			emittedText = true
 			keepGoing = yieldMessage(req, gopact.Message{Role: gopact.RoleAssistant, Content: event.Delta}, nil, yield)
-		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		case responsesEventReasoningSummaryTextDelta, responsesEventReasoningTextDelta:
 			emittedReasoning = true
 			keepGoing = yieldMessage(req, messageWithParts(gopact.RoleAssistant, "", event.Delta), nil, yield)
-		case "response.function_call_arguments.delta":
+		case responsesEventFunctionCallArgumentsDelta:
 			accumulatorFor(tools, event.OutputIndex).Arguments.WriteString(event.Delta)
-		case "response.output_item.added", "response.output_item.done":
+		case responsesEventOutputItemAdded, responsesEventOutputItemDone:
 			mergeResponseToolItem(tools, event.OutputIndex, event.Item)
-		case "response.completed":
+		case responsesEventCompleted:
 			lastUsage = usageFromResponses(event.Response)
 			mergeResponseToolItems(tools, event.Response.Output)
 			if reasoning := event.Response.responsesReasoning(); reasoning != "" && !emittedReasoning {
@@ -804,7 +845,7 @@ func (c *Client) streamResponses(body io.Reader, req gopact.ModelRequest, yield 
 
 func scanSSE(body io.Reader, handle func([]byte) bool) error {
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	scanner.Buffer(make([]byte, 0, sseBufferBytes), maxResponseBodyBytes)
 	var data strings.Builder
 	flush := func() bool {
 		if data.Len() == 0 {
@@ -812,7 +853,7 @@ func scanSSE(body io.Reader, handle func([]byte) bool) error {
 		}
 		payload := strings.TrimSpace(data.String())
 		data.Reset()
-		if payload == "" || payload == "[DONE]" {
+		if payload == "" || payload == sseDonePayload {
 			return true
 		}
 		return handle([]byte(payload))
@@ -825,11 +866,11 @@ func scanSSE(body io.Reader, handle func([]byte) bool) error {
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
+		if strings.HasPrefix(line, sseDataPrefix) {
 			if data.Len() > 0 {
 				data.WriteByte('\n')
 			}
-			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, sseDataPrefix)))
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -867,7 +908,7 @@ func mergeResponseToolItems(tools map[int]*toolCallAccumulator, items []response
 }
 
 func mergeResponseToolItem(tools map[int]*toolCallAccumulator, index int, item responsesOutputItem) {
-	if item.Type != "function_call" {
+	if item.Type != responsesItemFunctionCall {
 		return
 	}
 	tool := accumulatorFor(tools, index)
