@@ -1,11 +1,11 @@
 # openai
 
-OpenAI-shaped Chat Completions provider adapter for `gopact`.
+OpenAI-shaped Chat Completions and Responses provider adapter for `gopact`.
 
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.1.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.2.0
 ```
 
 ## Usage
@@ -15,6 +15,7 @@ client, err := openai.New(openai.Options{
 	Provider: "openrouter",
 	BaseURL:  "https://openrouter.ai/api/v1",
 	APIKey:   appSecrets.OpenRouterAPIKey,
+	API:      openai.APIChatCompletions,
 	Models: []provider.ModelInfo{{
 		Name:         "openai/gpt-4o-mini",
 		Provider:     "openrouter",
@@ -38,13 +39,13 @@ if err != nil {
 fmt.Println(response.Message.Text())
 ```
 
-`BaseURL` should point at an OpenAI-compatible `/v1` API root. The adapter posts to `BaseURL + "/chat/completions"`.
+`BaseURL` should point at an OpenAI-compatible `/v1` API root. `API` defaults to `openai.APIChatCompletions`; set `openai.APIResponses` to post to `BaseURL + "/responses"`.
 
-## v0.1.0 Scope
+## Scope
 
 Supported:
 
-- Non-streaming Chat Completions via `Generate`.
+- Non-streaming Chat Completions and Responses via `Generate`.
 - Tool definitions and assistant `tool_calls`.
 - Usage metadata and provider error classification.
 - Provider conformance tests.

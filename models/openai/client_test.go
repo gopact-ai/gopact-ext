@@ -66,6 +66,57 @@ func TestClientGeneratePostsChatCompletion(t *testing.T) {
 	}
 }
 
+func TestClientGeneratePostsResponses(t *testing.T) {
+	var got struct {
+		Model string `json:"model"`
+		Input []struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"input"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("path = %q, want /responses", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		_, _ = w.Write([]byte(`{
+			"output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello from responses"}]}],
+			"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Options{
+		Provider: "openai",
+		BaseURL:  server.URL,
+		APIKey:   "token",
+		API:      APIResponses,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.Generate(context.Background(), gopact.ModelRequest{
+		Model:    "test-model",
+		Messages: []gopact.Message{{Role: gopact.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if got.Model != "test-model" || len(got.Input) != 1 || got.Input[0].Type != "message" || got.Input[0].Role != "user" {
+		t.Fatalf("request = %#v, want one user message", got)
+	}
+	if response.Message.Text() != "hello from responses" {
+		t.Fatalf("Message.Text() = %q, want responses text", response.Message.Text())
+	}
+	if response.Usage.TotalTokens != 3 {
+		t.Fatalf("Usage.TotalTokens = %d, want 3", response.Usage.TotalTokens)
+	}
+}
+
 func TestClientGenerateRoundTripsToolCalls(t *testing.T) {
 	var got struct {
 		Messages []struct {
@@ -142,6 +193,78 @@ func TestClientGenerateRoundTripsToolCalls(t *testing.T) {
 	}
 }
 
+func TestClientGenerateResponsesRoundTripsToolCalls(t *testing.T) {
+	var got struct {
+		Input []struct {
+			Type      string `json:"type"`
+			CallID    string `json:"call_id"`
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+			Output    string `json:"output"`
+		} `json:"input"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("Decode() error = %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"output": [{
+				"type": "function_call",
+				"call_id": "call_2",
+				"name": "search",
+				"arguments": "{\"q\":\"docs\"}"
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Options{
+		Provider: "openai",
+		BaseURL:  server.URL,
+		APIKey:   "token",
+		API:      APIResponses,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.Generate(context.Background(), gopact.ModelRequest{
+		Model: "test-model",
+		Messages: []gopact.Message{
+			{
+				Role: gopact.RoleAssistant,
+				ToolCalls: []gopact.ToolCall{{
+					ID:        "call_1",
+					Name:      "search",
+					Arguments: []byte(`{"q":"gopact"}`),
+				}},
+			},
+			{Role: gopact.RoleTool, ToolCallID: "call_1", Content: "GOPACT"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if len(got.Input) != 2 || got.Input[0].Type != "function_call" || got.Input[1].Type != "function_call_output" {
+		t.Fatalf("input = %#v, want function call and output", got.Input)
+	}
+	if got.Input[0].CallID != "call_1" || got.Input[0].Name != "search" || got.Input[0].Arguments != `{"q":"gopact"}` {
+		t.Fatalf("request function call = %#v, want search call", got.Input[0])
+	}
+	if got.Input[1].CallID != "call_1" || got.Input[1].Output != "GOPACT" {
+		t.Fatalf("request function output = %#v, want GOPACT output", got.Input[1])
+	}
+	if len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("response tool calls = %d, want 1", len(response.Message.ToolCalls))
+	}
+	responseCall := response.Message.ToolCalls[0]
+	if responseCall.ID != "call_2" || responseCall.Name != "search" || string(responseCall.Arguments) != `{"q":"docs"}` {
+		t.Fatalf("response tool call = %#v, want search call with raw arguments", responseCall)
+	}
+}
+
 func TestClientRejectsInvalidOptions(t *testing.T) {
 	tests := []struct {
 		name string
@@ -150,6 +273,7 @@ func TestClientRejectsInvalidOptions(t *testing.T) {
 		{name: "missing provider", opts: Options{BaseURL: "https://example.com", APIKey: "token"}},
 		{name: "missing base url", opts: Options{Provider: "openai", APIKey: "token"}},
 		{name: "missing api key", opts: Options{Provider: "openai", BaseURL: "https://example.com"}},
+		{name: "unsupported api", opts: Options{Provider: "openai", BaseURL: "https://example.com", APIKey: "token", API: "legacy_completions"}},
 	}
 
 	for _, tt := range tests {
