@@ -19,23 +19,36 @@ import (
 	"github.com/gopact-ai/gopact/provider"
 )
 
-// Options configures an OpenAI-compatible provider client.
-type Options struct {
-	Provider        string
-	BaseURL         string
-	APIKey          string
-	API             API
-	MaxOutputTokens int
-	Temperature     *float64
-	TopP            *float64
-	ThinkingType    string
-	ReasoningEffort string
-	HTTPClient      *http.Client
-	Models          []provider.ModelInfo
+// Option configures OpenAI client defaults or a single call.
+type Option interface {
+	gopact.ModelOption
+	applyClient(*clientConfig)
+	applyCall(*callConfig)
 }
 
-// Option updates Options for NewClient.
-type Option func(*Options)
+type option struct {
+	client func(*clientConfig)
+	call   func(*callConfig)
+	model  gopact.ModelOption
+}
+
+func (o option) ApplyModelOption(req *gopact.ModelRequest) {
+	if o.model != nil {
+		o.model.ApplyModelOption(req)
+	}
+}
+
+func (o option) applyClient(cfg *clientConfig) {
+	if o.client != nil {
+		o.client(cfg)
+	}
+}
+
+func (o option) applyCall(cfg *callConfig) {
+	if o.call != nil {
+		o.call(cfg)
+	}
+}
 
 // API selects the OpenAI API surface used by Generate.
 type API string
@@ -105,37 +118,51 @@ type Client struct {
 	baseURL    string
 	apiKey     string
 	api        API
-	params     requestParams
+	model      string
+	defaults   gopact.ModelRequest
 	httpClient *http.Client
 	models     []provider.ModelInfo
 }
 
-type requestParams struct {
-	maxOutputTokens int
-	temperature     *float64
-	topP            *float64
-	thinkingType    string
-	reasoningEffort string
+type clientConfig struct {
+	provider   string
+	baseURL    string
+	apiKey     string
+	api        API
+	defaults   gopact.ModelRequest
+	httpClient *http.Client
+}
+
+type callConfig struct {
+	api API
 }
 
 // NewClient creates an OpenAI-compatible provider client with feature options.
-func NewClient(providerName, baseURL, apiKey string, opts ...Option) (*Client, error) {
-	cfg := Options{
-		Provider: providerName,
-		BaseURL:  baseURL,
-		APIKey:   apiKey,
+func NewClient(providerName, baseURL, apiKey string, opts ...gopact.ModelOption) (*Client, error) {
+	cfg := clientConfig{
+		provider: providerName,
+		baseURL:  baseURL,
+		apiKey:   apiKey,
 	}
 	for _, opt := range opts {
 		if opt != nil {
-			opt(&cfg)
+			opt.ApplyModelOption(&cfg.defaults)
+			if openaiOpt, ok := opt.(Option); ok {
+				openaiOpt.applyClient(&cfg)
+			}
 		}
 	}
-	return New(cfg)
+	return newClient(cfg)
 }
 
 func WithAPI(api API) Option {
-	return func(opts *Options) {
-		opts.API = api
+	return option{
+		client: func(cfg *clientConfig) {
+			cfg.api = api
+		},
+		call: func(cfg *callConfig) {
+			cfg.api = api
+		},
 	}
 }
 
@@ -148,105 +175,121 @@ func WithResponsesAPI() Option {
 }
 
 func WithMaxOutputTokens(tokens int) Option {
-	return func(opts *Options) {
-		opts.MaxOutputTokens = tokens
+	return option{
+		model: gopact.WithMaxOutputTokens(tokens),
 	}
 }
 
 func WithTemperature(temperature float64) Option {
-	return func(opts *Options) {
-		opts.Temperature = &temperature
+	return option{
+		model: gopact.WithTemperature(temperature),
 	}
 }
 
 func WithTopP(topP float64) Option {
-	return func(opts *Options) {
-		opts.TopP = &topP
+	return option{
+		model: gopact.WithTopP(topP),
 	}
 }
 
 func WithThinkingType(thinkingType string) Option {
-	return func(opts *Options) {
-		opts.ThinkingType = thinkingType
+	return option{
+		model: gopact.WithThinkingType(thinkingType),
 	}
 }
 
 func WithReasoningEffort(effort string) Option {
-	return func(opts *Options) {
-		opts.ReasoningEffort = effort
+	return option{
+		model: gopact.WithReasoningEffort(effort),
 	}
 }
 
 func WithHTTPClient(client *http.Client) Option {
-	return func(opts *Options) {
-		opts.HTTPClient = client
+	return option{
+		client: func(cfg *clientConfig) {
+			cfg.httpClient = client
+		},
 	}
 }
 
-func WithModels(models ...provider.ModelInfo) Option {
-	return func(opts *Options) {
-		opts.Models = append([]provider.ModelInfo(nil), models...)
+func WithModel(name string) Option {
+	return option{
+		model: gopact.WithModel(name),
 	}
 }
 
-func WithModel(name string, capabilities ...provider.Capability) Option {
-	return func(opts *Options) {
-		opts.Models = []provider.ModelInfo{ProviderModel(opts.Provider, name, capabilities...)}
+func EnableStreaming() Option {
+	return enableCapability(provider.CapabilityStreaming)
+}
+
+func EnableToolCalling() Option {
+	return enableCapability(provider.CapabilityToolCalling)
+}
+
+func EnableJSONSchema() Option {
+	return enableCapability(provider.CapabilityJSONSchema)
+}
+
+func EnableVision() Option {
+	return enableCapability(provider.CapabilityVision)
+}
+
+func EnableReasoning() Option {
+	return enableCapability(provider.CapabilityReasoning)
+}
+
+func EnableStructuredOutput() Option {
+	return enableCapability(provider.CapabilityStructuredOutput)
+}
+
+func enableCapability(capability provider.Capability) Option {
+	return option{
+		model: gopact.EnableCapability(capability),
 	}
 }
 
-func Model(name string, capabilities ...provider.Capability) provider.ModelInfo {
-	return ProviderModel(DefaultProvider, name, capabilities...)
-}
-
-func ProviderModel(providerName, name string, capabilities ...provider.Capability) provider.ModelInfo {
-	return provider.ModelInfo{
-		Name:         name,
-		Provider:     providerName,
-		Capabilities: append([]provider.Capability(nil), capabilities...),
-	}
-}
-
-// New creates an OpenAI-compatible provider client.
-func New(opts Options) (*Client, error) {
-	if opts.Provider == "" {
+func newClient(cfg clientConfig) (*Client, error) {
+	if cfg.provider == "" {
 		return nil, errors.New("openai: provider is required")
 	}
-	if opts.BaseURL == "" {
+	if cfg.baseURL == "" {
 		return nil, errors.New("openai: base url is required")
 	}
-	if opts.APIKey == "" {
+	if cfg.apiKey == "" {
 		return nil, errors.New("openai: api key is required")
 	}
-	api := opts.API
+	api := cfg.api
 	if api == "" {
 		api = APIChatCompletions
 	}
 	if api != APIChatCompletions && api != APIResponses {
 		return nil, fmt.Errorf("openai: unsupported api %q", api)
 	}
-	parsed, err := url.Parse(opts.BaseURL)
+	parsed, err := url.Parse(cfg.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("openai: parse base url: %w", err)
 	}
-	client := opts.HTTPClient
+	client := cfg.httpClient
 	if client == nil {
 		client = http.DefaultClient
 	}
+	var models []provider.ModelInfo
+	if cfg.defaults.Model != "" {
+		models = []provider.ModelInfo{{
+			Name:         cfg.defaults.Model,
+			Provider:     cfg.provider,
+			Capabilities: append([]provider.Capability(nil), cfg.defaults.Capabilities...),
+		}}
+	}
 	return &Client{
-		provider: opts.Provider,
-		baseURL:  strings.TrimRight(parsed.String(), "/"),
-		apiKey:   opts.APIKey,
-		api:      api,
-		params: requestParams{
-			maxOutputTokens: opts.MaxOutputTokens,
-			temperature:     opts.Temperature,
-			topP:            opts.TopP,
-			thinkingType:    opts.ThinkingType,
-			reasoningEffort: opts.ReasoningEffort,
-		},
+		provider:   cfg.provider,
+		baseURL:    strings.TrimRight(parsed.String(), "/"),
+		apiKey:     cfg.apiKey,
+		api:        api,
+		model:      cfg.defaults.Model,
+		defaults:   gopact.ApplyModelOptions(cfg.defaults),
 		httpClient: client,
-		models:     append([]provider.ModelInfo(nil), opts.Models...),
+		models:     models,
 	}, nil
 }
 
@@ -267,7 +310,7 @@ func (c *Client) Models(ctx context.Context) ([]provider.ModelInfo, error) {
 	return append([]provider.ModelInfo(nil), c.models...), nil
 }
 
-func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.ModelResponse, error) {
+func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest, opts ...gopact.ModelOption) (gopact.ModelResponse, error) {
 	if c == nil {
 		return gopact.ModelResponse{}, errors.New("openai: client is nil")
 	}
@@ -275,7 +318,9 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 		return gopact.ModelResponse{}, err
 	}
 
-	path, body, err := c.marshalRequest(req, false)
+	req, call := c.prepareRequest(req, opts...)
+
+	path, body, err := c.marshalRequest(req, call, false)
 	if err != nil {
 		return gopact.ModelResponse{}, err
 	}
@@ -303,21 +348,57 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 		return gopact.ModelResponse{}, provider.NewError(classForStatus(resp.StatusCode), errors.New(strings.TrimSpace(string(respBody))), provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
 	}
 
-	return c.decodeResponse(respBody, req.Model)
+	return c.decodeResponse(respBody, req.Model, call.api)
 }
 
-func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, []byte, error) {
-	if c.api == APIResponses {
+func (c *Client) prepareRequest(req gopact.ModelRequest, opts ...gopact.ModelOption) (gopact.ModelRequest, callConfig) {
+	call := callConfig{api: c.api}
+	if req.Model == "" {
+		req.Model = c.defaults.Model
+	}
+	if req.Budget.MaxOutputTokens == 0 {
+		req.Budget.MaxOutputTokens = c.defaults.Budget.MaxOutputTokens
+	}
+	if req.Temperature == nil {
+		req.Temperature = c.defaults.Temperature
+	}
+	if req.TopP == nil {
+		req.TopP = c.defaults.TopP
+	}
+	if req.ThinkingType == "" {
+		req.ThinkingType = c.defaults.ThinkingType
+	}
+	if req.ReasoningEffort == "" {
+		req.ReasoningEffort = c.defaults.ReasoningEffort
+	}
+	if len(req.Capabilities) == 0 {
+		req.Capabilities = append([]gopact.Capability(nil), c.defaults.Capabilities...)
+	} else {
+		req.Capabilities = append([]gopact.Capability(nil), req.Capabilities...)
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt.ApplyModelOption(&req)
+			if openaiOpt, ok := opt.(Option); ok {
+				openaiOpt.applyCall(&call)
+			}
+		}
+	}
+	return req, call
+}
+
+func (c *Client) marshalRequest(req gopact.ModelRequest, call callConfig, stream bool) (string, []byte, error) {
+	if call.api == APIResponses {
 		body, err := json.Marshal(responsesRequest{
 			Model:           req.Model,
 			Input:           convertResponsesInput(req.Messages),
 			Tools:           convertResponsesTools(req.Tools),
-			MaxOutputTokens: c.maxOutputTokens(req),
-			Temperature:     c.params.temperature,
-			TopP:            c.params.topP,
+			MaxOutputTokens: maxOutputTokens(req),
+			Temperature:     req.Temperature,
+			TopP:            req.TopP,
 			Stream:          boolPtr(stream),
-			Thinking:        thinkingConfig(c.params.thinkingType),
-			Reasoning:       reasoningConfig(c.params.reasoningEffort),
+			Thinking:        thinkingConfig(req.ThinkingType),
+			Reasoning:       reasoningConfig(req.ReasoningEffort),
 		})
 		return endpointResponses, body, wrapMarshalErr(err)
 	}
@@ -326,23 +407,20 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 		Model:           req.Model,
 		Messages:        convertMessages(req.Messages),
 		Tools:           convertTools(req.Tools),
-		MaxTokens:       c.maxOutputTokens(req),
-		Temperature:     c.params.temperature,
-		TopP:            c.params.topP,
+		MaxTokens:       maxOutputTokens(req),
+		Temperature:     req.Temperature,
+		TopP:            req.TopP,
 		Stream:          boolPtr(stream),
 		StreamOptions:   streamOptions(stream),
-		Thinking:        thinkingConfig(c.params.thinkingType),
-		ReasoningEffort: c.params.reasoningEffort,
+		Thinking:        thinkingConfig(req.ThinkingType),
+		ReasoningEffort: req.ReasoningEffort,
 	})
 	return endpointChatCompletions, body, wrapMarshalErr(err)
 }
 
-func (c *Client) maxOutputTokens(req gopact.ModelRequest) *int {
+func maxOutputTokens(req gopact.ModelRequest) *int {
 	if req.Budget.MaxOutputTokens > 0 {
 		return &req.Budget.MaxOutputTokens
-	}
-	if c.params.maxOutputTokens > 0 {
-		return &c.params.maxOutputTokens
 	}
 	return nil
 }
@@ -382,14 +460,14 @@ func wrapMarshalErr(err error) error {
 	return fmt.Errorf("openai: marshal request: %w", err)
 }
 
-func (c *Client) decodeResponse(body []byte, model string) (gopact.ModelResponse, error) {
-	if c.api == APIResponses {
+func (c *Client) decodeResponse(body []byte, model string, api API) (gopact.ModelResponse, error) {
+	if api == APIResponses {
 		return decodeResponsesResponse(body)
 	}
 	return decodeChatCompletionResponse(body, c.provider, model)
 }
 
-func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[gopact.Event, error] {
+func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest, opts ...gopact.ModelOption) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
 		if c == nil {
 			err := errors.New("openai: client is nil")
@@ -401,7 +479,9 @@ func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[
 			return
 		}
 
-		path, body, err := c.marshalRequest(req, true)
+		req, call := c.prepareRequest(req, opts...)
+
+		path, body, err := c.marshalRequest(req, call, true)
 		if err != nil {
 			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 			return
@@ -438,7 +518,7 @@ func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[
 		}
 
 		var streamErr error
-		if c.api == APIResponses {
+		if call.api == APIResponses {
 			streamErr = c.streamResponses(resp.Body, req, yield)
 		} else {
 			streamErr = c.streamChatCompletions(resp.Body, req, yield)

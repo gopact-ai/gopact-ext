@@ -118,13 +118,14 @@ func (c *Client) Models(ctx context.Context) ([]provider.ModelInfo, error) {
 	return append([]provider.ModelInfo(nil), c.models...), nil
 }
 
-func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.ModelResponse, error) {
+func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest, opts ...gopact.ModelOption) (gopact.ModelResponse, error) {
 	if c == nil {
 		return gopact.ModelResponse{}, errors.New("ark: client is nil")
 	}
 	if err := ctx.Err(); err != nil {
 		return gopact.ModelResponse{}, err
 	}
+	req = gopact.ApplyModelOptions(req, opts...)
 
 	resp, err := c.client.CreateChatCompletion(ctx, arkmodel.CreateChatCompletionRequest{
 		Model:    req.Model,
@@ -148,9 +149,9 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 	}, nil
 }
 
-func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[gopact.Event, error] {
+func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest, opts ...gopact.ModelOption) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
-		response, err := c.Generate(ctx, req)
+		response, err := c.Generate(ctx, req, opts...)
 		if err != nil {
 			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 			return

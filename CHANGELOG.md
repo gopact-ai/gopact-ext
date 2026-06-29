@@ -1,5 +1,12 @@
 # Changelog
 
+## models/openai/v0.4.0 - 2026-06-30
+
+- Require `github.com/gopact-ai/gopact v0.0.2` and use core `gopact.ModelOption` for client defaults and per-call overrides.
+- Remove the old `Options`/`New`/`WithModels`/`ProviderModel` initialization path.
+- Split model selection from capabilities: use `WithModel(...)` plus `EnableStreaming()`, `EnableToolCalling()`, and related helpers.
+- Let `Generate` and `Stream` use the configured default model when `ModelRequest.Model` is empty.
+
 ## models/openai/v0.3.2 - 2026-06-30
 
 - Add `WithModel` so model metadata can inherit the client provider without repeating `ProviderModel(...)` at call sites.
