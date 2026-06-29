@@ -213,6 +213,73 @@ func TestClientGeneratePostsParameters(t *testing.T) {
 	}
 }
 
+func TestNewClientAppliesFeatureOptions(t *testing.T) {
+	var got struct {
+		MaxOutputTokens *int     `json:"max_output_tokens"`
+		Temperature     *float64 `json:"temperature"`
+		TopP            *float64 `json:"top_p"`
+		Thinking        *struct {
+			Type string `json:"type"`
+		} `json:"thinking"`
+		Reasoning *struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("path = %q, want /responses", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		_, _ = w.Write([]byte(`{"output_text": "ok"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		ProviderArk,
+		server.URL,
+		"token",
+		WithResponsesAPI(),
+		WithMaxOutputTokens(9),
+		WithTemperature(0.2),
+		WithTopP(0.8),
+		WithThinkingType("enabled"),
+		WithReasoningEffort("high"),
+		WithModels(ProviderModel(ProviderArk, "ep-test", CapabilityToolCalling, CapabilityReasoning)),
+	)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.Generate(context.Background(), gopact.ModelRequest{
+		Model:    "ep-test",
+		Messages: []gopact.Message{{Role: gopact.RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if got.MaxOutputTokens == nil || *got.MaxOutputTokens != 9 {
+		t.Fatalf("MaxOutputTokens = %#v, want 9", got.MaxOutputTokens)
+	}
+	if got.Temperature == nil || *got.Temperature != 0.2 || got.TopP == nil || *got.TopP != 0.8 {
+		t.Fatalf("sampling params = %#v/%#v, want 0.2/0.8", got.Temperature, got.TopP)
+	}
+	if got.Thinking == nil || got.Thinking.Type != "enabled" {
+		t.Fatalf("thinking = %#v, want enabled", got.Thinking)
+	}
+	if got.Reasoning == nil || got.Reasoning.Effort != "high" {
+		t.Fatalf("reasoning = %#v, want high", got.Reasoning)
+	}
+	models, err := client.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models() error = %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != ProviderArk || len(models[0].Capabilities) != 2 {
+		t.Fatalf("models = %#v, want ark model with capabilities", models)
+	}
+}
+
 func TestClientGenerateResponsesPostsImagePart(t *testing.T) {
 	var got struct {
 		Input []struct {

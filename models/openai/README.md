@@ -5,25 +5,25 @@ OpenAI-shaped Chat Completions and Responses provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.3.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.3.1
 ```
 
 ## Usage
 
 ```go
-client, err := openai.New(openai.Options{
-	Provider:        "openrouter",
-	BaseURL:         "https://openrouter.ai/api/v1",
-	APIKey:          appSecrets.OpenRouterAPIKey,
-	API:             openai.APIChatCompletions,
-	MaxOutputTokens: 1024,
-	ThinkingType:    "enabled",
-	Models: []provider.ModelInfo{{
-		Name:         "openai/gpt-4o-mini",
-		Provider:     "openrouter",
-		Capabilities: []provider.Capability{provider.CapabilityToolCalling},
-	}},
-})
+client, err := openai.NewClient(
+	"openrouter",
+	"https://openrouter.ai/api/v1",
+	appSecrets.OpenRouterAPIKey,
+	openai.WithChatCompletionsAPI(),
+	openai.WithMaxOutputTokens(1024),
+	openai.WithThinkingType("enabled"),
+	openai.WithModels(openai.ProviderModel(
+		"openrouter",
+		"openai/gpt-4o-mini",
+		openai.CapabilityToolCalling,
+	)),
+)
 if err != nil {
 	return err
 }
@@ -41,7 +41,7 @@ if err != nil {
 fmt.Println(response.Message.Text())
 ```
 
-`BaseURL` should point at an OpenAI-compatible `/v1` API root. `API` defaults to `openai.APIChatCompletions`; set `openai.APIResponses` to post to `BaseURL + "/responses"`.
+`BaseURL` should point at an OpenAI-compatible API root. API paths are selected inside this package: `WithChatCompletionsAPI()` posts to chat completions, and `WithResponsesAPI()` posts to responses.
 
 ## Scope
 

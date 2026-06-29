@@ -34,12 +34,28 @@ type Options struct {
 	Models          []provider.ModelInfo
 }
 
+// Option updates Options for NewClient.
+type Option func(*Options)
+
 // API selects the OpenAI API surface used by Generate.
 type API string
 
 const (
 	APIChatCompletions API = "chat_completions"
 	APIResponses       API = "responses"
+)
+
+const (
+	DefaultProvider = "openai"
+	ProviderOpenAI  = DefaultProvider
+	ProviderArk     = "ark"
+
+	CapabilityToolCalling      = provider.CapabilityToolCalling
+	CapabilityStreaming        = provider.CapabilityStreaming
+	CapabilityJSONSchema       = provider.CapabilityJSONSchema
+	CapabilityVision           = provider.CapabilityVision
+	CapabilityReasoning        = provider.CapabilityReasoning
+	CapabilityStructuredOutput = provider.CapabilityStructuredOutput
 )
 
 const (
@@ -100,6 +116,89 @@ type requestParams struct {
 	topP            *float64
 	thinkingType    string
 	reasoningEffort string
+}
+
+// NewClient creates an OpenAI-compatible provider client with feature options.
+func NewClient(providerName, baseURL, apiKey string, opts ...Option) (*Client, error) {
+	cfg := Options{
+		Provider: providerName,
+		BaseURL:  baseURL,
+		APIKey:   apiKey,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	return New(cfg)
+}
+
+func WithAPI(api API) Option {
+	return func(opts *Options) {
+		opts.API = api
+	}
+}
+
+func WithChatCompletionsAPI() Option {
+	return WithAPI(APIChatCompletions)
+}
+
+func WithResponsesAPI() Option {
+	return WithAPI(APIResponses)
+}
+
+func WithMaxOutputTokens(tokens int) Option {
+	return func(opts *Options) {
+		opts.MaxOutputTokens = tokens
+	}
+}
+
+func WithTemperature(temperature float64) Option {
+	return func(opts *Options) {
+		opts.Temperature = &temperature
+	}
+}
+
+func WithTopP(topP float64) Option {
+	return func(opts *Options) {
+		opts.TopP = &topP
+	}
+}
+
+func WithThinkingType(thinkingType string) Option {
+	return func(opts *Options) {
+		opts.ThinkingType = thinkingType
+	}
+}
+
+func WithReasoningEffort(effort string) Option {
+	return func(opts *Options) {
+		opts.ReasoningEffort = effort
+	}
+}
+
+func WithHTTPClient(client *http.Client) Option {
+	return func(opts *Options) {
+		opts.HTTPClient = client
+	}
+}
+
+func WithModels(models ...provider.ModelInfo) Option {
+	return func(opts *Options) {
+		opts.Models = append([]provider.ModelInfo(nil), models...)
+	}
+}
+
+func Model(name string, capabilities ...provider.Capability) provider.ModelInfo {
+	return ProviderModel(DefaultProvider, name, capabilities...)
+}
+
+func ProviderModel(providerName, name string, capabilities ...provider.Capability) provider.ModelInfo {
+	return provider.ModelInfo{
+		Name:         name,
+		Provider:     providerName,
+		Capabilities: append([]provider.Capability(nil), capabilities...),
+	}
 }
 
 // New creates an OpenAI-compatible provider client.

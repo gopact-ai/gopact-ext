@@ -1,5 +1,10 @@
 # Changelog
 
+## models/openai/v0.3.1 - 2026-06-30
+
+- Add `NewClient` and feature options for API mode, model parameters, thinking, reasoning, HTTP clients, and model metadata.
+- Add provider/model/capability helpers so examples do not hard-code provider capability structs.
+
 ## models/openai/v0.3.0 - 2026-06-29
 
 - Add true SSE streaming for Chat Completions and Responses.
