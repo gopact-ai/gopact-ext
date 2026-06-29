@@ -189,6 +189,12 @@ func WithModels(models ...provider.ModelInfo) Option {
 	}
 }
 
+func WithModel(name string, capabilities ...provider.Capability) Option {
+	return func(opts *Options) {
+		opts.Models = []provider.ModelInfo{ProviderModel(opts.Provider, name, capabilities...)}
+	}
+}
+
 func Model(name string, capabilities ...provider.Capability) provider.ModelInfo {
 	return ProviderModel(DefaultProvider, name, capabilities...)
 }

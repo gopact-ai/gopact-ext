@@ -1,5 +1,9 @@
 # Changelog
 
+## models/openai/v0.3.2 - 2026-06-30
+
+- Add `WithModel` so model metadata can inherit the client provider without repeating `ProviderModel(...)` at call sites.
+
 ## models/openai/v0.3.1 - 2026-06-30
 
 - Add `NewClient` and feature options for API mode, model parameters, thinking, reasoning, HTTP clients, and model metadata.

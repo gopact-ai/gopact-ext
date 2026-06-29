@@ -280,6 +280,33 @@ func TestNewClientAppliesFeatureOptions(t *testing.T) {
 	}
 }
 
+func TestWithModelUsesClientProvider(t *testing.T) {
+	client, err := NewClient(
+		ProviderArk,
+		"https://example.test",
+		"token",
+		WithModel("ep-test", CapabilityStreaming),
+	)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	models, err := client.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models = %d, want 1", len(models))
+	}
+	model := models[0]
+	if model.Name != "ep-test" || model.Provider != ProviderArk {
+		t.Fatalf("model = %#v, want ark ep-test", model)
+	}
+	if len(model.Capabilities) != 1 || model.Capabilities[0] != CapabilityStreaming {
+		t.Fatalf("capabilities = %#v, want streaming", model.Capabilities)
+	}
+}
+
 func TestClientGenerateResponsesPostsImagePart(t *testing.T) {
 	var got struct {
 		Input []struct {
