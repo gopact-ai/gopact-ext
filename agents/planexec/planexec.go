@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"strings"
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact/graph"
@@ -15,6 +16,10 @@ var (
 	ErrPlannerRequired  = errors.New("planexec: planner is required")
 	ErrExecutorRequired = errors.New("planexec: executor is required")
 	ErrInvalidInput     = errors.New("planexec: invalid input")
+	// ErrModelRequired reports a missing model for NewModelAgent.
+	ErrModelRequired = errors.New("planexec: model is required")
+	// ErrModelPlanEmpty reports a model plan response without executable steps.
+	ErrModelPlanEmpty = errors.New("planexec: model returned no plan steps")
 )
 
 type State struct {
@@ -114,6 +119,91 @@ func New(planner Planner, executor Executor) (*Agent, error) {
 		return nil, err
 	}
 	return &Agent{runnable: runnable}, nil
+}
+
+// NewModelAgent creates a plan-execute agent backed by one response model.
+func NewModelAgent(model gopact.ResponseModel, opts ...gopact.ModelRequestOption) (*Agent, error) {
+	if model == nil {
+		return nil, ErrModelRequired
+	}
+	client := modelBackedAgent{model: model, opts: append([]gopact.ModelRequestOption(nil), opts...)}
+	return New(client, client)
+}
+
+type modelBackedAgent struct {
+	model gopact.ResponseModel
+	opts  []gopact.ModelRequestOption
+}
+
+func (a modelBackedAgent) Plan(ctx context.Context, request PlanRequest) ([]Step, error) {
+	text, err := a.generate(ctx,
+		gopact.SystemMessage("Split the task into executable steps. Return one step per line. Prefix each line with STEP:."),
+		gopact.UserMessage(request.Task),
+	)
+	if err != nil {
+		return nil, err
+	}
+	steps := modelPlanSteps(text)
+	if len(steps) == 0 {
+		return nil, ErrModelPlanEmpty
+	}
+	return steps, nil
+}
+
+func (a modelBackedAgent) Execute(ctx context.Context, step Step) (StepResult, error) {
+	text, err := a.generate(ctx,
+		gopact.SystemMessage("Execute the plan step. Return concise plain text."),
+		gopact.UserMessage(step.Instruction),
+	)
+	if err != nil {
+		return StepResult{}, err
+	}
+	return StepResult{StepID: step.ID, Output: firstModelLine(text)}, nil
+}
+
+func (a modelBackedAgent) generate(ctx context.Context, messages ...gopact.Message) (string, error) {
+	opts := append([]gopact.ModelRequestOption{gopact.WithMessages(messages...)}, a.opts...)
+	response, err := a.model.Generate(ctx, gopact.NewModelRequest(opts...))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(response.Message.Text()), nil
+}
+
+func modelPlanSteps(text string) []Step {
+	var steps []Step
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
+		if line == "" {
+			continue
+		}
+		upper := strings.ToUpper(line)
+		switch {
+		case strings.HasPrefix(upper, "STEP:"):
+			line = strings.TrimSpace(line[len("STEP:"):])
+		case strings.HasPrefix(upper, "STEP "):
+			line = strings.TrimSpace(strings.TrimLeft(line[len("STEP "):], "0123456789:.) \t"))
+		default:
+			line = strings.TrimSpace(strings.TrimLeft(line, "0123456789:.) \t"))
+		}
+		if line == "" {
+			continue
+		}
+		steps = append(steps, Step{
+			ID:          fmt.Sprintf("step-%d", len(steps)+1),
+			Instruction: line,
+		})
+	}
+	return steps
+}
+
+func firstModelLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) iter.Seq2[gopact.Event, error] {

@@ -166,6 +166,42 @@ func New(model gopact.ChatModel, registry *tools.Registry, opts ...Option) (*Age
 	return agent, nil
 }
 
+// NewModelAgent creates a ReAct agent from a full model provider.
+func NewModelAgent(model gopact.ResponseModel, opts ...Option) (*Agent, error) {
+	if model == nil {
+		return nil, ErrModelRequired
+	}
+	if streaming, ok := model.(gopact.StreamingResponseModel); ok {
+		return New(gopact.AdaptStreamingModel(streaming), nil, opts...)
+	}
+	return New(gopact.AdaptResponseModel(model), nil, opts...)
+}
+
+// WithTools registers visible local tools on the agent.
+func WithTools(ctx context.Context, toolList ...gopact.Tool) Option {
+	return func(agent *Agent) error {
+		if len(toolList) == 0 {
+			return nil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if agent.registry == nil {
+			agent.registry = tools.NewRegistry()
+		}
+		for _, tool := range toolList {
+			if err := agent.registry.Register(ctx, tool, tools.RegisterOptions{
+				Namespace:  "local",
+				Visibility: tools.VisibleTool,
+				Source:     tools.SourceLocal,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 // WithMemory enables memory recall before each model call.
 func WithMemory(store memory.Store, opts ...MemoryOption) Option {
 	return func(agent *Agent) error {
@@ -1209,6 +1245,8 @@ func inputState(input any) (State, error) {
 		return State{Messages: append([]gopact.Message(nil), value...)}, nil
 	case gopact.Message:
 		return State{Messages: []gopact.Message{value}}, nil
+	case string:
+		return State{Messages: []gopact.Message{gopact.UserMessage(value)}}, nil
 	default:
 		return State{}, fmt.Errorf("%w: got %T", ErrInvalidInput, input)
 	}

@@ -5,9 +5,30 @@ ReAct-style model/tool loop agent template for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/react@v0.1.1
+go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.0
 ```
 
 ## Scope
 
-This module externalizes the ReAct template from core. It keeps the template provider-neutral: callers inject a `gopact.ChatModel` and a `tools.Registry`.
+This module externalizes the ReAct template from core. It keeps the template provider-neutral: callers can pass any `gopact.ResponseModel`.
+
+## Usage
+
+```go
+agent, err := react.NewModelAgent(
+	model,
+	react.WithTools(ctx, uppercaseTool),
+)
+if err != nil {
+	return err
+}
+
+for event, err := range agent.Run(ctx, "uppercase gopact and answer briefly") {
+	if err != nil {
+		return err
+	}
+	_ = event
+}
+```
+
+Advanced callers can still use `New` with a custom `gopact.ChatModel` and `tools.Registry`.

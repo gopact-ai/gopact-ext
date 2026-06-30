@@ -21,7 +21,6 @@ import (
 	"github.com/gopact-ai/gopact/checkpoint"
 	"github.com/gopact-ai/gopact/gopacttest"
 	"github.com/gopact-ai/gopact/memory"
-	"github.com/gopact-ai/gopact/tools"
 )
 
 func TestAgnesIntegrationReActTemplate(t *testing.T) {
@@ -29,7 +28,7 @@ func TestAgnesIntegrationReActTemplate(t *testing.T) {
 	defer cancel()
 
 	client := newAgnesIntegrationModel(t)
-	agent, err := react.New(gopact.AdaptStreamingModel(client), nil, react.WithMaxIterations(2))
+	agent, err := react.NewModelAgent(client, react.WithMaxIterations(2))
 	if err != nil {
 		t.Fatalf("react.New() error = %v", err)
 	}
@@ -64,9 +63,8 @@ func TestAgnesIntegrationReActTemplateCapabilities(t *testing.T) {
 		t.Fatalf("Put(memory) error = %v", err)
 	}
 
-	registry := tools.NewRegistry()
 	toolInvoked := 0
-	if err := registry.Register(ctx, gopact.ToolFunc{
+	uppercase := gopact.ToolFunc{
 		SpecValue: gopact.ObjectToolSpec("uppercase", "Uppercase text.", gopact.RequiredStringField("text", "Text to uppercase.")),
 		InvokeFunc: func(_ context.Context, args json.RawMessage) (gopact.ToolResult, error) {
 			toolInvoked++
@@ -78,11 +76,9 @@ func TestAgnesIntegrationReActTemplateCapabilities(t *testing.T) {
 			}
 			return gopact.ToolResult{Content: strings.ToUpper(input.Text)}, nil
 		},
-	}, tools.RegisterOptions{Namespace: "local", Visibility: tools.VisibleTool}); err != nil {
-		t.Fatalf("Register() error = %v", err)
 	}
 
-	initialAgent, err := react.New(scriptedToolCallModel{}, registry, react.WithCheckpointStore(checkpoints))
+	initialAgent, err := react.New(scriptedToolCallModel{}, nil, react.WithTools(ctx, uppercase), react.WithCheckpointStore(checkpoints))
 	if err != nil {
 		t.Fatalf("react.New(initial) error = %v", err)
 	}
@@ -105,7 +101,8 @@ func TestAgnesIntegrationReActTemplateCapabilities(t *testing.T) {
 	verified := false
 	resumeAgent, err := react.New(
 		finalModel,
-		registry,
+		nil,
+		react.WithTools(ctx, uppercase),
 		react.WithCheckpointStore(checkpoints),
 		react.WithMemory(
 			memories,
@@ -194,23 +191,17 @@ func TestAgnesIntegrationPlanExecuteTemplate(t *testing.T) {
 	defer cancel()
 
 	model := newAgnesIntegrationModel(t)
-	agent, err := planexec.New(
-		planexec.PlannerFunc(func(ctx context.Context, request planexec.PlanRequest) ([]planexec.Step, error) {
-			return agnesIntegrationPlan(ctx, model, request.Task)
-		}),
-		planexec.ExecutorFunc(func(ctx context.Context, step planexec.Step) (planexec.StepResult, error) {
-			text, err := agnesIntegrationText(ctx, model, "Complete this step in one short sentence: "+step.Instruction)
-			if err != nil {
-				return planexec.StepResult{}, err
-			}
-			return planexec.StepResult{StepID: step.ID, Output: firstAgnesIntegrationLine(text)}, nil
-		}),
+	agent, err := planexec.NewModelAgent(
+		model,
+		gopact.WithMaxOutputTokens(512),
+		gopact.WithTemperature(0.2),
+		agnes.DisableThinking(),
 	)
 	if err != nil {
 		t.Fatalf("planexec.New() error = %v", err)
 	}
 
-	events, err := gopacttest.CollectEvents(agent.Run(ctx, planexec.State{Task: "validate the plan-execute template with Agnes"}))
+	events, err := gopacttest.CollectEvents(agent.Run(ctx, "Create exactly two short steps to validate the plan-execute template with Agnes."))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -228,8 +219,8 @@ func TestAgnesIntegrationPlanExecuteTemplate(t *testing.T) {
 	if !ok {
 		t.Fatalf("summary output type = %T, want planexec.State", events[6].StepSnapshot.Output)
 	}
-	if len(output.Steps) != 2 || len(output.Results) != 2 {
-		t.Fatalf("steps/results = %+v/%+v, want two Agnes-backed steps and results", output.Steps, output.Results)
+	if len(output.Steps) < 2 || len(output.Results) != len(output.Steps) {
+		t.Fatalf("steps/results = %+v/%+v, want multiple Agnes-backed steps and matching results", output.Steps, output.Results)
 	}
 	for _, result := range output.Results {
 		if strings.TrimSpace(result.Output) == "" {
@@ -296,42 +287,6 @@ func (m *agnesFinalModel) Stream(ctx context.Context, request gopact.ModelReques
 		}
 		yield(gopact.Event{Type: gopact.EventModelMessage, Message: &message}, nil)
 	}
-}
-
-func agnesIntegrationPlan(ctx context.Context, model gopact.ResponseModel, task string) ([]planexec.Step, error) {
-	text, err := agnesIntegrationText(ctx, model, "Return exactly two lines for this task. Each line must start with STEP: and contain one short executable instruction. Task: "+task)
-	if err != nil {
-		return nil, err
-	}
-	lines := agnesIntegrationStepLines(text)
-	if len(lines) != 2 {
-		return nil, fmt.Errorf("agnes plan = %q, want exactly two STEP lines", text)
-	}
-	return []planexec.Step{
-		{ID: "step-1", Instruction: lines[0]},
-		{ID: "step-2", Instruction: lines[1]},
-	}, nil
-}
-
-func agnesIntegrationStepLines(text string) []string {
-	var lines []string
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		line = strings.TrimPrefix(line, "-")
-		line = strings.TrimSpace(line)
-		if after, ok := strings.CutPrefix(strings.ToUpper(line), "STEP:"); ok {
-			line = strings.TrimSpace(line[len(line)-len(after):])
-		} else if after, ok := strings.CutPrefix(strings.ToUpper(line), "STEP "); ok {
-			line = strings.TrimSpace(line[len(line)-len(after):])
-		} else {
-			continue
-		}
-		line = strings.TrimSpace(strings.TrimLeft(line, "0123456789:.) \t"))
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return lines
 }
 
 func newAgnesIntegrationModel(t *testing.T) gopact.StreamingResponseModel {

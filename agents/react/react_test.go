@@ -40,6 +40,44 @@ func TestAgentDirectFinalMatchesGoldenTrajectory(t *testing.T) {
 	}
 }
 
+func TestNewModelAgentAdaptsResponseModelAndRegistersTools(t *testing.T) {
+	ctx := context.Background()
+	model := &scriptedResponseModel{
+		responses: []gopact.ModelResponse{{Message: gopact.Message{Role: gopact.RoleAssistant, Content: "done"}}},
+	}
+	agent, err := NewModelAgent(model, WithTools(ctx, gopact.ToolFunc{
+		SpecValue: gopact.ObjectToolSpec("echo", "Echoes text.", gopact.RequiredStringField("text", "Text to echo.")),
+		InvokeFunc: func(_ context.Context, args json.RawMessage) (gopact.ToolResult, error) {
+			return gopact.ToolResult{Content: string(args)}, nil
+		},
+	}))
+	if err != nil {
+		t.Fatalf("NewModelAgent() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(agent.Run(ctx, "hi"))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	gopacttest.RequireEventTypes(t, events,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventModelMessage,
+		gopact.EventNodeCompleted,
+		gopact.EventRunCompleted,
+	)
+	if len(model.requests) != 1 {
+		t.Fatalf("model requests = %d, want 1", len(model.requests))
+	}
+	request := model.requests[0]
+	if len(request.Messages) != 1 || request.Messages[0].Role != gopact.RoleUser || request.Messages[0].Content != "hi" {
+		t.Fatalf("request messages = %+v, want user string input", request.Messages)
+	}
+	if len(request.Tools) != 1 || request.Tools[0].Name != "local.echo" {
+		t.Fatalf("request tools = %+v, want local.echo", request.Tools)
+	}
+}
+
 func TestAgentToolCallThenFinalMatchesGoldenTrajectory(t *testing.T) {
 	ctx := context.Background()
 	registry := tools.NewRegistry()
@@ -2774,6 +2812,30 @@ func (m *scriptedModel) Generate(ctx context.Context, request gopact.ModelReques
 	}
 	if len(m.responses) == 0 {
 		return gopact.Message{Role: gopact.RoleAssistant, Content: "done"}, nil
+	}
+	response := m.responses[0]
+	m.responses = m.responses[1:]
+	return response, nil
+}
+
+type scriptedResponseModel struct {
+	responses []gopact.ModelResponse
+	errors    []error
+	requests  []gopact.ModelRequest
+}
+
+func (m *scriptedResponseModel) Generate(ctx context.Context, request gopact.ModelRequest) (gopact.ModelResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return gopact.ModelResponse{}, err
+	}
+	m.requests = append(m.requests, request)
+	if len(m.errors) > 0 {
+		err := m.errors[0]
+		m.errors = m.errors[1:]
+		return gopact.ModelResponse{}, err
+	}
+	if len(m.responses) == 0 {
+		return gopact.ModelResponse{Message: gopact.Message{Role: gopact.RoleAssistant, Content: "done"}}, nil
 	}
 	response := m.responses[0]
 	m.responses = m.responses[1:]
