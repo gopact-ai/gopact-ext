@@ -46,6 +46,25 @@ const (
 	APIResponses       API = "responses"
 )
 
+// ThinkingType controls provider thinking behavior when the OpenAI-compatible
+// endpoint exposes a thinking object.
+type ThinkingType string
+
+const (
+	ThinkingAuto     ThinkingType = "auto"
+	ThinkingEnabled  ThinkingType = "enabled"
+	ThinkingDisabled ThinkingType = "disabled"
+)
+
+// ReasoningEffort controls OpenAI-compatible reasoning effort.
+type ReasoningEffort string
+
+const (
+	ReasoningEffortLow    ReasoningEffort = "low"
+	ReasoningEffortMedium ReasoningEffort = "medium"
+	ReasoningEffortHigh   ReasoningEffort = "high"
+)
+
 const (
 	DefaultProvider = "openai"
 	ProviderOpenAI  = DefaultProvider
@@ -154,6 +173,26 @@ func WithHTTPClient(client *http.Client) Option {
 			cfg.httpClient = client
 		},
 	}
+}
+
+func WithThinking(thinkingType ThinkingType) gopact.ModelRequestOption {
+	return gopact.WithThinkingType(string(thinkingType))
+}
+
+func EnableThinking() gopact.ModelRequestOption {
+	return WithThinking(ThinkingEnabled)
+}
+
+func DisableThinking() gopact.ModelRequestOption {
+	return WithThinking(ThinkingDisabled)
+}
+
+func AutoThinking() gopact.ModelRequestOption {
+	return WithThinking(ThinkingAuto)
+}
+
+func WithReasoningEffort(effort ReasoningEffort) gopact.ModelRequestOption {
+	return gopact.WithReasoningEffort(string(effort))
 }
 
 func newClient(cfg clientConfig) (*Client, error) {

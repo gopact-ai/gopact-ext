@@ -168,8 +168,8 @@ func TestClientGeneratePostsParameters(t *testing.T) {
 				gopact.WithMaxOutputTokens(99),
 				gopact.WithTemperature(temp),
 				gopact.WithTopP(topP),
-				gopact.WithThinkingType("enabled"),
-				gopact.WithReasoningEffort("high"),
+				EnableThinking(),
+				WithReasoningEffort(ReasoningEffortHigh),
 			)
 			if err != nil {
 				t.Fatalf("NewClient() error = %v", err)
@@ -232,8 +232,8 @@ func TestNewClientAppliesFeatureOptions(t *testing.T) {
 		gopact.WithMaxOutputTokens(9),
 		gopact.WithTemperature(0.2),
 		gopact.WithTopP(0.8),
-		gopact.WithThinkingType("enabled"),
-		gopact.WithReasoningEffort("high"),
+		DisableThinking(),
+		WithReasoningEffort(ReasoningEffortHigh),
 		gopact.WithModel("ep-test"),
 		gopact.EnableToolCalling(),
 		gopact.EnableReasoning(),
@@ -254,8 +254,8 @@ func TestNewClientAppliesFeatureOptions(t *testing.T) {
 	if got.Temperature == nil || *got.Temperature != 0.2 || got.TopP == nil || *got.TopP != 0.8 {
 		t.Fatalf("sampling params = %#v/%#v, want 0.2/0.8", got.Temperature, got.TopP)
 	}
-	if got.Thinking == nil || got.Thinking.Type != "enabled" {
-		t.Fatalf("thinking = %#v, want enabled", got.Thinking)
+	if got.Thinking == nil || got.Thinking.Type != "disabled" {
+		t.Fatalf("thinking = %#v, want disabled", got.Thinking)
 	}
 	if got.Reasoning == nil || got.Reasoning.Effort != "high" {
 		t.Fatalf("reasoning = %#v, want high", got.Reasoning)

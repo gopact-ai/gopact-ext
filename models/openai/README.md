@@ -5,7 +5,7 @@ OpenAI-shaped Chat Completions and Responses provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.0
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.1
 ```
 
 ## Usage
@@ -18,7 +18,7 @@ client, err := openai.NewClient(
 	openai.WithChatCompletionsAPI(),
 	gopact.WithModel("openai/gpt-4o-mini"),
 	gopact.WithMaxOutputTokens(1024),
-	gopact.WithThinkingType("enabled"),
+	openai.EnableThinking(),
 	gopact.EnableToolCalling(),
 )
 if err != nil {
