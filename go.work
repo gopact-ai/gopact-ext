@@ -3,6 +3,7 @@ go 1.25.11
 use (
 	./agents/planexec
 	./agents/react
+	./models/agnes
 	./models/ark
 	./models/openai
 )
