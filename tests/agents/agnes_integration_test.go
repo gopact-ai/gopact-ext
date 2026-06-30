@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,12 @@ import (
 	"github.com/gopact-ai/gopact/checkpoint"
 	"github.com/gopact-ai/gopact/gopacttest"
 	"github.com/gopact-ai/gopact/memory"
+	"github.com/gopact-ai/gopact/provider"
+)
+
+const (
+	agnesIntegrationHTTPTimeout = 45 * time.Second
+	agnesIntegrationMaxAttempts = 2
 )
 
 func TestAgnesIntegrationReActTemplate(t *testing.T) {
@@ -193,9 +200,11 @@ func TestAgnesIntegrationPlanExecuteTemplate(t *testing.T) {
 	model := newAgnesIntegrationModel(t)
 	agent, err := planexec.NewModelAgent(
 		model,
-		gopact.WithMaxOutputTokens(512),
-		gopact.WithTemperature(0.2),
-		agnes.DisableThinking(),
+		planexec.WithModelOptions(
+			gopact.WithMaxOutputTokens(512),
+			gopact.WithTemperature(0.2),
+			agnes.DisableThinking(),
+		),
 	)
 	if err != nil {
 		t.Fatalf("planexec.New() error = %v", err)
@@ -292,53 +301,99 @@ func (m *agnesFinalModel) Stream(ctx context.Context, request gopact.ModelReques
 func newAgnesIntegrationModel(t *testing.T) gopact.StreamingResponseModel {
 	t.Helper()
 	loadAgnesIntegrationDotEnv(t)
-	apiKey := firstAgnesIntegrationEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK")
+	apiKey := firstAgnesIntegrationEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK", "GOPACT_LLM_TOKEN")
 	if apiKey == "" {
-		t.Skip("set GOPACT_AGNES_API_KEY")
+		t.Skip("set GOPACT_AGNES_API_KEY or GOPACT_LLM_TOKEN")
 	}
+	baseURL, model := agnesIntegrationEndpointConfig()
 	client, err := agnes.NewClient(
-		envOrAgnesIntegrationDefault("GOPACT_AGNES_BASEURL", agnes.DefaultBaseURL),
+		baseURL,
 		apiKey,
-		gopact.WithModel(envOrAgnesIntegrationDefault("GOPACT_AGNES_MODEL", agnes.DefaultModel)),
+		gopact.WithModel(model),
 		gopact.WithMaxOutputTokens(512),
 		gopact.WithTemperature(0.2),
 		gopact.EnableStreaming(),
 		agnes.DisableThinking(),
+		agnes.WithHTTPClient(&http.Client{Timeout: agnesIntegrationHTTPTimeout}),
 	)
 	if err != nil {
 		t.Fatalf("agnes.NewClient() error = %v", err)
 	}
-	return client
+	return agnesIntegrationRetryModel{model: client}
 }
 
-func agnesIntegrationText(ctx context.Context, model gopact.ResponseModel, prompt string) (string, error) {
-	response, err := model.Generate(ctx, gopact.NewModelRequest(
-		gopact.WithMessages(
-			gopact.SystemMessage("You are concise. Return plain text only."),
-			gopact.UserMessage(prompt),
-		),
-		gopact.WithMaxOutputTokens(512),
-		gopact.WithTemperature(0.2),
-		agnes.DisableThinking(),
-	))
-	if err != nil {
-		return "", err
-	}
-	text := strings.TrimSpace(response.Message.Text())
-	if text == "" {
-		return "", errors.New("agnes returned empty text")
-	}
-	return text, nil
+type agnesIntegrationRetryModel struct {
+	model gopact.StreamingResponseModel
 }
 
-func firstAgnesIntegrationLine(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "-*0123456789.) \t"))
-		if line != "" {
-			return line
+func (m agnesIntegrationRetryModel) Generate(ctx context.Context, request gopact.ModelRequest) (gopact.ModelResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= agnesIntegrationMaxAttempts; attempt++ {
+		response, err := m.model.Generate(ctx, request)
+		if err == nil || !isRetryableAgnesIntegrationError(err) || attempt == agnesIntegrationMaxAttempts {
+			return response, err
+		}
+		lastErr = err
+		if err := waitAgnesIntegrationRetry(ctx, attempt); err != nil {
+			return gopact.ModelResponse{}, fmt.Errorf("agnes integration retry after %w: %w", lastErr, err)
 		}
 	}
-	return ""
+	return gopact.ModelResponse{}, lastErr
+}
+
+func (m agnesIntegrationRetryModel) Stream(ctx context.Context, request gopact.ModelRequest) iter.Seq2[gopact.Event, error] {
+	return func(yield func(gopact.Event, error) bool) {
+		var lastErr error
+		for attempt := 1; attempt <= agnesIntegrationMaxAttempts; attempt++ {
+			events, err := gopacttest.CollectEvents(m.model.Stream(ctx, request))
+			if err != nil && isRetryableAgnesIntegrationError(err) && attempt < agnesIntegrationMaxAttempts {
+				lastErr = err
+				if err := waitAgnesIntegrationRetry(ctx, attempt); err != nil {
+					yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: request.IDs, Err: err}, fmt.Errorf("agnes integration retry after %w: %w", lastErr, err))
+					return
+				}
+				continue
+			}
+			yieldAgnesIntegrationEvents(events, err, request.IDs, yield)
+			return
+		}
+		yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: request.IDs, Err: lastErr}, lastErr)
+	}
+}
+
+func yieldAgnesIntegrationEvents(events []gopact.Event, streamErr error, ids gopact.RuntimeIDs, yield func(gopact.Event, error) bool) {
+	for i, event := range events {
+		var err error
+		if streamErr != nil && i == len(events)-1 {
+			err = streamErr
+		}
+		if !yield(event, err) || err != nil {
+			return
+		}
+	}
+	if streamErr != nil {
+		yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: ids, Err: streamErr}, streamErr)
+	}
+}
+
+func isRetryableAgnesIntegrationError(err error) bool {
+	switch provider.Classify(err) {
+	case provider.ErrorTimeout, provider.ErrorRateLimited, provider.ErrorUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func waitAgnesIntegrationRetry(ctx context.Context, attempt int) error {
+	timer := time.NewTimer(time.Duration(attempt) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func hasAgnesIntegrationEvent(events []gopact.Event, eventType gopact.EventType) bool {
@@ -409,7 +464,14 @@ func firstAgnesIntegrationEnv(keys ...string) string {
 	return ""
 }
 
-func envOrAgnesIntegrationDefault(key, fallback string) string {
+func agnesIntegrationEndpointConfig() (string, string) {
+	if firstAgnesIntegrationEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK") != "" {
+		return agnesIntegrationEnvOrDefault("GOPACT_AGNES_BASEURL", agnes.DefaultBaseURL), agnesIntegrationEnvOrDefault("GOPACT_AGNES_MODEL", agnes.DefaultModel)
+	}
+	return agnesIntegrationEnvOrDefault("GOPACT_LLM_BASEURL", agnes.DefaultBaseURL), agnesIntegrationEnvOrDefault("GOPACT_LLM_MODEL", agnes.DefaultModel)
+}
+
+func agnesIntegrationEnvOrDefault(key, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 		return value
 	}

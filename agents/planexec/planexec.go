@@ -20,6 +20,10 @@ var (
 	ErrModelRequired = errors.New("planexec: model is required")
 	// ErrModelPlanEmpty reports a model plan response without executable steps.
 	ErrModelPlanEmpty = errors.New("planexec: model returned no plan steps")
+	// ErrApprovalPolicyRequired reports a missing approval policy.
+	ErrApprovalPolicyRequired = errors.New("planexec: approval policy is required")
+	// ErrCheckpointRequired reports a missing checkpoint store.
+	ErrCheckpointRequired = errors.New("planexec: checkpoint store is required")
 )
 
 type State struct {
@@ -71,15 +75,66 @@ func (f ExecutorFunc) Execute(ctx context.Context, step Step) (StepResult, error
 }
 
 type Agent struct {
-	runnable *graph.Runnable[State]
+	runnable         *graph.Runnable[State]
+	approval         gopact.Policy
+	checkpointer     graph.Checkpointer[State]
+	checkpointLoader graph.CheckpointLoader[State]
+	modelOptions     []gopact.ModelRequestOption
 }
 
-func New(planner Planner, executor Executor) (*Agent, error) {
+// Option configures a plan-execute agent.
+type Option func(*Agent) error
+
+// WithApprovalPolicy requires approval before executing planned steps.
+func WithApprovalPolicy(policy gopact.Policy) Option {
+	return func(agent *Agent) error {
+		if policy == nil {
+			return ErrApprovalPolicyRequired
+		}
+		agent.approval = policy
+		return nil
+	}
+}
+
+// WithCheckpointStore writes checkpoints and resumes from the latest checkpoint for the run ThreadID.
+func WithCheckpointStore(store graph.CheckpointStore[State]) Option {
+	return func(agent *Agent) error {
+		if store == nil {
+			return ErrCheckpointRequired
+		}
+		agent.checkpointer = store
+		agent.checkpointLoader = store
+		return nil
+	}
+}
+
+// WithModelOptions applies request options to every model-backed planner and executor call.
+func WithModelOptions(opts ...gopact.ModelRequestOption) Option {
+	return func(agent *Agent) error {
+		for _, opt := range opts {
+			if opt != nil {
+				agent.modelOptions = append(agent.modelOptions, opt)
+			}
+		}
+		return nil
+	}
+}
+
+func New(planner Planner, executor Executor, opts ...Option) (*Agent, error) {
 	if planner == nil {
 		return nil, ErrPlannerRequired
 	}
 	if executor == nil {
 		return nil, ErrExecutorRequired
+	}
+	agent := &Agent{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(agent); err != nil {
+			return nil, err
+		}
 	}
 
 	g := graph.New[State]()
@@ -92,6 +147,52 @@ func New(planner Planner, executor Executor) (*Agent, error) {
 		state.Trace = append(state.Trace, "plan")
 		return state, nil
 	})
+	if agent.approval != nil {
+		g.AddNode("approval", func(ctx context.Context, state State) (State, error) {
+			ids, _ := gopact.RuntimeIDsFromContext(ctx)
+			req := gopact.PolicyRequest{
+				IDs:      ids,
+				Boundary: gopact.PolicyBoundaryNode,
+				Action:   gopact.PolicyActionExec,
+				Input:    state,
+				Metadata: map[string]any{
+					"template": "planexec",
+					"node":     "execute",
+				},
+			}
+			decision, err := agent.approval.Decide(ctx, req)
+			if err != nil {
+				return state, fmt.Errorf("planexec: approval policy: %w", err)
+			}
+			switch decision.Action {
+			case gopact.PolicyAllow:
+				state.Trace = append(state.Trace, "approval")
+				return state, nil
+			case gopact.PolicyReview:
+				return state, gopact.Interrupt(gopact.InterruptRecord{
+					ID:         "planexec:approval",
+					Type:       gopact.InterruptApproval,
+					Reason:     decision.Reason,
+					RequiredBy: "planexec.execute",
+					ResumeSchema: gopact.JSONSchema{
+						"type":                 "object",
+						"additionalProperties": false,
+						"required":             []any{"approved"},
+						"properties": map[string]any{
+							"approved": map[string]any{"type": "boolean", "const": true},
+						},
+					},
+					Metadata: map[string]any{
+						"template":              "planexec",
+						"policy_boundary":       req.Boundary,
+						"policy_request_action": req.Action,
+					},
+				})
+			default:
+				return state, &gopact.PolicyDeniedError{Decision: decision, Request: req}
+			}
+		})
+	}
 	g.AddNode("execute", func(ctx context.Context, state State) (State, error) {
 		state.Results = state.Results[:0]
 		for _, step := range state.Steps {
@@ -110,7 +211,12 @@ func New(planner Planner, executor Executor) (*Agent, error) {
 		return state, nil
 	})
 	g.AddEdge(graph.Start, "plan")
-	g.AddEdge("plan", "execute")
+	if agent.approval != nil {
+		g.AddEdge("plan", "approval")
+		g.AddEdge("approval", "execute")
+	} else {
+		g.AddEdge("plan", "execute")
+	}
 	g.AddEdge("execute", "summarize")
 	g.AddEdge("summarize", graph.End)
 
@@ -118,16 +224,26 @@ func New(planner Planner, executor Executor) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Agent{runnable: runnable}, nil
+	agent.runnable = runnable
+	return agent, nil
 }
 
 // NewModelAgent creates a plan-execute agent backed by one response model.
-func NewModelAgent(model gopact.ResponseModel, opts ...gopact.ModelRequestOption) (*Agent, error) {
+func NewModelAgent(model gopact.ResponseModel, opts ...Option) (*Agent, error) {
 	if model == nil {
 		return nil, ErrModelRequired
 	}
-	client := modelBackedAgent{model: model, opts: append([]gopact.ModelRequestOption(nil), opts...)}
-	return New(client, client)
+	agent := &Agent{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(agent); err != nil {
+			return nil, err
+		}
+	}
+	client := modelBackedAgent{model: model, opts: append([]gopact.ModelRequestOption(nil), agent.modelOptions...)}
+	return New(client, client, opts...)
 }
 
 type modelBackedAgent struct {
@@ -163,7 +279,11 @@ func (a modelBackedAgent) Execute(ctx context.Context, step Step) (StepResult, e
 
 func (a modelBackedAgent) generate(ctx context.Context, messages ...gopact.Message) (string, error) {
 	opts := append([]gopact.ModelRequestOption{gopact.WithMessages(messages...)}, a.opts...)
-	response, err := a.model.Generate(ctx, gopact.NewModelRequest(opts...))
+	request := gopact.NewModelRequest(opts...)
+	if ids, ok := gopact.RuntimeIDsFromContext(ctx); ok && !ids.IsZero() {
+		request.IDs = request.IDs.WithDefaults(ids)
+	}
+	response, err := a.model.Generate(ctx, request)
 	if err != nil {
 		return "", err
 	}
@@ -208,6 +328,9 @@ func firstModelLine(text string) string {
 
 func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
+		if ctx == nil {
+			ctx = context.TODO()
+		}
 		state, err := inputState(input)
 		if err != nil {
 			yield(gopact.Event{Type: gopact.EventRunFailed, Err: err}, err)
@@ -222,7 +345,23 @@ func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) it
 		runCfg := gopact.ResolveRunOptions(opts...)
 		invokeOpts := []graph.InvokeOption{}
 		if !runCfg.IDs.IsZero() {
+			ctx = gopact.ContextWithRuntimeIDs(ctx, runCfg.IDs)
 			invokeOpts = append(invokeOpts, graph.WithRuntimeIDs(runCfg.IDs))
+		}
+		if runCfg.StepExport != nil {
+			invokeOpts = append(invokeOpts, graph.WithStepExport(*runCfg.StepExport))
+		}
+		if runCfg.ResumeRequest != nil {
+			invokeOpts = append(invokeOpts, graph.WithResumeRequest(*runCfg.ResumeRequest))
+		}
+		if runCfg.JSONSchemaValidator != nil {
+			invokeOpts = append(invokeOpts, graph.WithJSONSchemaValidator(runCfg.JSONSchemaValidator))
+		}
+		if a.checkpointer != nil {
+			invokeOpts = append(invokeOpts, graph.WithCheckpointer(a.checkpointer))
+		}
+		if a.checkpointLoader != nil {
+			invokeOpts = append(invokeOpts, graph.WithCheckpointLoader(a.checkpointLoader))
 		}
 		for event, err := range a.runnable.Run(ctx, state, invokeOpts...) {
 			if !yield(event, err) {

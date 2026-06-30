@@ -18,6 +18,10 @@ This module externalizes the ReAct template from core. It keeps the template pro
 agent, err := react.NewModelAgent(
 	model,
 	react.WithTools(ctx, uppercaseTool),
+	react.WithModelOptions(
+		gopact.WithMaxOutputTokens(1024),
+		gopact.WithTemperature(0.2),
+	),
 )
 if err != nil {
 	return err

@@ -5,6 +5,7 @@ package agnes
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,12 +19,11 @@ import (
 func TestAgnesIntegrationFullFeature(t *testing.T) {
 	loadDotEnv(t)
 
-	apiKey := firstEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK")
+	apiKey := firstEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK", "GOPACT_LLM_TOKEN")
 	if apiKey == "" {
-		t.Skip("set GOPACT_AGNES_API_KEY")
+		t.Skip("set GOPACT_AGNES_API_KEY or GOPACT_LLM_TOKEN")
 	}
-	baseURL := envOrDefault("GOPACT_AGNES_BASEURL", DefaultBaseURL)
-	model := envOrDefault("GOPACT_AGNES_MODEL", DefaultModel)
+	baseURL, model := agnesEndpointConfig()
 
 	tests := []struct {
 		name string
@@ -61,6 +61,59 @@ func TestAgnesIntegrationFullFeature(t *testing.T) {
 	}
 }
 
+func TestAgnesIntegrationStructuredOutput(t *testing.T) {
+	loadDotEnv(t)
+
+	apiKey := firstEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK", "GOPACT_LLM_TOKEN")
+	if apiKey == "" {
+		t.Skip("set GOPACT_AGNES_API_KEY or GOPACT_LLM_TOKEN")
+	}
+	baseURL, model := agnesEndpointConfig()
+	client, err := NewClient(
+		baseURL,
+		apiKey,
+		gopact.WithModel(model),
+		gopact.WithMaxOutputTokens(512),
+		gopact.WithTemperature(0.1),
+		DisableThinking(),
+		gopact.EnableStructuredOutput(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	schema := gopact.JSONSchema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []any{"status", "summary"},
+		"properties": map[string]any{
+			"status":  map[string]any{"type": "string", "const": "ok"},
+			"summary": map[string]any{"type": "string", "minLength": 1},
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	response, err := client.Generate(ctx, gopact.NewModelRequest(
+		gopact.WithMessages(gopact.UserMessage("Return a JSON object with status ok and a short summary about gopact structured output.")),
+		gopact.WithResponseSchema(schema),
+		gopact.WithMaxOutputTokens(512),
+		gopact.WithTemperature(0.1),
+		DisableThinking(),
+		gopact.EnableStructuredOutput(),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(response.Message.Text())), &payload); err != nil {
+		t.Fatalf("structured output is not JSON: %v", err)
+	}
+	if err := gopact.ValidateJSONSchemaValue(schema, payload); err != nil {
+		t.Fatalf("structured output schema validation failed: %v", err)
+	}
+}
+
 func requireProviderConformance(t *testing.T, harness providerconformance.ProviderConformanceHarness) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -70,6 +123,13 @@ func requireProviderConformance(t *testing.T, harness providerconformance.Provid
 			t.Fatalf("provider conformance case %q failed: %v", result.Case, result.Err)
 		}
 	}
+}
+
+func agnesEndpointConfig() (string, string) {
+	if firstEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK") != "" {
+		return envOrDefault("GOPACT_AGNES_BASEURL", DefaultBaseURL), envOrDefault("GOPACT_AGNES_MODEL", DefaultModel)
+	}
+	return envOrDefault("GOPACT_LLM_BASEURL", DefaultBaseURL), envOrDefault("GOPACT_LLM_MODEL", DefaultModel)
 }
 
 func loadDotEnv(t *testing.T) {
@@ -82,7 +142,7 @@ func loadDotEnv(t *testing.T) {
 		path := filepath.Join(dir, ".env")
 		file, err := os.Open(path)
 		if err == nil {
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
 				setDotEnvLine(scanner.Text())

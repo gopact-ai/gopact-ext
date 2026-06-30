@@ -15,7 +15,12 @@ This module provides a small provider-neutral plan-execute graph. Callers can pa
 ## Usage
 
 ```go
-agent, err := planexec.NewModelAgent(model)
+agent, err := planexec.NewModelAgent(
+	model,
+	planexec.WithModelOptions(gopact.WithMaxOutputTokens(1024)),
+	planexec.WithApprovalPolicy(policy),
+	planexec.WithCheckpointStore(checkpoints),
+)
 if err != nil {
 	return err
 }

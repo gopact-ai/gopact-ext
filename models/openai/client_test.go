@@ -3,9 +3,11 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact/gopacttest/providerconformance"
@@ -201,6 +203,98 @@ func TestClientGeneratePostsParameters(t *testing.T) {
 	}
 }
 
+func TestClientGeneratePostsResponseSchema(t *testing.T) {
+	schema := gopact.JSONSchema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []any{"answer"},
+		"properties": map[string]any{
+			"answer": map[string]any{"type": "string"},
+		},
+	}
+	tests := []struct {
+		name string
+		api  API
+		path string
+	}{
+		{name: "chat completions", api: APIChatCompletions, path: "/chat/completions"},
+		{name: "responses", api: APIResponses, path: "/responses"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got struct {
+				ResponseFormat *struct {
+					Type       string `json:"type"`
+					JSONSchema *struct {
+						Name   string         `json:"name"`
+						Schema map[string]any `json:"schema"`
+						Strict bool           `json:"strict"`
+					} `json:"json_schema"`
+				} `json:"response_format"`
+				Text *struct {
+					Format *struct {
+						Type   string         `json:"type"`
+						Name   string         `json:"name"`
+						Schema map[string]any `json:"schema"`
+						Strict bool           `json:"strict"`
+					} `json:"format"`
+				} `json:"text"`
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.path {
+					t.Fatalf("path = %q, want %s", r.URL.Path, tt.path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatalf("Decode() error = %v", err)
+				}
+				if tt.api == APIResponses {
+					_, _ = w.Write([]byte(`{"output_text": "{\"answer\":\"ok\"}"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"choices": [{"message": {"role": "assistant", "content": "{\"answer\":\"ok\"}"}}]}`))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(ProviderOpenAI, server.URL, "token", WithAPI(tt.api), gopact.WithModel("test-model"))
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			_, err = client.Generate(context.Background(), gopact.NewModelRequest(
+				gopact.WithMessages(gopact.UserMessage("answer as json")),
+				gopact.WithResponseSchema(schema),
+			))
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			if tt.api == APIResponses {
+				if got.Text == nil || got.Text.Format == nil {
+					t.Fatalf("text.format = %#v, want structured output schema", got.Text)
+				}
+				format := got.Text.Format
+				if format.Type != "json_schema" || format.Name != "gopact_response" || !format.Strict || format.Schema["type"] != "object" {
+					t.Fatalf("responses text.format = %#v, want strict json_schema object", format)
+				}
+				if got.ResponseFormat != nil {
+					t.Fatalf("response_format = %#v, want nil for responses api", got.ResponseFormat)
+				}
+				return
+			}
+			if got.ResponseFormat == nil || got.ResponseFormat.JSONSchema == nil {
+				t.Fatalf("response_format = %#v, want structured output schema", got.ResponseFormat)
+			}
+			format := got.ResponseFormat.JSONSchema
+			if got.ResponseFormat.Type != "json_schema" || format.Name != "gopact_response" || !format.Strict || format.Schema["type"] != "object" {
+				t.Fatalf("chat response_format = %#v, want strict json_schema object", got.ResponseFormat)
+			}
+			if got.Text != nil {
+				t.Fatalf("text = %#v, want nil for chat completions api", got.Text)
+			}
+		})
+	}
+}
+
 func TestClientGeneratePostsChatTemplateKwargs(t *testing.T) {
 	var got struct {
 		ChatTemplate map[string]any `json:"chat_template_kwargs"`
@@ -236,6 +330,75 @@ func TestClientGeneratePostsChatTemplateKwargs(t *testing.T) {
 	}
 	if got.ChatTemplate["enable_thinking"] != true {
 		t.Fatalf("chat_template_kwargs = %#v, want enable_thinking true", got.ChatTemplate)
+	}
+}
+
+func TestClientGeneratePostsToolSpecs(t *testing.T) {
+	tests := []struct {
+		name string
+		api  API
+		path string
+	}{
+		{name: "chat completions", api: APIChatCompletions, path: "/chat/completions"},
+		{name: "responses", api: APIResponses, path: "/responses"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got struct {
+				Tools []struct {
+					Type     string `json:"type"`
+					Name     string `json:"name"`
+					Function struct {
+						Name        string         `json:"name"`
+						Description string         `json:"description"`
+						Parameters  map[string]any `json:"parameters"`
+					} `json:"function"`
+					Description string         `json:"description"`
+					Parameters  map[string]any `json:"parameters"`
+				} `json:"tools"`
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.path {
+					t.Fatalf("path = %q, want %s", r.URL.Path, tt.path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatalf("Decode() error = %v", err)
+				}
+				if tt.api == APIResponses {
+					_, _ = w.Write([]byte(`{"output_text": "ok"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"choices": [{"message": {"role": "assistant", "content": "ok"}}]}`))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(ProviderOpenAI, server.URL, "token", WithAPI(tt.api), gopact.WithModel("test-model"))
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			_, err = client.Generate(context.Background(), gopact.NewModelRequest(
+				gopact.WithMessages(gopact.UserMessage("use the lookup tool")),
+				gopact.WithTools(gopact.ObjectToolSpec("lookup", "Lookup docs.", gopact.RequiredStringField("q", "Query."))),
+			))
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			if len(got.Tools) != 1 || got.Tools[0].Type != "function" {
+				t.Fatalf("tools = %#v, want one function tool", got.Tools)
+			}
+			tool := got.Tools[0]
+			if tt.api == APIResponses {
+				if tool.Name != "lookup" || tool.Description != "Lookup docs." || tool.Parameters["type"] != "object" {
+					t.Fatalf("responses tool = %#v, want lookup schema", tool)
+				}
+				return
+			}
+			if tool.Function.Name != "lookup" || tool.Function.Description != "Lookup docs." || tool.Function.Parameters["type"] != "object" {
+				t.Fatalf("chat tool = %#v, want lookup schema", tool)
+			}
+		})
 	}
 }
 
@@ -691,8 +854,75 @@ func TestClientRejectsInvalidOptions(t *testing.T) {
 }
 
 func TestClientGenerateReturnsProviderErrorForNonOKResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	tests := []struct {
+		status int
+		want   provider.ErrorClass
+	}{
+		{status: http.StatusUnauthorized, want: provider.ErrorUnauthorized},
+		{status: http.StatusForbidden, want: provider.ErrorUnauthorized},
+		{status: http.StatusBadRequest, want: provider.ErrorInvalidRequest},
+		{status: http.StatusTooManyRequests, want: provider.ErrorRateLimited},
+		{status: http.StatusBadGateway, want: provider.ErrorUnavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.want)+" status", func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(tt.status), tt.status)
+			}))
+			defer server.Close()
+
+			client, err := NewClient("openrouter", server.URL, "token", gopact.WithModel("test-model"))
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			_, err = client.Generate(context.Background(), gopact.ModelRequest{})
+			if provider.Classify(err) != tt.want {
+				t.Fatalf("Classify() = %q, want %q; err = %v", provider.Classify(err), tt.want, err)
+			}
+		})
+	}
+}
+
+func TestClientStreamReturnsProviderErrorForNonOKResponse(t *testing.T) {
+	tests := []struct {
+		status int
+		want   provider.ErrorClass
+	}{
+		{status: http.StatusUnauthorized, want: provider.ErrorUnauthorized},
+		{status: http.StatusForbidden, want: provider.ErrorUnauthorized},
+		{status: http.StatusBadRequest, want: provider.ErrorInvalidRequest},
+		{status: http.StatusTooManyRequests, want: provider.ErrorRateLimited},
+		{status: http.StatusBadGateway, want: provider.ErrorUnavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.want)+" status", func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(tt.status), tt.status)
+			}))
+			defer server.Close()
+
+			client, err := NewClient("openrouter", server.URL, "token", gopact.WithModel("test-model"))
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			for _, err := range client.Stream(context.Background(), gopact.ModelRequest{}) {
+				if provider.Classify(err) != tt.want {
+					t.Fatalf("Classify() = %q, want %q; err = %v", provider.Classify(err), tt.want, err)
+				}
+				return
+			}
+			t.Fatal("Stream() ended without provider error")
+		})
+	}
+}
+
+func TestClientGenerateClassifiesRequestTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-time.After(time.Second)
 	}))
 	defer server.Close()
 
@@ -700,11 +930,36 @@ func TestClientGenerateReturnsProviderErrorForNonOKResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
 
-	_, err = client.Generate(context.Background(), gopact.ModelRequest{})
-	if provider.Classify(err) != provider.ErrorRateLimited {
-		t.Fatalf("Classify() = %q, want rate_limited; err = %v", provider.Classify(err), err)
+	_, err = client.Generate(ctx, gopact.ModelRequest{})
+	if provider.Classify(err) != provider.ErrorTimeout {
+		t.Fatalf("Classify() = %q, want timeout; err = %v", provider.Classify(err), err)
 	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context deadline cause", err)
+	}
+}
+
+func TestClientStreamClassifiesRequestTimeout(t *testing.T) {
+	client, err := NewClient("openrouter", "https://example.test", "token", gopact.WithModel("test-model"))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	for _, err := range client.Stream(ctx, gopact.ModelRequest{}) {
+		if provider.Classify(err) != provider.ErrorTimeout {
+			t.Fatalf("Classify() = %q, want timeout; err = %v", provider.Classify(err), err)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("error = %v, want context deadline cause", err)
+		}
+		return
+	}
+	t.Fatal("Stream() ended without timeout error")
 }
 
 func TestClientProviderConformance(t *testing.T) {

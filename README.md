@@ -6,6 +6,7 @@ This repository uses one Git repo with separate Go modules per extension, so use
 
 ## Modules
 
+- `agents/agenttool`: A2A agent-as-tool adapter.
 - `agents/planexec`: Plan-Execute agent template.
 - `agents/react`: ReAct-style model/tool loop agent template.
 - `models/agnes`: Agnes AI OpenAI-compatible text model provider adapter.
@@ -15,6 +16,7 @@ This repository uses one Git repo with separate Go modules per extension, so use
 ## Install
 
 ```bash
+go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.0
 go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.0
 go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.0
 go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.2
@@ -28,12 +30,14 @@ Extension modules are versioned with Go submodule tags such as `models/openai/v0
 
 ```bash
 git diff --check
-go test -count=1 ./models/openai/...
-go test -count=1 ./models/ark/...
-go test -count=1 ./models/agnes/...
-go vet ./models/openai/...
-go vet ./models/ark/...
-go vet ./models/agnes/...
+for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go mod tidy); done
+git diff --exit-code
+for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -count=1 ./...); done
+for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -race -count=1 ./...); done
+for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go vet ./...); done
+for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && golangci-lint run ./...); done
+for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -coverprofile=coverage.out ./...); done
+for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && govulncheck ./...); done
 ```
 
 ## Integration Tests
@@ -41,10 +45,11 @@ go vet ./models/agnes/...
 Provider modules include opt-in real-service tests behind the `integration` build tag:
 
 ```bash
-GOWORK=off go test -tags=integration -count=1 ./models/openai/...
-GOWORK=off go test -tags=integration -count=1 ./models/ark/...
-GOWORK=off go test -tags=integration -count=1 ./models/agnes/...
-go test -tags=integration -count=1 ./tests/agents/...
+cp .env.example .env
+(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)
+(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)
+(cd models/agnes && go test -tags=integration -count=1 ./...)
+(cd tests/agents && go test -tags=integration -count=1 ./...)
 ```
 
-The tests load `.env` from the repo root when present. Keep `.env` local and set provider credentials with `GOPACT_OPENAI_API_KEY`, `GOPACT_ARK_API_KEY` or `GOPACT_LLM_TOKEN`, and `GOPACT_AGNES_API_KEY`.
+The tests load `.env` from the repo root when present. Keep `.env` local. Agnes and Ark accept the shared `GOPACT_LLM_BASEURL`, `GOPACT_LLM_TOKEN`, and `GOPACT_LLM_MODEL` keys; provider-specific keys such as `GOPACT_AGNES_API_KEY`, `GOPACT_ARK_API_KEY`, and `GOPACT_OPENAI_API_KEY` still work.

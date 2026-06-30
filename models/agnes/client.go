@@ -2,6 +2,8 @@
 package agnes
 
 import (
+	"net/http"
+
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact-ext/models/openai"
 )
@@ -25,6 +27,10 @@ func NewClient(baseURL, apiKey string, opts ...gopact.ModelRequestOption) (*open
 		gopact.WithModel(DefaultModel),
 	}
 	return openai.NewClient(DefaultProvider, baseURL, apiKey, append(defaults, opts...)...)
+}
+
+func WithHTTPClient(client *http.Client) gopact.ModelRequestOption {
+	return openai.WithHTTPClient(client)
 }
 
 func EnableThinking() gopact.ModelRequestOption {

@@ -80,6 +80,7 @@ type Agent struct {
 	registry          *tools.Registry
 	maxIterations     int
 	routeHint         string
+	modelOptions      []gopact.ModelRequestOption
 	memoryStore       memory.Store
 	memoryQuery       MemoryQueryFunc
 	memoryExtract     MemoryExtractFunc
@@ -392,6 +393,18 @@ func WithRouteHint(routeHint string) Option {
 	}
 }
 
+// WithModelOptions applies provider-neutral model request options to each model call.
+func WithModelOptions(opts ...gopact.ModelRequestOption) Option {
+	return func(agent *Agent) error {
+		for _, opt := range opts {
+			if opt != nil {
+				agent.modelOptions = append(agent.modelOptions, opt)
+			}
+		}
+		return nil
+	}
+}
+
 // Run implements gopact.Runnable.
 func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
@@ -463,6 +476,9 @@ func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) it
 			}
 		}
 
+		if !ids.IsZero() {
+			ctx = gopact.ContextWithRuntimeIDs(ctx, ids)
+		}
 		if !emit(reactEvent(gopact.EventRunStarted, ids, "", 0, nil, nil), nil) {
 			return
 		}
@@ -875,12 +891,13 @@ func (a *Agent) callModel(ctx context.Context, yield func(gopact.Event, error) b
 		failNode(yield, ids, nodeCallModel, step, input, copyState(state), err, startedAt)
 		return State{}, gopact.Message{}, false
 	}
-	request := gopact.ModelRequest{
+	request := gopact.ApplyModelRequestOptions(gopact.ModelRequest{
 		Messages:  modelMessages,
 		Tools:     toolSpecs,
 		RouteHint: a.routeHint,
 		IDs:       ids,
-	}
+	}, a.modelOptions...)
+	request.IDs = request.IDs.WithDefaults(ids)
 	var message gopact.Message
 	if streamer, ok := a.model.(gopact.StreamingModel); ok {
 		response, ok := streamModelResponse(ctx, yield, streamer, request, ids, step, input, copyState(state), startedAt)

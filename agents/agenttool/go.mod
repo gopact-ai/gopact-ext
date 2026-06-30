@@ -1,4 +1,4 @@
-module github.com/gopact-ai/gopact-ext/models/openai
+module github.com/gopact-ai/gopact-ext/agents/agenttool
 
 go 1.25.11
 

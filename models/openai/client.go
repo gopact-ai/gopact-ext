@@ -94,6 +94,9 @@ const (
 const (
 	toolTypeFunction = "function"
 
+	responseFormatJSONSchema = "json_schema"
+	responseSchemaName       = "gopact_response"
+
 	responsesItemFunctionCall       = "function_call"
 	responsesItemFunctionCallOutput = "function_call_output"
 	responsesItemMessage            = "message"
@@ -277,6 +280,10 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 		return gopact.ModelResponse{}, errors.New("openai: client is nil")
 	}
 	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			req = c.prepareRequest(req)
+			return gopact.ModelResponse{}, provider.NewError(provider.ErrorTimeout, err, provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
+		}
 		return gopact.ModelResponse{}, err
 	}
 
@@ -296,7 +303,7 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return gopact.ModelResponse{}, provider.NewError(provider.ErrorUnavailable, err, provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
+		return gopact.ModelResponse{}, provider.NewError(classForTransportError(err), err, provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -354,6 +361,7 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 			Stream:          boolPtr(stream),
 			Thinking:        thinkingConfig(req.ThinkingType),
 			Reasoning:       reasoningConfig(req.ReasoningEffort),
+			Text:            responsesTextConfig(req.ResponseSchema),
 		})
 		return endpointResponses, body, wrapMarshalErr(err)
 	}
@@ -370,6 +378,7 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 		Thinking:        thinkingConfig(req.ThinkingType),
 		ChatTemplate:    chatTemplateKwargs(req.Metadata),
 		ReasoningEffort: req.ReasoningEffort,
+		ResponseFormat:  chatResponseFormat(req.ResponseSchema),
 	})
 	return endpointChatCompletions, body, wrapMarshalErr(err)
 }
@@ -400,6 +409,41 @@ func reasoningConfig(effort string) *reasoning {
 		return nil
 	}
 	return &reasoning{Effort: effort}
+}
+
+func chatResponseFormat(schema gopact.JSONSchema) *chatStructuredOutput {
+	format := structuredOutputSchema(schema)
+	if format == nil {
+		return nil
+	}
+	return &chatStructuredOutput{
+		Type:       responseFormatJSONSchema,
+		JSONSchema: format,
+	}
+}
+
+func responsesTextConfig(schema gopact.JSONSchema) *responsesText {
+	format := structuredOutputSchema(schema)
+	if format == nil {
+		return nil
+	}
+	return &responsesText{Format: responsesStructuredOutput{
+		Type:   responseFormatJSONSchema,
+		Name:   format.Name,
+		Schema: format.Schema,
+		Strict: format.Strict,
+	}}
+}
+
+func structuredOutputSchema(schema gopact.JSONSchema) *structuredOutput {
+	if len(schema) == 0 {
+		return nil
+	}
+	return &structuredOutput{
+		Name:   responseSchemaName,
+		Schema: schema,
+		Strict: true,
+	}
 }
 
 func chatTemplateKwargs(metadata map[string]any) map[string]any {
@@ -439,6 +483,12 @@ func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[
 			return
 		}
 		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				req = c.prepareRequest(req)
+				err = provider.NewError(provider.ErrorTimeout, err, provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
+				yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+				return
+			}
 			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 			return
 		}
@@ -463,7 +513,7 @@ func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			err = provider.NewError(provider.ErrorUnavailable, err, provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
+			err = provider.NewError(classForTransportError(err), err, provider.WithErrorProvider(c.provider), provider.WithErrorModel(req.Model))
 			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 			return
 		}
@@ -494,17 +544,36 @@ func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[
 }
 
 type chatCompletionRequest struct {
-	Model           string             `json:"model"`
-	Messages        []chatMessage      `json:"messages"`
-	Tools           []chatTool         `json:"tools,omitempty"`
-	MaxTokens       *int               `json:"max_tokens,omitempty"`
-	Temperature     *float64           `json:"temperature,omitempty"`
-	TopP            *float64           `json:"top_p,omitempty"`
-	Stream          *bool              `json:"stream,omitempty"`
-	StreamOptions   *chatStreamOptions `json:"stream_options,omitempty"`
-	Thinking        *thinking          `json:"thinking,omitempty"`
-	ChatTemplate    map[string]any     `json:"chat_template_kwargs,omitempty"`
-	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
+	Model           string                `json:"model"`
+	Messages        []chatMessage         `json:"messages"`
+	Tools           []chatTool            `json:"tools,omitempty"`
+	MaxTokens       *int                  `json:"max_tokens,omitempty"`
+	Temperature     *float64              `json:"temperature,omitempty"`
+	TopP            *float64              `json:"top_p,omitempty"`
+	Stream          *bool                 `json:"stream,omitempty"`
+	StreamOptions   *chatStreamOptions    `json:"stream_options,omitempty"`
+	Thinking        *thinking             `json:"thinking,omitempty"`
+	ChatTemplate    map[string]any        `json:"chat_template_kwargs,omitempty"`
+	ReasoningEffort string                `json:"reasoning_effort,omitempty"`
+	ResponseFormat  *chatStructuredOutput `json:"response_format,omitempty"`
+}
+
+type chatStructuredOutput struct {
+	Type       string            `json:"type"`
+	JSONSchema *structuredOutput `json:"json_schema,omitempty"`
+}
+
+type structuredOutput struct {
+	Name   string            `json:"name"`
+	Schema gopact.JSONSchema `json:"schema"`
+	Strict bool              `json:"strict"`
+}
+
+type responsesStructuredOutput struct {
+	Type   string            `json:"type"`
+	Name   string            `json:"name"`
+	Schema gopact.JSONSchema `json:"schema"`
+	Strict bool              `json:"strict"`
 }
 
 type chatMessage struct {
@@ -601,6 +670,11 @@ type responsesRequest struct {
 	Stream          *bool                `json:"stream,omitempty"`
 	Thinking        *thinking            `json:"thinking,omitempty"`
 	Reasoning       *reasoning           `json:"reasoning,omitempty"`
+	Text            *responsesText       `json:"text,omitempty"`
+}
+
+type responsesText struct {
+	Format responsesStructuredOutput `json:"format"`
 }
 
 type responsesInputItem struct {
@@ -1187,4 +1261,11 @@ func classForStatus(status int) provider.ErrorClass {
 		}
 		return provider.ErrorUnknown
 	}
+}
+
+func classForTransportError(err error) provider.ErrorClass {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return provider.ErrorTimeout
+	}
+	return provider.ErrorUnavailable
 }

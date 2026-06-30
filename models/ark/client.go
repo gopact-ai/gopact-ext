@@ -9,6 +9,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/gopact-ai/gopact"
@@ -127,11 +128,7 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 	}
 	req = gopact.ApplyModelRequestOptions(req)
 
-	resp, err := c.client.CreateChatCompletion(ctx, arkmodel.CreateChatCompletionRequest{
-		Model:    req.Model,
-		Messages: convertMessages(req.Messages),
-		Tools:    convertTools(req.Tools),
-	})
+	resp, err := c.client.CreateChatCompletion(ctx, newChatCompletionRequest(req))
 	if err != nil {
 		return gopact.ModelResponse{}, c.wrapError(err, req.Model)
 	}
@@ -151,13 +148,72 @@ func (c *Client) Generate(ctx context.Context, req gopact.ModelRequest) (gopact.
 
 func (c *Client) Stream(ctx context.Context, req gopact.ModelRequest) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
-		response, err := c.Generate(ctx, req)
-		if err != nil {
+		if c == nil {
+			err := errors.New("ark: client is nil")
 			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
 			return
 		}
-		yield(gopact.Event{Type: gopact.EventModelMessage, IDs: req.IDs, Message: &response.Message, Usage: &response.Usage}, nil)
+		if err := ctx.Err(); err != nil {
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+			return
+		}
+		req = gopact.ApplyModelRequestOptions(req)
+		arkReq := newChatCompletionRequest(req)
+		arkReq.StreamOptions = &arkmodel.StreamOptions{IncludeUsage: true}
+
+		stream, err := c.client.CreateChatCompletionStream(ctx, arkReq)
+		if err != nil {
+			err = c.wrapError(err, req.Model)
+			yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+			return
+		}
+		defer func() {
+			_ = stream.Close()
+		}()
+
+		message := gopact.Message{Role: gopact.RoleAssistant}
+		var content strings.Builder
+		toolCalls := map[int]*streamToolCall{}
+		var usage *gopact.Usage
+		for {
+			chunk, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				err = c.wrapError(err, req.Model)
+				yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: req.IDs, Err: err}, err)
+				return
+			}
+			if chunk.Usage != nil {
+				u := toUsage(*chunk.Usage)
+				usage = &u
+			}
+			for _, choice := range chunk.Choices {
+				if choice == nil {
+					continue
+				}
+				if choice.Delta.Role != "" {
+					message.Role = gopact.Role(choice.Delta.Role)
+				}
+				content.WriteString(choice.Delta.Content)
+				applyStreamToolCallDeltas(toolCalls, choice.Delta.ToolCalls)
+			}
+		}
+		message.Content = content.String()
+		message.ToolCalls = streamToolCalls(toolCalls)
+		yield(gopact.Event{Type: gopact.EventModelMessage, IDs: req.IDs, Message: &message, Usage: usage}, nil)
 	}
+}
+
+func newChatCompletionRequest(req gopact.ModelRequest) arkmodel.CreateChatCompletionRequest {
+	arkReq := arkmodel.CreateChatCompletionRequest{
+		Model:    req.Model,
+		Messages: convertMessages(req.Messages),
+		Tools:    convertTools(req.Tools),
+	}
+	applyModelRequestOptions(&arkReq, req)
+	return arkReq
 }
 
 func convertMessages(messages []gopact.Message) []*arkmodel.ChatCompletionMessage {
@@ -203,6 +259,91 @@ func convertTools(tools []gopact.ToolSpec) []*arkmodel.Tool {
 	return converted
 }
 
+func applyModelRequestOptions(out *arkmodel.CreateChatCompletionRequest, req gopact.ModelRequest) {
+	if req.Budget.MaxOutputTokens > 0 {
+		out.MaxTokens = &req.Budget.MaxOutputTokens
+	}
+	if req.Temperature != nil {
+		temperature := float32(*req.Temperature)
+		out.Temperature = &temperature
+	}
+	if req.TopP != nil {
+		topP := float32(*req.TopP)
+		out.TopP = &topP
+	}
+	if req.ThinkingType != "" {
+		out.Thinking = &arkmodel.Thinking{Type: arkmodel.ThinkingType(req.ThinkingType)}
+	}
+	if req.ReasoningEffort != "" {
+		effort := arkmodel.ReasoningEffort(req.ReasoningEffort)
+		out.ReasoningEffort = &effort
+	}
+	if len(req.ResponseSchema) > 0 {
+		out.ResponseFormat = &arkmodel.ResponseFormat{
+			Type: arkmodel.ResponseFormatJSONSchema,
+			JSONSchema: &arkmodel.ResponseFormatJSONSchemaJSONSchemaParam{
+				Name:   "gopact_response",
+				Schema: req.ResponseSchema,
+				Strict: true,
+			},
+		}
+	}
+}
+
+type streamToolCall struct {
+	ID        string
+	Name      string
+	Arguments strings.Builder
+}
+
+func applyStreamToolCallDeltas(calls map[int]*streamToolCall, deltas []*arkmodel.ToolCall) {
+	for _, delta := range deltas {
+		if delta == nil {
+			continue
+		}
+		index := len(calls)
+		if delta.Index != nil {
+			index = *delta.Index
+		}
+		call := calls[index]
+		if call == nil {
+			call = &streamToolCall{}
+			calls[index] = call
+		}
+		if delta.ID != "" {
+			call.ID = delta.ID
+		}
+		if delta.Function.Name != "" {
+			call.Name = delta.Function.Name
+		}
+		call.Arguments.WriteString(delta.Function.Arguments)
+	}
+}
+
+func streamToolCalls(calls map[int]*streamToolCall) []gopact.ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(calls))
+	for index := range calls {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	out := make([]gopact.ToolCall, 0, len(indexes))
+	for _, index := range indexes {
+		call := calls[index]
+		if call == nil || (call.ID == "" && call.Name == "" && call.Arguments.Len() == 0) {
+			continue
+		}
+		out = append(out, gopact.ToolCall{
+			ID:        call.ID,
+			Name:      call.Name,
+			Arguments: []byte(call.Arguments.String()),
+		})
+	}
+	return out
+}
+
 func convertToolCalls(toolCalls []gopact.ToolCall) []*arkmodel.ToolCall {
 	converted := make([]*arkmodel.ToolCall, 0, len(toolCalls))
 	for _, toolCall := range toolCalls {
@@ -242,6 +383,14 @@ func arkText(content *arkmodel.ChatCompletionMessageContent) string {
 		}
 	}
 	return b.String()
+}
+
+func toUsage(usage arkmodel.Usage) gopact.Usage {
+	return gopact.Usage{
+		InputTokens:  usage.PromptTokens,
+		OutputTokens: usage.CompletionTokens,
+		TotalTokens:  usage.TotalTokens,
+	}
 }
 
 func derefString(value *string) string {
