@@ -1,0 +1,13 @@
+[
+  {
+    "type": "run_started"
+  },
+  {
+    "type": "step_imported",
+    "node": "call_model",
+    "step": 1
+  },
+  {
+    "type": "run_completed"
+  }
+]

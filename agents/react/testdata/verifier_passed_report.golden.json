@@ -1,0 +1,33 @@
+[
+  {
+    "type": "run_started"
+  },
+  {
+    "type": "node_started",
+    "node": "call_model",
+    "step": 1
+  },
+  {
+    "type": "model_message",
+    "node": "call_model",
+    "step": 1
+  },
+  {
+    "type": "node_completed",
+    "node": "call_model",
+    "step": 1
+  },
+  {
+    "type": "node_started",
+    "node": "verify",
+    "step": 2
+  },
+  {
+    "type": "node_completed",
+    "node": "verify",
+    "step": 2
+  },
+  {
+    "type": "run_completed"
+  }
+]

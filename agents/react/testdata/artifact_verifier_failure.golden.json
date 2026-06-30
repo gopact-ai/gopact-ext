@@ -1,0 +1,10 @@
+[
+  {
+    "type": "run_started"
+  },
+  {
+    "type": "run_failed",
+    "node": "call_model",
+    "step": 1
+  }
+]

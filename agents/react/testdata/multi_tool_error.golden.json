@@ -1,0 +1,50 @@
+[
+  {
+    "type": "run_started"
+  },
+  {
+    "type": "node_started",
+    "node": "call_model",
+    "step": 1
+  },
+  {
+    "type": "model_message",
+    "node": "call_model",
+    "step": 1
+  },
+  {
+    "type": "node_completed",
+    "node": "call_model",
+    "step": 1
+  },
+  {
+    "type": "node_started",
+    "node": "call_tool",
+    "step": 2
+  },
+  {
+    "type": "tool_call",
+    "node": "call_tool",
+    "step": 2
+  },
+  {
+    "type": "tool_result",
+    "node": "call_tool",
+    "step": 2
+  },
+  {
+    "type": "tool_call",
+    "node": "call_tool",
+    "step": 2
+  },
+  {
+    "type": "node_failed",
+    "node": "call_tool",
+    "step": 2
+  },
+  {
+    "type": "run_failed",
+    "node": "call_tool",
+    "step": 2
+  }
+]
