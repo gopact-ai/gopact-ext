@@ -6,4 +6,5 @@ use (
 	./models/agnes
 	./models/ark
 	./models/openai
+	./tests/agents
 )
