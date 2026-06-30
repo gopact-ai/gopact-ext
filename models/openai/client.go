@@ -71,6 +71,8 @@ const (
 	ProviderArk     = "ark"
 )
 
+const metadataChatTemplateKwargs = "openai.chat_template_kwargs"
+
 const (
 	endpointChatCompletions = "/chat/completions"
 	endpointResponses       = "/responses"
@@ -193,6 +195,19 @@ func AutoThinking() gopact.ModelRequestOption {
 
 func WithReasoningEffort(effort ReasoningEffort) gopact.ModelRequestOption {
 	return gopact.WithReasoningEffort(string(effort))
+}
+
+func WithChatTemplateKwargs(kwargs map[string]any) gopact.ModelRequestOption {
+	return gopact.ModelRequestOptionFunc(func(request *gopact.ModelRequest) {
+		if request.Metadata == nil {
+			request.Metadata = map[string]any{}
+		}
+		request.Metadata[metadataChatTemplateKwargs] = copyAnyMap(kwargs)
+	})
+}
+
+func WithChatTemplateThinking(enabled bool) gopact.ModelRequestOption {
+	return WithChatTemplateKwargs(map[string]any{"enable_thinking": enabled})
 }
 
 func newClient(cfg clientConfig) (*Client, error) {
@@ -318,6 +333,7 @@ func (c *Client) prepareRequest(req gopact.ModelRequest) gopact.ModelRequest {
 	if req.ReasoningEffort == "" {
 		req.ReasoningEffort = c.defaults.ReasoningEffort
 	}
+	req.Metadata = mergeAnyMap(c.defaults.Metadata, req.Metadata)
 	if len(req.Capabilities) == 0 {
 		req.Capabilities = append([]gopact.Capability(nil), c.defaults.Capabilities...)
 	} else {
@@ -352,6 +368,7 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 		Stream:          boolPtr(stream),
 		StreamOptions:   streamOptions(stream),
 		Thinking:        thinkingConfig(req.ThinkingType),
+		ChatTemplate:    chatTemplateKwargs(req.Metadata),
 		ReasoningEffort: req.ReasoningEffort,
 	})
 	return endpointChatCompletions, body, wrapMarshalErr(err)
@@ -383,6 +400,14 @@ func reasoningConfig(effort string) *reasoning {
 		return nil
 	}
 	return &reasoning{Effort: effort}
+}
+
+func chatTemplateKwargs(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+	kwargs, _ := metadata[metadataChatTemplateKwargs].(map[string]any)
+	return copyAnyMap(kwargs)
 }
 
 func streamOptions(stream bool) *chatStreamOptions {
@@ -478,6 +503,7 @@ type chatCompletionRequest struct {
 	Stream          *bool              `json:"stream,omitempty"`
 	StreamOptions   *chatStreamOptions `json:"stream_options,omitempty"`
 	Thinking        *thinking          `json:"thinking,omitempty"`
+	ChatTemplate    map[string]any     `json:"chat_template_kwargs,omitempty"`
 	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
 }
 
@@ -830,6 +856,31 @@ func convertResponsesContent(message gopact.Message) []responsesInputContent {
 		}
 	}
 	return converted
+}
+
+func copyAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func mergeAnyMap(base, override map[string]any) map[string]any {
+	out := copyAnyMap(base)
+	if len(override) == 0 {
+		return out
+	}
+	if out == nil {
+		out = map[string]any{}
+	}
+	for key, value := range override {
+		out[key] = value
+	}
+	return out
 }
 
 func convertToolCalls(toolCalls []gopact.ToolCall) []chatToolCall {

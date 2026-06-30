@@ -201,6 +201,44 @@ func TestClientGeneratePostsParameters(t *testing.T) {
 	}
 }
 
+func TestClientGeneratePostsChatTemplateKwargs(t *testing.T) {
+	var got struct {
+		ChatTemplate map[string]any `json:"chat_template_kwargs"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices": [{"message": {"role": "assistant", "content": "ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(
+		ProviderOpenAI,
+		server.URL,
+		"token",
+		gopact.WithModel("test-model"),
+		WithChatTemplateThinking(false),
+	)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.Generate(context.Background(), gopact.NewModelRequest(
+		gopact.WithMessages(gopact.Message{Role: gopact.RoleUser, Content: "hi"}),
+		WithChatTemplateThinking(true),
+	))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if got.ChatTemplate["enable_thinking"] != true {
+		t.Fatalf("chat_template_kwargs = %#v, want enable_thinking true", got.ChatTemplate)
+	}
+}
+
 func TestNewClientAppliesFeatureOptions(t *testing.T) {
 	var got struct {
 		MaxOutputTokens *int     `json:"max_output_tokens"`

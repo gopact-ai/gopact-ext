@@ -5,7 +5,7 @@ OpenAI-shaped Chat Completions and Responses provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.1
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.2
 ```
 
 ## Usage
@@ -48,6 +48,7 @@ Supported:
 - SSE streaming via `Stream` for Chat Completions and Responses.
 - Tool definitions, assistant `tool_calls`, and streamed function call arguments.
 - `gopact.ModelRequest` options for model, capabilities, budget, sampling, thinking, and reasoning parameters.
+- Provider-specific `chat_template_kwargs` for OpenAI-compatible Chat Completions providers.
 - Text and image content parts for Responses requests.
 - Reasoning summaries mapped to `gopact.ContentPartReasoning`.
 - Usage metadata and provider error classification.
