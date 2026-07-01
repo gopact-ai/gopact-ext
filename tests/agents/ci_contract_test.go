@@ -115,6 +115,22 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 	}
 }
 
+func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
+	for path, install := range map[string]string{
+		"agents/planexec/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.5",
+		"agents/react/README.md":          "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.5",
+		"devagent/filesnapshot/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.4",
+		"devagent/gitdiff/README.md":      "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.4",
+		"models/agnes/README.md":          "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.5",
+		"models/ark/README.md":            "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.5",
+		"models/openai/README.md":         "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.7",
+	} {
+		if !strings.Contains(readRepoText(t, "../../"+path), install) {
+			t.Fatalf("%s missing install command %q", path, install)
+		}
+	}
+}
+
 func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 	matrix := readRepoText(t, "../../FEATURES.md")
 	readme := readRepoText(t, "../../README.md")
