@@ -29,6 +29,11 @@ func TestRepositoryCIMockGateIsDocumented(t *testing.T) {
 			t.Fatalf("README missing mock CI command %q", command)
 		}
 	}
+	for _, action := range []string{"actions/checkout@v7", "actions/setup-go@v6"} {
+		if !strings.Contains(workflow, action) {
+			t.Fatalf("workflow missing current GitHub Action %q", action)
+		}
+	}
 
 	for _, forbidden := range []string{"-tags=integration", ".env"} {
 		if strings.Contains(workflow, forbidden) {
