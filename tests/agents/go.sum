@@ -1,5 +1,7 @@
-github.com/gopact-ai/gopact v0.0.5 h1:AlgynhTbxE8DLXeFpfhgmiKJdaFYTjQvm54Ij15mfro=
-github.com/gopact-ai/gopact v0.0.5/go.mod h1:lozSDuCDxwNrJpJnIOUensxOeEG9roEemegbzjpb4YU=
+github.com/gopact-ai/gopact v0.0.7 h1:VFtHSKAkMgCmv22C3HXzkCrdnq6zf8ExzHfohIWCkNQ=
+github.com/gopact-ai/gopact v0.0.7/go.mod h1:lozSDuCDxwNrJpJnIOUensxOeEG9roEemegbzjpb4YU=
+github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.0 h1:M+D4cIzq3xdqRQ9ajPRLS3zlbbpukrJxHZXXMOQhQMs=
+github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.0/go.mod h1:tKQWSqcCMtwLx+pYnLLQ6TA71Vo1Tp/e5/ImNKHu0Y4=
 github.com/gopact-ai/gopact-ext/agents/planexec v0.2.0 h1:gxwBX1AILZksuA83szmfyLJXNxyxBbsOp/uV+VM5IcQ=
 github.com/gopact-ai/gopact-ext/agents/planexec v0.2.0/go.mod h1:YIbpZwwFiPbQs6QI3rebkIjGYmNHuoIWWa0kCpA5vGo=
 github.com/gopact-ai/gopact-ext/agents/react v0.2.0 h1:qUEx53DEyxYCviHCWqzLBLXwxKQOqfCJb2qO8vhqkSE=

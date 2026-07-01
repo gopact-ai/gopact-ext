@@ -64,6 +64,8 @@ func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 }
 
 func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
+	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.7"
+
 	for _, module := range []string{
 		"agents/agenttool",
 		"agents/planexec",
@@ -74,8 +76,8 @@ func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 		"tests/agents",
 	} {
 		goMod := readRepoText(t, filepath.Join("../..", module, "go.mod"))
-		if !strings.Contains(goMod, "github.com/gopact-ai/gopact v0.0.5") {
-			t.Fatalf("%s/go.mod must require github.com/gopact-ai/gopact v0.0.5", module)
+		if !strings.Contains(goMod, currentCoreSDK) {
+			t.Fatalf("%s/go.mod must require %s", module, currentCoreSDK)
 		}
 	}
 }
