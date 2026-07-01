@@ -91,7 +91,7 @@ func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 
 func TestAgnesProviderUsesCurrentOpenAIExtension(t *testing.T) {
 	goMod := readRepoText(t, "../../models/agnes/go.mod")
-	const currentOpenAIExtension = "github.com/gopact-ai/gopact-ext/models/openai v0.5.11"
+	const currentOpenAIExtension = "github.com/gopact-ai/gopact-ext/models/openai v0.5.12"
 	if !strings.Contains(goMod, currentOpenAIExtension) {
 		t.Fatalf("models/agnes/go.mod must require %s", currentOpenAIExtension)
 	}
