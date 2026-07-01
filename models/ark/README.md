@@ -5,7 +5,7 @@ Volcengine Ark Chat Completions provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.2
+go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.4
 ```
 
 ## Usage

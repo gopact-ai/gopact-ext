@@ -5,7 +5,7 @@ File snapshot scanner for Dev Agent evidence collection.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.1
+go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.3
 ```
 
 ## Usage

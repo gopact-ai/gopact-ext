@@ -64,7 +64,7 @@ func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 }
 
 func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
-	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.12"
+	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.13"
 
 	for _, module := range []string{
 		"agents/agenttool",
