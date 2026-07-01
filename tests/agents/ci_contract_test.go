@@ -94,7 +94,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 	agentsGoMod := readRepoText(t, "go.mod")
 
 	for _, requirement := range []string{
-		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.8",
+		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.9",
 		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.9",
 		"github.com/gopact-ai/gopact-ext/agents/react v0.2.8",
 		"github.com/gopact-ai/gopact-ext/models/agnes v0.1.9",
@@ -105,7 +105,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 	}
 
 	for _, install := range []string{
-		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.8",
+		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.9",
 		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.9",
 		"go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.8",
 		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.7",

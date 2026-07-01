@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `agents/agenttool/v0.1.8`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `agents/agenttool/v0.1.9`: expose the optional task `metadata` field in the agent-as-tool schema.
 - `agents/planexec/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
 - `agents/react/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
 - `devagent/filesnapshot/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.25`.

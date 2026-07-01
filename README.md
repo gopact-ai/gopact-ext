@@ -20,7 +20,7 @@ See [FEATURES.md](./FEATURES.md) for the executable capability coverage matrix.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.8
+go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.9
 go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.9
 go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.8
 go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.7
