@@ -79,6 +79,10 @@ func New(agent a2a.Agent, opts ...Option) (gopact.ToolFunc, error) {
 			Name:   "task_id",
 			Schema: gopact.JSONSchema{"type": "string", "description": "Optional child task id."},
 		},
+		gopact.ToolField{
+			Name:   "metadata",
+			Schema: gopact.JSONSchema{"type": "object", "description": "Optional metadata passed to the child task."},
+		},
 	)
 	return gopact.ToolFunc{
 		SpecValue: spec,

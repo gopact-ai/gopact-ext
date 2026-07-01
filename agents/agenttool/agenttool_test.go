@@ -63,16 +63,20 @@ func TestNewStreamsAgentAndReturnsToolResultWithEvidence(t *testing.T) {
 	if spec.Name != "planner" || spec.Description != "Drafts plans." {
 		t.Fatalf("spec = %+v, want card-derived tool spec", spec)
 	}
+	requireSpecProperty(t, spec, "metadata", "object")
 
 	result, err := tool.Invoke(
 		gopact.ContextWithRuntimeIDs(context.Background(), wantIDs),
-		[]byte(`{"input":"ship it","task_id":"task-1"}`),
+		[]byte(`{"input":"ship it","task_id":"task-1","metadata":{"tenant":"acme"}}`),
 	)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
 	if gotTask.ID != "task-1" || gotTask.Input != "ship it" || gotTask.IDs != wantIDs {
 		t.Fatalf("task = %+v, want input, task id, and runtime ids", gotTask)
+	}
+	if gotTask.Metadata["tenant"] != "acme" {
+		t.Fatalf("task metadata = %+v, want tenant metadata", gotTask.Metadata)
 	}
 	if gotContextIDs != wantIDs {
 		t.Fatalf("context ids = %+v, want %+v", gotContextIDs, wantIDs)
@@ -181,6 +185,22 @@ func TestNewRejectsNilAgent(t *testing.T) {
 	_, err := New(nil)
 	if !errors.Is(err, ErrAgentRequired) {
 		t.Fatalf("New(nil) error = %v, want %v", err, ErrAgentRequired)
+	}
+}
+
+func requireSpecProperty(t *testing.T, spec gopact.ToolSpec, name string, wantType string) {
+	t.Helper()
+
+	properties, ok := spec.InputSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("spec input schema properties = %T, want map", spec.InputSchema["properties"])
+	}
+	property, ok := properties[name].(gopact.JSONSchema)
+	if !ok {
+		t.Fatalf("spec input schema missing %q property: %+v", name, properties)
+	}
+	if property["type"] != wantType {
+		t.Fatalf("spec property %q type = %v, want %s", name, property["type"], wantType)
 	}
 }
 
