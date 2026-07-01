@@ -2,6 +2,15 @@
 
 ## 2026-07-01
 
+- `agents/agenttool/v0.1.6`: require `github.com/gopact-ai/gopact v0.0.19`.
+- `agents/planexec/v0.2.6`: require `github.com/gopact-ai/gopact v0.0.19`.
+- `agents/react/v0.2.6`: require `github.com/gopact-ai/gopact v0.0.19`.
+- `devagent/filesnapshot/v0.1.5`: require `github.com/gopact-ai/gopact v0.0.19`.
+- `devagent/gitdiff/v0.1.5`: require `github.com/gopact-ai/gopact v0.0.19`.
+- `models/openai/v0.5.8`: require `github.com/gopact-ai/gopact v0.0.19`.
+- `models/ark/v0.2.6`: require `github.com/gopact-ai/gopact v0.0.19`.
+- `models/agnes/v0.1.6`: require `github.com/gopact-ai/gopact v0.0.19`.
+- Update cross-template agent tests to consume the new extension tags and require `github.com/gopact-ai/gopact v0.0.19`.
 - `agents/agenttool/v0.1.5`: require `github.com/gopact-ai/gopact v0.0.16`.
 - `agents/planexec/v0.2.5`: require `github.com/gopact-ai/gopact v0.0.16`.
 - `agents/react/v0.2.5`: require `github.com/gopact-ai/gopact v0.0.16`.
