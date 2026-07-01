@@ -1,5 +1,5 @@
-github.com/gopact-ai/gopact v0.0.27 h1:0fMo2pH1HBWp4yO1l7DA2qd0K1S5RlJKGEdxY9wMH6k=
-github.com/gopact-ai/gopact v0.0.27/go.mod h1:lozSDuCDxwNrJpJnIOUensxOeEG9roEemegbzjpb4YU=
+github.com/gopact-ai/gopact v0.0.28 h1:+jqd/dHUk0jpJ/pob5it+j4dzuZ2u5fFYdWdCopzHTs=
+github.com/gopact-ai/gopact v0.0.28/go.mod h1:lozSDuCDxwNrJpJnIOUensxOeEG9roEemegbzjpb4YU=
 github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.10 h1:OiCpRVBu4hqS1NJXd1fuSENWJMlnG1iqqLSgg8PVBCA=
 github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.10/go.mod h1:Gl3KI0tBoEHcu4era59P9koLvbDdwrIqoHdD6YrZyrI=
 github.com/gopact-ai/gopact-ext/agents/planexec v0.2.10 h1:8tAu/MrfqOE9EG8GvCxKhjuVPnNldzu19Dj5hd8ER4s=
