@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Require `github.com/gopact-ai/gopact v0.0.25` across extension modules so failed tool invocations preserve child evidence.
+- Cover ReAct -> Agent-as-Tool -> Plan-Execute child failure propagation in cross-template mock tests.
+
 ## 2026-07-01
 
 - `agents/agenttool/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.21`.

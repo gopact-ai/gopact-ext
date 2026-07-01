@@ -301,6 +301,85 @@ func TestReActTemplateCanUsePlanExecAgentAsToolWithMockModel(t *testing.T) {
 	requireMockModelOptions(t, childModel.requests, 1024, 0.2, "disabled")
 }
 
+func TestReActTemplateFailsWhenPlanExecAgentToolFailsWithMockModel(t *testing.T) {
+	parentIDs := gopact.RuntimeIDs{
+		RunID:    "run-agent-as-tool-failure-mock",
+		ThreadID: "thread-agent-as-tool",
+		CallID:   "parent-call",
+		TraceID:  "trace-agent-as-tool",
+	}
+	childIDs := parentIDs
+	childIDs.ParentCallID = parentIDs.CallID
+	childIDs.CallID = "call-delegate-plan"
+	childErr := errors.New("child executor failed")
+
+	parentModel := &mockResponseModel{responses: []gopact.ModelResponse{
+		{Message: gopact.Message{
+			Role: gopact.RoleAssistant,
+			ToolCalls: []gopact.ToolCall{{
+				ID:        childIDs.CallID,
+				Name:      "local.delegate_plan",
+				Arguments: []byte(`{"input":"ship the example repository","task_id":"child-task-1"}`),
+			}},
+		}},
+		{Message: gopact.AssistantMessage("should not run")},
+	}}
+	child, err := planexec.New(
+		planexec.PlannerFunc(func(context.Context, planexec.PlanRequest) ([]planexec.Step, error) {
+			return []planexec.Step{{ID: "draft", Instruction: "draft example"}}, nil
+		}),
+		planexec.ExecutorFunc(func(context.Context, planexec.Step) (planexec.StepResult, error) {
+			return planexec.StepResult{}, childErr
+		}),
+	)
+	if err != nil {
+		t.Fatalf("planexec.New() error = %v", err)
+	}
+	childA2A, err := a2a.NewRunnableAgent(
+		a2a.AgentCard{Name: "planexec_child", Description: "Delegated planning agent."},
+		child,
+		a2a.WithRunnableInputMapper(func(_ context.Context, task a2a.Task) (any, error) {
+			return task.Input, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("a2a.NewRunnableAgent() error = %v", err)
+	}
+	childTool, err := agenttool.New(childA2A, agenttool.WithName("delegate_plan"))
+	if err != nil {
+		t.Fatalf("agenttool.New() error = %v", err)
+	}
+	parent, err := react.NewModelAgent(parentModel, react.WithTools(context.Background(), childTool))
+	if err != nil {
+		t.Fatalf("react.NewModelAgent() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(parent.Run(context.Background(), "delegate planning", gopact.WithRuntimeIDs(parentIDs)))
+	if !errors.Is(err, childErr) {
+		t.Fatalf("Run() error = %v, want child executor failure", err)
+	}
+	gopacttest.RequireEventTypes(t, events,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventModelMessage,
+		gopact.EventNodeCompleted,
+		gopact.EventNodeStarted,
+		gopact.EventToolCall,
+		gopact.EventA2ATaskFailed,
+		gopact.EventNodeFailed,
+		gopact.EventRunFailed,
+	)
+	if events[6].Metadata["agent_name"] != "planexec_child" ||
+		events[6].Metadata["a2a_task_id"] != "child-task-1" ||
+		events[6].Metadata["a2a_status"] != string(a2a.TaskStatusFailed) {
+		t.Fatalf("child failure metadata = %+v, want agent-as-tool failure evidence", events[6].Metadata)
+	}
+	if len(parentModel.requests) != 1 {
+		t.Fatalf("parent model requests = %d, want no final call after child failure", len(parentModel.requests))
+	}
+	requireMockModelRuntimeIDs(t, parentModel.requests, parentModel.contextIDs, parentIDs)
+}
+
 type mockResponseModel struct {
 	responses  []gopact.ModelResponse
 	requests   []gopact.ModelRequest
