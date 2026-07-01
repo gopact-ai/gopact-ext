@@ -4,6 +4,8 @@ Official extensions for `github.com/gopact-ai/gopact`.
 
 This repository uses one Git repo with separate Go modules per extension, so users can depend on only what they need.
 
+See [FEATURES.md](./FEATURES.md) for the executable capability coverage matrix.
+
 ## Modules
 
 - `agents/agenttool`: A2A agent-as-tool adapter.

@@ -84,6 +84,60 @@ func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 	}
 }
 
+func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
+	matrix := readRepoText(t, "../../FEATURES.md")
+	readme := readRepoText(t, "../../README.md")
+	if !strings.Contains(readme, "FEATURES.md") {
+		t.Fatal("README must link to FEATURES.md")
+	}
+
+	tests := []struct {
+		capability         string
+		path               string
+		mockCommand        string
+		integrationCommand string
+	}{
+		{"agent as tool", "agents/agenttool", "(cd agents/agenttool && go test -count=1 ./...)", ""},
+		{"Plan-Execute agent template", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
+		{"ReAct agent template", "agents/react", "(cd agents/react && go test -count=1 ./...)", ""},
+		{"file snapshot evidence", "devagent/filesnapshot", "(cd devagent/filesnapshot && go test -count=1 ./...)", ""},
+		{"git diff evidence", "devagent/gitdiff", "(cd devagent/gitdiff && go test -count=1 ./...)", ""},
+		{"OpenAI provider", "models/openai", "(cd models/openai && go test -count=1 ./...)", "(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)"},
+		{"Ark provider", "models/ark", "(cd models/ark && go test -count=1 ./...)", "(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)"},
+		{"Agnes provider", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
+		{"Agnes-backed agent templates", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.capability, func(t *testing.T) {
+			for _, want := range []string{tt.capability, tt.path, tt.mockCommand} {
+				if !strings.Contains(matrix, want) {
+					t.Fatalf("FEATURES.md missing %q", want)
+				}
+			}
+			if tt.integrationCommand != "" && !strings.Contains(matrix, tt.integrationCommand) {
+				t.Fatalf("FEATURES.md missing integration command %q", tt.integrationCommand)
+			}
+			assertTestedModule(t, tt.path)
+		})
+	}
+}
+
+func assertTestedModule(t *testing.T, path string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(filepath.Join("../..", path))
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), "_test.go") {
+			return
+		}
+	}
+	t.Fatalf("%s missing *_test.go", path)
+}
+
 func readRepoText(t *testing.T, path string) string {
 	t.Helper()
 
