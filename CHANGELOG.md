@@ -2,6 +2,15 @@
 
 ## 2026-07-01
 
+- `agents/agenttool/v0.1.2`: require `github.com/gopact-ai/gopact v0.0.11`.
+- `agents/planexec/v0.2.2`: require `github.com/gopact-ai/gopact v0.0.11`.
+- `agents/react/v0.2.2`: require `github.com/gopact-ai/gopact v0.0.11`.
+- `devagent/filesnapshot/v0.1.1`: require `github.com/gopact-ai/gopact v0.0.11`.
+- `devagent/gitdiff/v0.1.1`: require `github.com/gopact-ai/gopact v0.0.11`.
+- `models/openai/v0.5.4`: require `github.com/gopact-ai/gopact v0.0.11`.
+- `models/ark/v0.2.2`: require `github.com/gopact-ai/gopact v0.0.11`.
+- `models/agnes/v0.1.2`: require `github.com/gopact-ai/gopact v0.0.11`.
+- Update cross-template agent tests to require `github.com/gopact-ai/gopact v0.0.11`.
 - `agents/agenttool/v0.1.1`: require `github.com/gopact-ai/gopact v0.0.7`.
 - `agents/planexec/v0.2.1`: publish approval, checkpoint, and model request option support on top of `gopact v0.0.7`.
 - `agents/react/v0.2.1`: publish checkpoint and model request option support on top of `gopact v0.0.7`.
