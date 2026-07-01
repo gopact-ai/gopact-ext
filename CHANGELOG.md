@@ -2,6 +2,14 @@
 
 ## 2026-07-01
 
+- `agents/agenttool/v0.1.3`: require `github.com/gopact-ai/gopact v0.0.12`.
+- `agents/planexec/v0.2.3`: require `github.com/gopact-ai/gopact v0.0.12`.
+- `agents/react/v0.2.3`: require `github.com/gopact-ai/gopact v0.0.12`.
+- `devagent/filesnapshot/v0.1.2`: require `github.com/gopact-ai/gopact v0.0.12`.
+- `devagent/gitdiff/v0.1.2`: require `github.com/gopact-ai/gopact v0.0.12`.
+- `models/openai/v0.5.5`: require `github.com/gopact-ai/gopact v0.0.12`.
+- `models/ark/v0.2.3`: require `github.com/gopact-ai/gopact v0.0.12`.
+- `models/agnes/v0.1.3`: require `github.com/gopact-ai/gopact v0.0.12`.
 - `agents/agenttool/v0.1.2`: require `github.com/gopact-ai/gopact v0.0.11`.
 - `agents/planexec/v0.2.2`: require `github.com/gopact-ai/gopact v0.0.11`.
 - `agents/react/v0.2.2`: require `github.com/gopact-ai/gopact v0.0.11`.
