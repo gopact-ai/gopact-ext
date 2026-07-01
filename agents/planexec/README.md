@@ -10,7 +10,7 @@ go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.7
 
 ## Scope
 
-This module provides a small provider-neutral plan-execute graph. Callers can pass any `gopact.ResponseModel`.
+This module provides a small provider-neutral plan-execute graph with model-backed planning, approval interrupt/resume, checkpoint resume, and cancel propagation. Callers can pass any `gopact.ResponseModel`.
 
 ## Usage
 

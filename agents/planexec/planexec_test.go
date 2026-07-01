@@ -294,6 +294,48 @@ func TestAgentCheckpointStoreResumesApprovalInterrupt(t *testing.T) {
 	}
 }
 
+func TestAgentCancelStopsBeforeSummary(t *testing.T) {
+	executions := 0
+	agent, err := New(
+		PlannerFunc(func(context.Context, PlanRequest) ([]Step, error) {
+			return []Step{{ID: "draft", Instruction: "draft example"}}, nil
+		}),
+		ExecutorFunc(func(context.Context, Step) (StepResult, error) {
+			executions++
+			return StepResult{}, context.Canceled
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context canceled", err)
+	}
+	gopacttest.RequireEventTypes(t, events,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventNodeCompleted,
+		gopact.EventNodeStarted,
+		gopact.EventRunCanceled,
+	)
+	if executions != 1 {
+		t.Fatalf("executions = %d, want 1", executions)
+	}
+	canceled := events[4].StepSnapshot
+	if canceled == nil || canceled.Node != "execute" || canceled.Phase != gopact.StepCanceled {
+		t.Fatalf("canceled step = %+v, want execute step_canceled", canceled)
+	}
+	output, ok := canceled.Output.(State)
+	if !ok {
+		t.Fatalf("canceled output type = %T, want State", canceled.Output)
+	}
+	if output.Summary != "" || !reflect.DeepEqual(output.Trace, []string{"plan"}) {
+		t.Fatalf("canceled output = %+v, want no summary after plan", output)
+	}
+}
+
 func TestNewRequiresPlannerAndExecutor(t *testing.T) {
 	if _, err := New(nil, ExecutorFunc(func(context.Context, Step) (StepResult, error) {
 		return StepResult{}, nil
