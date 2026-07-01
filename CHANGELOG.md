@@ -2,6 +2,18 @@
 
 ## 2026-07-01
 
+- `agents/agenttool/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.21`.
+- `agents/planexec/v0.2.7`: require `github.com/gopact-ai/gopact v0.0.21`.
+- `agents/react/v0.2.7`: require `github.com/gopact-ai/gopact v0.0.21`.
+- `devagent/filesnapshot/v0.1.6`: require `github.com/gopact-ai/gopact v0.0.21`.
+- `devagent/gitdiff/v0.1.6`: require `github.com/gopact-ai/gopact v0.0.21`.
+- `models/openai/v0.5.9`: require `github.com/gopact-ai/gopact v0.0.21`, map provider-neutral
+  tool choice for Chat Completions and Responses, and decode legacy Chat
+  Completions `function_call` responses.
+- `models/ark/v0.2.7`: require `github.com/gopact-ai/gopact v0.0.21`.
+- `models/agnes/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.21`, depend on
+  `models/openai/v0.5.9`, and add real Agnes tool-call integration coverage.
+- Update cross-template agent tests to consume the new extension tags and require `github.com/gopact-ai/gopact v0.0.21`.
 - `agents/agenttool/v0.1.6`: require `github.com/gopact-ai/gopact v0.0.19`.
 - `agents/planexec/v0.2.6`: require `github.com/gopact-ai/gopact v0.0.19`.
 - `agents/react/v0.2.6`: require `github.com/gopact-ai/gopact v0.0.19`.

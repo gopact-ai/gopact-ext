@@ -359,6 +359,7 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 			Temperature:     req.Temperature,
 			TopP:            req.TopP,
 			Stream:          boolPtr(stream),
+			ToolChoice:      responsesToolChoice(req.ToolChoice),
 			Thinking:        thinkingConfig(req.ThinkingType),
 			Reasoning:       reasoningConfig(req.ReasoningEffort),
 			Text:            responsesTextConfig(req.ResponseSchema),
@@ -375,6 +376,7 @@ func (c *Client) marshalRequest(req gopact.ModelRequest, stream bool) (string, [
 		TopP:            req.TopP,
 		Stream:          boolPtr(stream),
 		StreamOptions:   streamOptions(stream),
+		ToolChoice:      chatToolChoice(req.ToolChoice),
 		Thinking:        thinkingConfig(req.ThinkingType),
 		ChatTemplate:    chatTemplateKwargs(req.Metadata),
 		ReasoningEffort: req.ReasoningEffort,
@@ -459,6 +461,37 @@ func streamOptions(stream bool) *chatStreamOptions {
 		return nil
 	}
 	return &chatStreamOptions{IncludeUsage: true}
+}
+
+func chatToolChoice(choice gopact.ToolChoice) any {
+	switch choice.Mode {
+	case gopact.ToolChoiceModeAuto, gopact.ToolChoiceModeRequired, gopact.ToolChoiceModeNone:
+		return string(choice.Mode)
+	case gopact.ToolChoiceModeNamed:
+		if choice.Name == "" {
+			return nil
+		}
+		return chatNamedToolChoice{
+			Type:     toolTypeFunction,
+			Function: chatToolChoiceFunction{Name: choice.Name},
+		}
+	default:
+		return nil
+	}
+}
+
+func responsesToolChoice(choice gopact.ToolChoice) any {
+	switch choice.Mode {
+	case gopact.ToolChoiceModeAuto, gopact.ToolChoiceModeRequired, gopact.ToolChoiceModeNone:
+		return string(choice.Mode)
+	case gopact.ToolChoiceModeNamed:
+		if choice.Name == "" {
+			return nil
+		}
+		return responsesNamedToolChoice{Type: toolTypeFunction, Name: choice.Name}
+	default:
+		return nil
+	}
 }
 
 func wrapMarshalErr(err error) error {
@@ -552,6 +585,7 @@ type chatCompletionRequest struct {
 	TopP            *float64              `json:"top_p,omitempty"`
 	Stream          *bool                 `json:"stream,omitempty"`
 	StreamOptions   *chatStreamOptions    `json:"stream_options,omitempty"`
+	ToolChoice      any                   `json:"tool_choice,omitempty"`
 	Thinking        *thinking             `json:"thinking,omitempty"`
 	ChatTemplate    map[string]any        `json:"chat_template_kwargs,omitempty"`
 	ReasoningEffort string                `json:"reasoning_effort,omitempty"`
@@ -561,6 +595,15 @@ type chatCompletionRequest struct {
 type chatStructuredOutput struct {
 	Type       string            `json:"type"`
 	JSONSchema *structuredOutput `json:"json_schema,omitempty"`
+}
+
+type chatNamedToolChoice struct {
+	Type     string                 `json:"type"`
+	Function chatToolChoiceFunction `json:"function"`
+}
+
+type chatToolChoiceFunction struct {
+	Name string `json:"name"`
 }
 
 type structuredOutput struct {
@@ -577,12 +620,13 @@ type responsesStructuredOutput struct {
 }
 
 type chatMessage struct {
-	Role             string         `json:"role"`
-	Content          string         `json:"content,omitempty"`
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	Name             string         `json:"name,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
-	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
+	Role             string                `json:"role"`
+	Content          string                `json:"content,omitempty"`
+	ReasoningContent string                `json:"reasoning_content,omitempty"`
+	Name             string                `json:"name,omitempty"`
+	ToolCallID       string                `json:"tool_call_id,omitempty"`
+	ToolCalls        []chatToolCall        `json:"tool_calls,omitempty"`
+	FunctionCall     *chatToolCallFunction `json:"function_call,omitempty"`
 }
 
 type chatTool struct {
@@ -668,9 +712,15 @@ type responsesRequest struct {
 	Temperature     *float64             `json:"temperature,omitempty"`
 	TopP            *float64             `json:"top_p,omitempty"`
 	Stream          *bool                `json:"stream,omitempty"`
+	ToolChoice      any                  `json:"tool_choice,omitempty"`
 	Thinking        *thinking            `json:"thinking,omitempty"`
 	Reasoning       *reasoning           `json:"reasoning,omitempty"`
 	Text            *responsesText       `json:"text,omitempty"`
+}
+
+type responsesNamedToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
 }
 
 type responsesText struct {
@@ -987,6 +1037,13 @@ func (m chatMessage) toGopactToolCalls() []gopact.ToolCall {
 			ID:        toolCall.ID,
 			Name:      toolCall.Function.Name,
 			Arguments: []byte(toolCall.Function.Arguments),
+		})
+	}
+	if len(converted) == 0 && m.FunctionCall != nil && m.FunctionCall.Name != "" {
+		converted = append(converted, gopact.ToolCall{
+			ID:        "legacy_function_call",
+			Name:      m.FunctionCall.Name,
+			Arguments: []byte(m.FunctionCall.Arguments),
 		})
 	}
 	return converted

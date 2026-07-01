@@ -64,7 +64,7 @@ func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 }
 
 func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
-	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.19"
+	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.21"
 
 	for _, module := range []string{
 		"agents/agenttool",
@@ -89,10 +89,10 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 	agentsGoMod := readRepoText(t, "go.mod")
 
 	for _, requirement := range []string{
-		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.6",
-		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.6",
-		"github.com/gopact-ai/gopact-ext/agents/react v0.2.6",
-		"github.com/gopact-ai/gopact-ext/models/agnes v0.1.6",
+		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.7",
+		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.7",
+		"github.com/gopact-ai/gopact-ext/agents/react v0.2.7",
+		"github.com/gopact-ai/gopact-ext/models/agnes v0.1.7",
 	} {
 		if !strings.Contains(agentsGoMod, requirement) {
 			t.Fatalf("tests/agents/go.mod missing current released module %q", requirement)
@@ -100,14 +100,14 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 	}
 
 	for _, install := range []string{
-		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.6",
-		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.6",
-		"go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.6",
-		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.5",
-		"go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.5",
-		"go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.8",
-		"go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.6",
-		"go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.6",
+		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.7",
+		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.7",
+		"go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.7",
+		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.6",
+		"go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.6",
+		"go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.9",
+		"go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.7",
+		"go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.7",
 	} {
 		if !strings.Contains(readme, install) {
 			t.Fatalf("README missing install command %q", install)
@@ -117,13 +117,13 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 
 func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
 	for path, install := range map[string]string{
-		"agents/planexec/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.6",
-		"agents/react/README.md":          "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.6",
-		"devagent/filesnapshot/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.5",
-		"devagent/gitdiff/README.md":      "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.5",
-		"models/agnes/README.md":          "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.6",
-		"models/ark/README.md":            "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.6",
-		"models/openai/README.md":         "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.8",
+		"agents/planexec/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.7",
+		"agents/react/README.md":          "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.7",
+		"devagent/filesnapshot/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.6",
+		"devagent/gitdiff/README.md":      "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.6",
+		"models/agnes/README.md":          "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.7",
+		"models/ark/README.md":            "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.7",
+		"models/openai/README.md":         "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.9",
 	} {
 		if !strings.Contains(readRepoText(t, "../../"+path), install) {
 			t.Fatalf("%s missing install command %q", path, install)

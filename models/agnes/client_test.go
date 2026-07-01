@@ -107,7 +107,8 @@ func TestNewClientSupportsFullFeatureMock(t *testing.T) {
 				Strict bool           `json:"strict"`
 			} `json:"json_schema"`
 		} `json:"response_format"`
-		Tools []struct {
+		ToolChoice json.RawMessage `json:"tool_choice"`
+		Tools      []struct {
 			Type     string `json:"type"`
 			Function struct {
 				Name        string         `json:"name"`
@@ -174,6 +175,7 @@ func TestNewClientSupportsFullFeatureMock(t *testing.T) {
 	response, err := client.Generate(context.Background(), gopact.NewModelRequest(
 		gopact.WithMessages(gopact.UserMessage("use lookup")),
 		gopact.WithTools(gopact.ObjectToolSpec("lookup", "Lookup docs.", gopact.RequiredStringField("q", "Query."))),
+		gopact.RequireTool("lookup"),
 		gopact.WithResponseSchema(schema),
 		gopact.WithMaxOutputTokens(2048),
 		gopact.EnableStructuredOutput(),
@@ -208,6 +210,9 @@ func TestNewClientSupportsFullFeatureMock(t *testing.T) {
 		generateRequest.Tools[0].Function.Name != "lookup" ||
 		generateRequest.Tools[0].Function.Parameters["type"] != "object" {
 		t.Fatalf("generate tools = %#v, want lookup object tool", generateRequest.Tools)
+	}
+	if string(generateRequest.ToolChoice) != `{"type":"function","function":{"name":"lookup"}}` {
+		t.Fatalf("generate tool_choice = %s, want named lookup", string(generateRequest.ToolChoice))
 	}
 
 	events := collectStream(t, client.Stream(context.Background(), gopact.NewModelRequest(

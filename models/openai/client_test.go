@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -402,6 +403,117 @@ func TestClientGeneratePostsToolSpecs(t *testing.T) {
 	}
 }
 
+func TestClientGeneratePostsToolChoice(t *testing.T) {
+	tests := []struct {
+		name string
+		api  API
+		opt  gopact.ModelRequestOption
+		want string
+	}{
+		{
+			name: "chat completions auto",
+			api:  APIChatCompletions,
+			opt:  gopact.WithAutoToolChoice(),
+			want: `"auto"`,
+		},
+		{
+			name: "chat completions required",
+			api:  APIChatCompletions,
+			opt:  gopact.RequireToolCall(),
+			want: `"required"`,
+		},
+		{
+			name: "chat completions none",
+			api:  APIChatCompletions,
+			opt:  gopact.DisableToolCalls(),
+			want: `"none"`,
+		},
+		{
+			name: "chat completions named",
+			api:  APIChatCompletions,
+			opt:  gopact.RequireTool("lookup"),
+			want: `{"type":"function","function":{"name":"lookup"}}`,
+		},
+		{
+			name: "responses auto",
+			api:  APIResponses,
+			opt:  gopact.WithAutoToolChoice(),
+			want: `"auto"`,
+		},
+		{
+			name: "responses required",
+			api:  APIResponses,
+			opt:  gopact.RequireToolCall(),
+			want: `"required"`,
+		},
+		{
+			name: "responses none",
+			api:  APIResponses,
+			opt:  gopact.DisableToolCalls(),
+			want: `"none"`,
+		},
+		{
+			name: "responses named",
+			api:  APIResponses,
+			opt:  gopact.RequireTool("lookup"),
+			want: `{"type":"function","name":"lookup"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got struct {
+				ToolChoice json.RawMessage `json:"tool_choice"`
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatalf("Decode() error = %v", err)
+				}
+				if tt.api == APIResponses {
+					_, _ = w.Write([]byte(`{"output_text": "ok"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"choices": [{"message": {"role": "assistant", "content": "ok"}}]}`))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(ProviderOpenAI, server.URL, "token", WithAPI(tt.api), gopact.WithModel("test-model"))
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			_, err = client.Generate(context.Background(), gopact.NewModelRequest(
+				gopact.WithMessages(gopact.UserMessage("use lookup")),
+				gopact.WithTools(gopact.ObjectToolSpec("lookup", "Lookup docs.", gopact.RequiredStringField("q", "Query."))),
+				tt.opt,
+			))
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			requireJSONEqual(t, got.ToolChoice, tt.want)
+		})
+	}
+}
+
+func requireJSONEqual(t *testing.T, got json.RawMessage, want string) {
+	t.Helper()
+
+	if len(got) == 0 {
+		t.Fatalf("missing JSON value, want %s", want)
+	}
+	var gotValue any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatalf("decode got JSON %q: %v", string(got), err)
+	}
+	var wantValue any
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("decode want JSON %q: %v", want, err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Fatalf("JSON = %#v, want %#v", gotValue, wantValue)
+	}
+}
+
 func TestNewClientAppliesFeatureOptions(t *testing.T) {
 	var got struct {
 		MaxOutputTokens *int     `json:"max_output_tokens"`
@@ -749,6 +861,41 @@ func TestClientGenerateRoundTripsToolCalls(t *testing.T) {
 	responseCall := response.Message.ToolCalls[0]
 	if responseCall.ID != "call_2" || responseCall.Name != "search" || string(responseCall.Arguments) != `{"q":"docs"}` {
 		t.Fatalf("response tool call = %#v, want search call with raw arguments", responseCall)
+	}
+}
+
+func TestClientGenerateDecodesLegacyFunctionCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"choices": [{
+				"message": {
+					"role": "assistant",
+					"function_call": {"name": "lookup_status", "arguments": "{\"item\":\"gopact\"}"}
+				}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient("openrouter", server.URL, "token", gopact.WithModel("test-model"))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	response, err := client.Generate(context.Background(), gopact.NewModelRequest(
+		gopact.WithMessages(gopact.UserMessage("use lookup")),
+		gopact.WithTools(gopact.ObjectToolSpec("lookup_status", "Lookup status.", gopact.RequiredStringField("item", "Item."))),
+		gopact.RequireToolCall(),
+	))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %+v, want one legacy function_call", response.Message.ToolCalls)
+	}
+	call := response.Message.ToolCalls[0]
+	if call.ID == "" || call.Name != "lookup_status" || string(call.Arguments) != `{"item":"gopact"}` {
+		t.Fatalf("tool call = %+v, want lookup_status legacy function_call", call)
 	}
 }
 
