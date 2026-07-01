@@ -9,6 +9,7 @@ This repository uses one Git repo with separate Go modules per extension, so use
 - `agents/agenttool`: A2A agent-as-tool adapter.
 - `agents/planexec`: Plan-Execute agent template.
 - `agents/react`: ReAct-style model/tool loop agent template.
+- `devagent/gitdiff`: Git diff scanner for Dev Agent evidence collection.
 - `models/agnes`: Agnes AI OpenAI-compatible text model provider adapter.
 - `models/ark`: Volcengine Ark Chat Completions provider adapter.
 - `models/openai`: OpenAI-shaped Chat Completions and Responses provider adapter.
@@ -19,6 +20,7 @@ This repository uses one Git repo with separate Go modules per extension, so use
 go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.1
 go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.1
 go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.1
+go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.0
 go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.3
 go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.1
 go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.1

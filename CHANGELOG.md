@@ -5,6 +5,7 @@
 - `agents/agenttool/v0.1.1`: require `github.com/gopact-ai/gopact v0.0.7`.
 - `agents/planexec/v0.2.1`: publish approval, checkpoint, and model request option support on top of `gopact v0.0.7`.
 - `agents/react/v0.2.1`: publish checkpoint and model request option support on top of `gopact v0.0.7`.
+- `devagent/gitdiff/v0.1.0`: add a git diff scanner that returns `gopacttest.DiffSnapshot` evidence inputs.
 - `models/openai/v0.5.3`: require `gopact v0.0.7` and publish full-feature request coverage for chat completions and responses.
 - `models/ark/v0.2.1`: require `gopact v0.0.7` and publish provider integration test coverage.
 - `models/agnes/v0.1.1`: require `gopact v0.0.7`, depend on `models/openai/v0.5.3`, and publish provider integration test coverage.
