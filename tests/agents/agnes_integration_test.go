@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/gopact-ext/agents/agenttool"
 	"github.com/gopact-ai/gopact-ext/agents/planexec"
 	"github.com/gopact-ai/gopact-ext/agents/react"
 	"github.com/gopact-ai/gopact-ext/models/agnes"
+	"github.com/gopact-ai/gopact/a2a"
 	"github.com/gopact-ai/gopact/checkpoint"
 	"github.com/gopact-ai/gopact/gopacttest"
 	"github.com/gopact-ai/gopact/memory"
@@ -238,6 +240,93 @@ func TestAgnesIntegrationPlanExecuteTemplate(t *testing.T) {
 	}
 }
 
+func TestAgnesIntegrationAgentAsToolTemplate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	agnesModel := newAgnesIntegrationModel(t)
+	child, err := planexec.NewModelAgent(
+		agnesModel,
+		planexec.WithModelOptions(
+			gopact.WithMaxOutputTokens(512),
+			gopact.WithTemperature(0.2),
+			agnes.DisableThinking(),
+		),
+	)
+	if err != nil {
+		t.Fatalf("planexec.NewModelAgent() error = %v", err)
+	}
+	childA2A, err := a2a.NewRunnableAgent(
+		a2a.AgentCard{Name: "agnes_planexec_child", Description: "Delegated Agnes-backed planning agent."},
+		child,
+		a2a.WithRunnableInputMapper(func(_ context.Context, task a2a.Task) (any, error) {
+			return task.Input, nil
+		}),
+		a2a.WithRunnableResultMapper(func(_ context.Context, task a2a.Task, events []gopact.Event) (a2a.Result, error) {
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i].StepSnapshot == nil {
+					continue
+				}
+				state, ok := events[i].StepSnapshot.Output.(planexec.State)
+				if ok && state.Summary != "" {
+					return a2a.Result{TaskID: task.ID, Output: state.Summary}, nil
+				}
+			}
+			return a2a.Result{TaskID: task.ID}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("a2a.NewRunnableAgent() error = %v", err)
+	}
+	childTool, err := agenttool.New(childA2A, agenttool.WithName("delegate_plan"))
+	if err != nil {
+		t.Fatalf("agenttool.New() error = %v", err)
+	}
+
+	parentModel := &agnesAgentToolParentModel{provider: agnesModel}
+	parent, err := react.New(parentModel, nil, react.WithTools(ctx, childTool))
+	if err != nil {
+		t.Fatalf("react.New() error = %v", err)
+	}
+	events, err := gopacttest.CollectEvents(parent.Run(ctx, react.State{Messages: []gopact.Message{
+		gopact.SystemMessage("You are concise. Reply with one sentence after the delegated plan is complete."),
+		gopact.UserMessage("Delegate a tiny plan for validating gopact examples."),
+	}}, gopact.WithRuntimeIDs(gopact.RuntimeIDs{
+		RunID:    "agnes-agenttool-parent",
+		ThreadID: "agnes-agenttool-thread",
+		CallID:   "parent-call",
+		TraceID:  "agnes-agenttool-trace",
+	})))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	gopacttest.RequireEventTypes(t, events,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventModelMessage,
+		gopact.EventNodeCompleted,
+		gopact.EventNodeStarted,
+		gopact.EventToolCall,
+		gopact.EventA2ATaskCompleted,
+		gopact.EventToolResult,
+		gopact.EventNodeCompleted,
+		gopact.EventNodeStarted,
+		gopact.EventModelMessage,
+		gopact.EventNodeCompleted,
+		gopact.EventRunCompleted,
+	)
+	if parentModel.finalCalls != 1 {
+		t.Fatalf("Agnes parent final calls = %d, want 1", parentModel.finalCalls)
+	}
+	if events[6].Result == nil || strings.TrimSpace(events[6].Result.Content) == "" {
+		t.Fatalf("A2A completion event = %+v, want child result content", events[6])
+	}
+	if events[6].Metadata["agent_name"] != "agnes_planexec_child" ||
+		events[6].Metadata["a2a_task_id"] != "agnes-child-task" {
+		t.Fatalf("A2A metadata = %+v, want child agent/task evidence", events[6].Metadata)
+	}
+}
+
 type scriptedToolCallModel struct{}
 
 func (scriptedToolCallModel) Generate(_ context.Context, request gopact.ModelRequest) (gopact.Message, error) {
@@ -252,6 +341,51 @@ func (scriptedToolCallModel) Generate(_ context.Context, request gopact.ModelReq
 			Arguments: []byte(`{"text":"gopact"}`),
 		}},
 	}, nil
+}
+
+type agnesAgentToolParentModel struct {
+	provider   gopact.ResponseModel
+	finalCalls int
+}
+
+func (m *agnesAgentToolParentModel) Generate(ctx context.Context, request gopact.ModelRequest) (gopact.Message, error) {
+	if len(request.Tools) != 1 || request.Tools[0].Name != "local.delegate_plan" {
+		return gopact.Message{}, fmt.Errorf("tools = %+v, want local.delegate_plan", request.Tools)
+	}
+	if !hasToolResultMessage(request.Messages) {
+		return gopact.Message{
+			Role: gopact.RoleAssistant,
+			ToolCalls: []gopact.ToolCall{{
+				ID:        "call-delegate-plan",
+				Name:      "local.delegate_plan",
+				Arguments: []byte(`{"input":"Create one short validation step for gopact examples.","task_id":"agnes-child-task"}`),
+			}},
+		}, nil
+	}
+	m.finalCalls++
+	request.Tools = nil
+	response, err := m.provider.Generate(ctx, gopact.ApplyModelRequestOptions(
+		request,
+		gopact.WithMaxOutputTokens(512),
+		gopact.WithTemperature(0.2),
+		agnes.DisableThinking(),
+	))
+	if err != nil {
+		return gopact.Message{}, err
+	}
+	if strings.TrimSpace(response.Message.Text()) == "" {
+		return gopact.Message{}, errors.New("agnes returned empty agent-as-tool final message")
+	}
+	return response.Message, nil
+}
+
+func hasToolResultMessage(messages []gopact.Message) bool {
+	for _, message := range messages {
+		if message.Role == gopact.RoleTool && strings.TrimSpace(message.Content) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type agnesFinalModel struct {
