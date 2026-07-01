@@ -2,15 +2,16 @@
 
 ## Unreleased
 
-- `agents/agenttool/v0.1.9`: expose the optional task `metadata` field in the agent-as-tool schema.
-- `agents/planexec/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
-- `agents/react/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
-- `devagent/filesnapshot/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.25`.
-- `devagent/gitdiff/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.25`.
-- `models/openai/v0.5.10`: require `github.com/gopact-ai/gopact v0.0.25`.
-- `models/ark/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
-- `models/agnes/v0.1.9`: require `github.com/gopact-ai/gopact v0.0.25` and `models/openai v0.5.10`.
+- `agents/agenttool/v0.1.10`: require `github.com/gopact-ai/gopact v0.0.27` and expose the optional task `metadata` field in the agent-as-tool schema.
+- `agents/planexec/v0.2.10`: require `github.com/gopact-ai/gopact v0.0.27`.
+- `agents/react/v0.2.9`: require `github.com/gopact-ai/gopact v0.0.27`.
+- `devagent/filesnapshot/v0.1.8`: require `github.com/gopact-ai/gopact v0.0.27`.
+- `devagent/gitdiff/v0.1.8`: require `github.com/gopact-ai/gopact v0.0.27`.
+- `models/openai/v0.5.11`: require `github.com/gopact-ai/gopact v0.0.27`.
+- `models/ark/v0.2.9`: require `github.com/gopact-ai/gopact v0.0.27`.
+- `models/agnes/v0.1.11`: require `github.com/gopact-ai/gopact v0.0.27` and `models/openai v0.5.11`.
 - Cover ReAct -> Agent-as-Tool -> Plan-Execute child failure propagation in cross-template mock tests.
+- Update cross-template agent tests to consume the new extension tags and require `github.com/gopact-ai/gopact v0.0.27`.
 
 ## 2026-07-01
 
