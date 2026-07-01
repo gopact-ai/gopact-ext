@@ -5,7 +5,7 @@ OpenAI-shaped Chat Completions and Responses provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.2
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.3
 ```
 
 ## Usage
