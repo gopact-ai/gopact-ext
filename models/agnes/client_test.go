@@ -3,6 +3,7 @@ package agnes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"iter"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/gopact/gopacttest/providerconformance"
 	"github.com/gopact-ai/gopact/provider"
 )
 
@@ -253,6 +255,28 @@ func TestNewClientAcceptsHTTPClientOption(t *testing.T) {
 	}
 }
 
+func TestNewClientStreamClassifiesRequestTimeout(t *testing.T) {
+	client, err := NewClient("https://example.test", "token", gopact.WithModel("agnes-mock"))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	for _, err := range client.Stream(ctx, gopact.NewModelRequest(
+		gopact.WithMessages(gopact.UserMessage("hi")),
+	)) {
+		if provider.Classify(err) != provider.ErrorTimeout {
+			t.Fatalf("Classify() = %q, want timeout; err = %v", provider.Classify(err), err)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("error = %v, want context deadline cause", err)
+		}
+		return
+	}
+	t.Fatal("Stream() ended without timeout error")
+}
+
 func TestNewClientClassifiesStatusErrors(t *testing.T) {
 	tests := []struct {
 		status int
@@ -288,6 +312,45 @@ func TestNewClientClassifiesStatusErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewClientProviderConformance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		var body struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("Decode() error = %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "hello"}}]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "token", gopact.WithModel("agnes-mock"))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	providerconformance.RequireProviderConformance(t, providerconformance.ProviderConformanceHarness{
+		Provider: client,
+		Request: gopact.ModelRequest{
+			Model:    "agnes-mock",
+			Messages: []gopact.Message{gopact.UserMessage("hi")},
+		},
+	})
 }
 
 func streamErr(stream iter.Seq2[gopact.Event, error]) error {
