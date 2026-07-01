@@ -5,7 +5,7 @@ Git diff scanner for Dev Agent evidence collection.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.8
+go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.9
 ```
 
 ## Usage
