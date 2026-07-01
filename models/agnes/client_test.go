@@ -248,6 +248,52 @@ func TestNewClientAcceptsHTTPClientOption(t *testing.T) {
 	}
 }
 
+func TestNewClientClassifiesStatusErrors(t *testing.T) {
+	tests := []struct {
+		status int
+		want   provider.ErrorClass
+	}{
+		{status: http.StatusUnauthorized, want: provider.ErrorUnauthorized},
+		{status: http.StatusTooManyRequests, want: provider.ErrorRateLimited},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.want), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, http.StatusText(tt.status), tt.status)
+			}))
+			defer server.Close()
+
+			client, err := NewClient(server.URL, "token")
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			_, err = client.Generate(context.Background(), gopact.NewModelRequest(
+				gopact.WithMessages(gopact.UserMessage("hi")),
+			))
+			if provider.Classify(err) != tt.want {
+				t.Fatalf("Generate Classify() = %q, want %q; err = %v", provider.Classify(err), tt.want, err)
+			}
+
+			err = streamErr(client.Stream(context.Background(), gopact.NewModelRequest(
+				gopact.WithMessages(gopact.UserMessage("hi")),
+			)))
+			if provider.Classify(err) != tt.want {
+				t.Fatalf("Stream Classify() = %q, want %q; err = %v", provider.Classify(err), tt.want, err)
+			}
+		})
+	}
+}
+
+func streamErr(stream iter.Seq2[gopact.Event, error]) error {
+	for _, err := range stream {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func collectStream(t *testing.T, stream iter.Seq2[gopact.Event, error]) []gopact.Event {
 	t.Helper()
 	var events []gopact.Event
