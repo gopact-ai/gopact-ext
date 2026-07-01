@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-- Require `github.com/gopact-ai/gopact v0.0.25` across extension modules so failed tool invocations preserve child evidence.
+- `agents/agenttool/v0.1.8`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `agents/planexec/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `agents/react/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `devagent/filesnapshot/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `devagent/gitdiff/v0.1.7`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `models/openai/v0.5.10`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `models/ark/v0.2.8`: require `github.com/gopact-ai/gopact v0.0.25`.
+- `models/agnes/v0.1.8`: require `github.com/gopact-ai/gopact v0.0.25`.
 - Cover ReAct -> Agent-as-Tool -> Plan-Execute child failure propagation in cross-template mock tests.
 
 ## 2026-07-01
