@@ -4,6 +4,7 @@ use (
 	./agents/agenttool
 	./agents/planexec
 	./agents/react
+	./devagent/filesnapshot
 	./devagent/gitdiff
 	./models/agnes
 	./models/ark
