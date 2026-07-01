@@ -95,7 +95,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 
 	for _, requirement := range []string{
 		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.8",
-		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.8",
+		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.9",
 		"github.com/gopact-ai/gopact-ext/agents/react v0.2.8",
 		"github.com/gopact-ai/gopact-ext/models/agnes v0.1.9",
 	} {
@@ -106,7 +106,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 
 	for _, install := range []string{
 		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.8",
-		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.8",
+		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.9",
 		"go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.8",
 		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.7",
 		"go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.7",
@@ -122,7 +122,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 
 func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
 	for path, install := range map[string]string{
-		"agents/planexec/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.8",
+		"agents/planexec/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.9",
 		"agents/react/README.md":          "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.8",
 		"devagent/filesnapshot/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.7",
 		"devagent/gitdiff/README.md":      "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.7",
