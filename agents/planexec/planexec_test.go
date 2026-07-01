@@ -55,6 +55,7 @@ func TestAgentRunsPlanExecuteSummarize(t *testing.T) {
 	if output.Summary != "completed 2 steps" {
 		t.Fatalf("summary = %q, want completed 2 steps", output.Summary)
 	}
+	gopacttest.RequireGoldenTrajectoryFrames(t, "testdata/basic_run.golden.json", events)
 }
 
 func TestNewModelAgentPlansAndExecutesWithModel(t *testing.T) {

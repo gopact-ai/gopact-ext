@@ -1,0 +1,39 @@
+[
+  {
+    "type": "run_started"
+  },
+  {
+    "type": "node_started",
+    "node": "plan",
+    "step": 1
+  },
+  {
+    "type": "node_completed",
+    "node": "plan",
+    "step": 1
+  },
+  {
+    "type": "node_started",
+    "node": "execute",
+    "step": 2
+  },
+  {
+    "type": "node_completed",
+    "node": "execute",
+    "step": 2
+  },
+  {
+    "type": "node_started",
+    "node": "summarize",
+    "step": 3
+  },
+  {
+    "type": "node_completed",
+    "node": "summarize",
+    "step": 3
+  },
+  {
+    "type": "run_completed",
+    "step": 3
+  }
+]

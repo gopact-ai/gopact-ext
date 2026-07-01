@@ -6,6 +6,7 @@ This matrix is the extension repository contract for expected runnable capabilit
 | --- | --- | --- | --- |
 | agent as tool | `agents/agenttool` | `(cd agents/agenttool && go test -count=1 ./...)` | - |
 | Plan-Execute agent template with approval, checkpoint, and cancel | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
+| Plan-Execute golden trajectory | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
 | ReAct agent template | `agents/react` | `(cd agents/react && go test -count=1 ./...)` | - |
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | - |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | - |
