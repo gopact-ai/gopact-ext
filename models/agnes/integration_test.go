@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact/gopacttest/providerconformance"
+	"github.com/gopact-ai/gopact/provider"
 )
 
 func TestAgnesIntegrationFullFeature(t *testing.T) {
@@ -170,6 +172,48 @@ func TestAgnesIntegrationToolCall(t *testing.T) {
 	}
 	if strings.TrimSpace(args.Item) == "" {
 		t.Fatalf("tool arguments = %s, want non-empty item", string(call.Arguments))
+	}
+}
+
+func TestAgnesIntegrationCancelAndTimeout(t *testing.T) {
+	loadDotEnv(t)
+
+	apiKey := firstEnv("GOPACT_AGNES_API_KEY", "GOPACT_AGNES_SK", "GOPACT_LLM_TOKEN")
+	if apiKey == "" {
+		t.Skip("set GOPACT_AGNES_API_KEY or GOPACT_LLM_TOKEN")
+	}
+	baseURL, model := agnesEndpointConfig()
+	client, err := NewClient(
+		baseURL,
+		apiKey,
+		gopact.WithModel(model),
+		gopact.WithMaxOutputTokens(512),
+		gopact.WithTemperature(0.2),
+		DisableThinking(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = client.Generate(canceled, gopact.NewModelRequest(
+		gopact.WithMessages(gopact.UserMessage("This request should be canceled before network I/O.")),
+	))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Generate() error = %v, want context.Canceled", err)
+	}
+
+	timedOut, timeoutCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer timeoutCancel()
+	_, err = client.Generate(timedOut, gopact.NewModelRequest(
+		gopact.WithMessages(gopact.UserMessage("This request should time out before network I/O.")),
+	))
+	if provider.Classify(err) != provider.ErrorTimeout {
+		t.Fatalf("timeout Generate() class = %q, want timeout; err = %v", provider.Classify(err), err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout Generate() error = %v, want context deadline cause", err)
 	}
 }
 
