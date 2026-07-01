@@ -4,10 +4,10 @@ go 1.25.11
 
 require (
 	github.com/gopact-ai/gopact v0.0.16
-	github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.4
-	github.com/gopact-ai/gopact-ext/agents/planexec v0.2.4
-	github.com/gopact-ai/gopact-ext/agents/react v0.2.4
-	github.com/gopact-ai/gopact-ext/models/agnes v0.1.4
+	github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.5
+	github.com/gopact-ai/gopact-ext/agents/planexec v0.2.5
+	github.com/gopact-ai/gopact-ext/agents/react v0.2.5
+	github.com/gopact-ai/gopact-ext/models/agnes v0.1.5
 )
 
-require github.com/gopact-ai/gopact-ext/models/openai v0.5.6 // indirect
+require github.com/gopact-ai/gopact-ext/models/openai v0.5.7 // indirect
