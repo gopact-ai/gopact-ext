@@ -56,7 +56,7 @@ func TestRepositoryOpenSourceGovernanceDocsArePresent(t *testing.T) {
 			},
 		},
 		{
-			path: "CONTRIBUTING.md",
+			path: "doc/CONTRIBUTING.md",
 			sections: []string{
 				"# Contributing to gopact-ext",
 				"## Development Setup",
@@ -65,7 +65,7 @@ func TestRepositoryOpenSourceGovernanceDocsArePresent(t *testing.T) {
 			},
 		},
 		{
-			path: "SECURITY.md",
+			path: "doc/SECURITY.md",
 			sections: []string{
 				"# Security Policy",
 				"## Supported Versions",
@@ -73,14 +73,14 @@ func TestRepositoryOpenSourceGovernanceDocsArePresent(t *testing.T) {
 			},
 		},
 		{
-			path: "CHANGELOG.md",
+			path: "doc/CHANGELOG.md",
 			sections: []string{
 				"# Changelog",
 				"## Unreleased",
 			},
 		},
 		{
-			path: "docs/maintainers/repository-governance.md",
+			path: "doc/maintainers/repository-governance.md",
 			sections: []string{
 				"# Repository Governance",
 				"## Pull Request Flow",
@@ -106,7 +106,7 @@ func TestRepositoryPublicReadinessAndPRGovernanceAreConfigured(t *testing.T) {
 	readiness := readRepoText(t, "../../scripts/public-readiness-check.sh")
 	prGovernance := readRepoText(t, "../../.github/workflows/pr-governance.yml")
 	adminAutomerge := readRepoText(t, "../../.github/workflows/admin-automerge.yml")
-	governanceDoc := readRepoText(t, "../../docs/maintainers/repository-governance.md")
+	governanceDoc := readRepoText(t, "../../doc/maintainers/repository-governance.md")
 
 	for _, want := range []string{
 		"permissions:",
@@ -318,9 +318,9 @@ func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
 }
 
 func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
-	matrix := readRepoText(t, "../../FEATURES.md")
+	matrix := readRepoText(t, "../../doc/FEATURES.md")
 	readme := readRepoText(t, "../../README.md")
-	if !strings.Contains(readme, "FEATURES.md") {
+	if !strings.Contains(readme, "doc/FEATURES.md") {
 		t.Fatal("README must link to FEATURES.md")
 	}
 

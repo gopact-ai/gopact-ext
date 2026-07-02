@@ -1,5 +1,16 @@
 # Repository Governance
 
+<!-- gopact:doc-language: zh,en -->
+
+## 中文
+
+本文档是 gopact 开源文档集的一部分，中文内容用于说明当前仓库约束、能力或维护流程。
+
+## English
+
+This document is part of the gopact open-source documentation set. The English section gives an entry point for readers who prefer English, while the remaining sections preserve the maintained technical details.
+
+
 This repository uses pull requests as the only write path to `main` after it is
 made public. The rule exists even for a single maintainer: it keeps CI, review
 state, and release evidence attached to every extension change.
