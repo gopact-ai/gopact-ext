@@ -5,7 +5,7 @@ ReAct-style model/tool loop agent template for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.12
+go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.13
 ```
 
 ## Scope
