@@ -19,17 +19,17 @@
 
 | 模块 | 用途 | 安装 |
 | --- | --- | --- |
-| `agents/agenttool` | 将 A2A agent 包装成普通 `gopact.ToolFunc`。 | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.17` |
-| `agents/planexec` | Plan-Execute agent template，支持 replan、approval、checkpoint、cancel。 | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.18` |
-| `agents/react` | ReAct model/tool loop template，支持 memory、checkpoint、resume、verification。 | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.16` |
-| `agents/supervisor` | 将任务路由到指定子 runnable，并保留 event evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.4` |
-| `devagent/filesnapshot` | 采集文件 hash、大小、mode、mtime，用于工程证据固化。 | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.15` |
-| `devagent/gitdiff` | 采集 worktree 或 staged git diff，用于开发 agent 验证。 | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.15` |
-| `models/openai` | OpenAI-shaped Chat Completions / Responses provider adapter。 | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.18` |
-| `models/ark` | Volcengine Ark SDK provider adapter，支持 API key 或 AK/SK。 | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.16` |
-| `models/agnes` | Agnes AI provider adapter，基于 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.19` |
+| `agents/agenttool` | 将 A2A agent 包装成普通 `gopact.ToolFunc`。 | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.18` |
+| `agents/planexec` | Plan-Execute agent template，支持 replan、approval、checkpoint、cancel。 | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.19` |
+| `agents/react` | ReAct model/tool loop template，支持 memory、checkpoint、resume、verification。 | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.17` |
+| `agents/supervisor` | 将任务路由到指定子 runnable，并保留 event evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.5` |
+| `devagent/filesnapshot` | 采集文件 hash、大小、mode、mtime，用于工程证据固化。 | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.16` |
+| `devagent/gitdiff` | 采集 worktree 或 staged git diff，用于开发 agent 验证。 | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.16` |
+| `models/openai` | OpenAI-shaped Chat Completions / Responses provider adapter。 | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.19` |
+| `models/ark` | Volcengine Ark SDK provider adapter，支持 API key 或 AK/SK。 | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.17` |
+| `models/agnes` | Agnes AI provider adapter，基于 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.20` |
 
-Go submodule tag 使用模块路径前缀，例如 `models/openai/v0.5.18`。
+Go submodule tag 使用模块路径前缀，例如 `models/openai/v0.5.19`。
 
 ## 快速开始
 
