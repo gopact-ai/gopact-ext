@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	ErrPlannerRequired  = errors.New("planexec: planner is required")
-	ErrExecutorRequired = errors.New("planexec: executor is required")
-	ErrInvalidInput     = errors.New("planexec: invalid input")
+	ErrPlannerRequired   = errors.New("planexec: planner is required")
+	ErrExecutorRequired  = errors.New("planexec: executor is required")
+	ErrReplannerRequired = errors.New("planexec: replanner is required")
+	ErrInvalidInput      = errors.New("planexec: invalid input")
 	// ErrModelRequired reports a missing model for NewModelAgent.
 	ErrModelRequired = errors.New("planexec: model is required")
 	// ErrModelPlanEmpty reports a model plan response without executable steps.
@@ -48,6 +49,14 @@ type PlanRequest struct {
 	Task string
 }
 
+type ReplanRequest struct {
+	Task       string
+	Steps      []Step
+	Results    []StepResult
+	FailedStep Step
+	Err        error
+}
+
 type Planner interface {
 	Plan(context.Context, PlanRequest) ([]Step, error)
 }
@@ -74,12 +83,26 @@ func (f ExecutorFunc) Execute(ctx context.Context, step Step) (StepResult, error
 	return f(ctx, step)
 }
 
+type Replanner interface {
+	Replan(context.Context, ReplanRequest) ([]Step, error)
+}
+
+type ReplannerFunc func(context.Context, ReplanRequest) ([]Step, error)
+
+func (f ReplannerFunc) Replan(ctx context.Context, request ReplanRequest) ([]Step, error) {
+	if f == nil {
+		return nil, ErrReplannerRequired
+	}
+	return f(ctx, request)
+}
+
 type Agent struct {
 	runnable         *graph.Runnable[State]
 	approval         gopact.Policy
 	checkpointer     graph.Checkpointer[State]
 	checkpointLoader graph.CheckpointLoader[State]
 	modelOptions     []gopact.ModelRequestOption
+	replanner        Replanner
 }
 
 // Option configures a plan-execute agent.
@@ -116,6 +139,17 @@ func WithModelOptions(opts ...gopact.ModelRequestOption) Option {
 				agent.modelOptions = append(agent.modelOptions, opt)
 			}
 		}
+		return nil
+	}
+}
+
+// WithReplanner retries execution once with a replacement plan after an execution failure.
+func WithReplanner(replanner Replanner) Option {
+	return func(agent *Agent) error {
+		if replanner == nil {
+			return ErrReplannerRequired
+		}
+		agent.replanner = replanner
 		return nil
 	}
 }
@@ -194,16 +228,41 @@ func New(planner Planner, executor Executor, opts ...Option) (*Agent, error) {
 		})
 	}
 	g.AddNode("execute", func(ctx context.Context, state State) (State, error) {
-		state.Results = state.Results[:0]
-		for _, step := range state.Steps {
-			result, err := executor.Execute(ctx, step)
+		replanned := false
+		for {
+			state.Results = state.Results[:0]
+			var failedStep Step
+			var failedErr error
+			for _, step := range state.Steps {
+				result, err := executor.Execute(ctx, step)
+				if err != nil {
+					failedStep = step
+					failedErr = err
+					break
+				}
+				state.Results = append(state.Results, result)
+			}
+			if failedErr == nil {
+				state.Trace = append(state.Trace, "execute")
+				return state, nil
+			}
+			if agent.replanner == nil || replanned {
+				return state, failedErr
+			}
+			steps, err := agent.replanner.Replan(ctx, ReplanRequest{
+				Task:       state.Task,
+				Steps:      append([]Step(nil), state.Steps...),
+				Results:    append([]StepResult(nil), state.Results...),
+				FailedStep: failedStep,
+				Err:        failedErr,
+			})
 			if err != nil {
 				return state, err
 			}
-			state.Results = append(state.Results, result)
+			state.Steps = append([]Step(nil), steps...)
+			state.Trace = append(state.Trace, "replan")
+			replanned = true
 		}
-		state.Trace = append(state.Trace, "execute")
-		return state, nil
 	})
 	g.AddNode("summarize", func(_ context.Context, state State) (State, error) {
 		state.Summary = fmt.Sprintf("completed %d steps", len(state.Results))

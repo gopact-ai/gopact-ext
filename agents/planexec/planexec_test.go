@@ -147,6 +147,57 @@ func TestNewModelAgentAcceptsTemplateOptions(t *testing.T) {
 	}
 }
 
+func TestAgentReplansOnceAfterExecutionFailure(t *testing.T) {
+	failFirstDraft := true
+	var replanRequest ReplanRequest
+	agent, err := New(
+		PlannerFunc(func(context.Context, PlanRequest) ([]Step, error) {
+			return []Step{
+				{ID: "draft", Instruction: "draft example"},
+				{ID: "review", Instruction: "review example"},
+			}, nil
+		}),
+		ExecutorFunc(func(_ context.Context, step Step) (StepResult, error) {
+			if step.ID == "draft" && failFirstDraft {
+				failFirstDraft = false
+				return StepResult{}, errors.New("draft failed")
+			}
+			return StepResult{StepID: step.ID, Output: "done " + step.ID}, nil
+		}),
+		WithReplanner(ReplannerFunc(func(_ context.Context, request ReplanRequest) ([]Step, error) {
+			replanRequest = request
+			return []Step{
+				{ID: "draft-retry", Instruction: "retry draft example"},
+				{ID: "review", Instruction: "review example"},
+			}, nil
+		})),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example"))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	output, ok := events[6].StepSnapshot.Output.(State)
+	if !ok {
+		t.Fatalf("summary output type = %T, want State", events[6].StepSnapshot.Output)
+	}
+	if !reflect.DeepEqual(output.Trace, []string{"plan", "replan", "execute", "summarize"}) {
+		t.Fatalf("trace = %v, want replan flow", output.Trace)
+	}
+	if got, want := resultIDs(output.Results), []string{"draft-retry", "review"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("result ids = %v, want %v", got, want)
+	}
+	if replanRequest.Task != "ship example" ||
+		replanRequest.FailedStep.ID != "draft" ||
+		replanRequest.Err == nil ||
+		len(replanRequest.Results) != 0 {
+		t.Fatalf("replan request = %+v, want failed draft without partial results", replanRequest)
+	}
+}
+
 func TestAgentApprovalPolicyInterruptsAndResumesFromStepExport(t *testing.T) {
 	executions := 0
 	policyCalls := 0
@@ -354,6 +405,14 @@ type scriptedResponseModel struct {
 	responses []gopact.ModelResponse
 	errors    []error
 	requests  []gopact.ModelRequest
+}
+
+func resultIDs(results []StepResult) []string {
+	ids := make([]string, 0, len(results))
+	for _, result := range results {
+		ids = append(ids, result.StepID)
+	}
+	return ids
 }
 
 func (m *scriptedResponseModel) Generate(ctx context.Context, request gopact.ModelRequest) (gopact.ModelResponse, error) {
