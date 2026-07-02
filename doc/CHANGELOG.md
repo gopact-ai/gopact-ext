@@ -12,3 +12,4 @@ The current unreleased work improves documentation quality across the repository
 
 - Add `agents/supervisor`, a provider-neutral template that routes a task to a named child runnable while preserving runtime IDs and event evidence.
 - Add mock and Agnes-backed `tests/agents` coverage for supervisor routing to a Plan-Execute child.
+- Document ReAct verification export process records and step-export resume as tested extension capabilities.

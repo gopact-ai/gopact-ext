@@ -355,6 +355,7 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"Plan-Execute agent template with replan, approval, checkpoint, and cancel", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
 		{"Plan-Execute golden trajectory", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
 		{"ReAct agent template", "agents/react", "(cd agents/react && go test -count=1 ./...)", ""},
+		{"ReAct verification export process records and step-export resume", "agents/react", "(cd agents/react && go test -count=1 ./...)", ""},
 		{"Supervisor agent template", "agents/supervisor", "(cd agents/supervisor && go test -count=1 ./...)", ""},
 		{"ReAct tool loop with model options and runtime IDs", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
 		{"ReAct checkpoint resume with tool, memory, and verification", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
@@ -416,11 +417,13 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 	matrixZH := readRepoText(t, "../../doc/FEATURES_zh.md")
 	mockTests := readRepoText(t, "templates_mock_test.go")
 	integrationTests := readRepoText(t, "agnes_integration_test.go")
-	allTests := mockTests + "\n" + integrationTests
+	reactTests := readRepoText(t, "../../agents/react/react_test.go")
+	allTests := mockTests + "\n" + integrationTests + "\n" + reactTests
 
 	for _, capability := range []string{
 		"ReAct tool loop with model options and runtime IDs",
 		"ReAct checkpoint resume with tool, memory, and verification",
+		"ReAct verification export process records and step-export resume",
 		"Plan-Execute model planner and executor with request options",
 		"Plan-Execute approval checkpoint resume",
 		"Agent-as-Tool A2A delegation success and failure evidence",
@@ -446,6 +449,9 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"TestAgnesIntegrationPlanExecuteTemplate",
 		"TestAgnesIntegrationAgentAsToolTemplate",
 		"TestAgnesIntegrationSupervisorTemplate",
+		"TestAgentRunsVerifierBeforeCompletingRun",
+		"TestAgentVerificationExportRecordsResumeInterventionProcessRecords",
+		"TestAgentResumesToolApprovalFromInterruptedStepExport",
 	} {
 		if !strings.Contains(allTests, testName) {
 			t.Fatalf("agent templates missing concrete test %q", testName)
