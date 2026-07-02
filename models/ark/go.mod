@@ -3,7 +3,7 @@ module github.com/gopact-ai/gopact-ext/models/ark
 go 1.25.11
 
 require (
-	github.com/gopact-ai/gopact v0.0.37
+	github.com/gopact-ai/gopact v0.0.38
 	github.com/volcengine/volcengine-go-sdk v1.2.27
 )
 
