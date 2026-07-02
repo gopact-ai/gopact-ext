@@ -21,7 +21,7 @@ See [FEATURES.md](./FEATURES.md) for the executable capability coverage matrix.
 
 ```bash
 go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.13
-go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.13
+go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.14
 go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.12
 go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.11
 go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.11
