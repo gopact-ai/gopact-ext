@@ -1,14 +1,4 @@
-github.com/gopact-ai/gopact v0.0.39 h1:bJpsHCNt0oLzmOVDGaHpWFSqk2nuDJo7u15O2MC0UeI=
-github.com/gopact-ai/gopact v0.0.39/go.mod h1:lozSDuCDxwNrJpJnIOUensxOeEG9roEemegbzjpb4YU=
-github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.18 h1:w1PIKqPzdZP9FDBDtk2AvibOoz8h4ukVTJG9T64DI+Y=
-github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.18/go.mod h1:/Sz0CTYPUFlZfM1aOrzfAg1RJAYIyVC7tFB+1fDqw7w=
-github.com/gopact-ai/gopact-ext/agents/planexec v0.2.19 h1:JHBfjhmbmyAgl3ePlUoV5yKvT8ULsjhpcGbkNWLb4uE=
-github.com/gopact-ai/gopact-ext/agents/planexec v0.2.19/go.mod h1:LpaEYY5Y9VelNDJrw1Alx0stLVCVkqyo1cZ6ra8/SoU=
-github.com/gopact-ai/gopact-ext/agents/react v0.2.17 h1:z4Mja/7fMS6o3MpgxS+DLL2uNV67rFqg61N7r96Lzag=
-github.com/gopact-ai/gopact-ext/agents/react v0.2.17/go.mod h1:bONPyAXkaeuPf9RqfZzLZThnImSj0iRsqBH/zjQvvC0=
-github.com/gopact-ai/gopact-ext/models/agnes v0.1.20 h1:aaT9Ae4pAVCfTtx9ObYNbBp8BORm3A8cUrNUkqFyQx0=
-github.com/gopact-ai/gopact-ext/models/agnes v0.1.20/go.mod h1:tzBFx1BH3SQKLlzAcqbL92ODcry+ywxwGoUi31oBpx8=
-github.com/gopact-ai/gopact-ext/models/openai v0.5.19 h1:aT14KAF4h5UzzjVX7eX1L0nx1uJvZfrwPPoXaV75JXY=
-github.com/gopact-ai/gopact-ext/models/openai v0.5.19/go.mod h1:qSiQ57e2zale0/7wNkHY2D0di9iCqwgcAIXS5zpMPPk=
+github.com/gopact-ai/gopact v0.0.41 h1:mZW6Lb6fwLAsgAG3x/XmP7lw4k00TN3bXF/bwCdKL6I=
+github.com/gopact-ai/gopact v0.0.41/go.mod h1:lozSDuCDxwNrJpJnIOUensxOeEG9roEemegbzjpb4YU=
 golang.org/x/mod v0.37.0 h1:vF1DjpVEshcIqoEaauuHebaLk1O1forxjxBaVn884JQ=
 golang.org/x/mod v0.37.0/go.mod h1:m8S8VeM9r4dzDwjrKO0a1sZP3YjeMamRRlD+fmR2Q/0=
