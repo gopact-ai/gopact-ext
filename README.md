@@ -58,4 +58,4 @@ cp .env.example .env
 (cd tests/agents && go test -tags=integration -count=1 ./...)
 ```
 
-The tests load `.env` from the repo root when present. Keep `.env` local. Agnes and Ark accept the shared `GOPACT_LLM_BASEURL`, `GOPACT_LLM_TOKEN`, and `GOPACT_LLM_MODEL` keys; provider-specific keys such as `GOPACT_AGNES_API_KEY`, `GOPACT_ARK_API_KEY`, and `GOPACT_OPENAI_API_KEY` still work.
+The tests load `.env` from the repo root when present. Keep `.env` local. Agnes and Ark accept the shared `GOPACT_LLM_BASEURL`, `GOPACT_LLM_TOKEN`, and `GOPACT_LLM_MODEL` keys; provider-specific keys such as `GOPACT_AGNES_API_KEY`, `GOPACT_AGNES_SK`, `GOPACT_ARK_API_KEY`, and `GOPACT_OPENAI_API_KEY` still work.

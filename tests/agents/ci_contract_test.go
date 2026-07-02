@@ -68,6 +68,32 @@ func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 	}
 }
 
+func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
+	readme := readRepoText(t, "../../README.md")
+	envExample := readRepoText(t, "../../.env.example")
+	gitignore := readRepoText(t, "../../.gitignore")
+
+	for _, key := range []string{
+		"GOPACT_LLM_BASEURL",
+		"GOPACT_LLM_TOKEN",
+		"GOPACT_LLM_MODEL",
+		"GOPACT_AGNES_API_KEY",
+		"GOPACT_AGNES_SK",
+		"GOPACT_ARK_API_KEY",
+		"GOPACT_OPENAI_API_KEY",
+	} {
+		if !strings.Contains(readme, key) {
+			t.Fatalf("README missing provider credential key %q", key)
+		}
+		if !strings.Contains(envExample, key) {
+			t.Fatalf(".env.example missing provider credential key %q", key)
+		}
+	}
+	if !strings.Contains(gitignore, ".env") {
+		t.Fatal(".gitignore must keep .env local")
+	}
+}
+
 func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.30"
 

@@ -92,7 +92,9 @@ func writeFile(t *testing.T, dir, name, content string) {
 
 func runGitTest(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	// ponytail: disable background git maintenance; TempDir cleanup can race it under -race.
+	gitArgs := append([]string{"-c", "gc.auto=0", "-c", "maintenance.auto=false"}, args...)
+	cmd := exec.Command("git", gitArgs...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
