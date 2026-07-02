@@ -93,6 +93,7 @@ for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sor
 
 ```bash
 cp .env.example .env
+./scripts/local-agnes-integration.sh
 (cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)
 (cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)
 (cd models/agnes && go test -tags=integration -count=1 ./...)
