@@ -382,6 +382,45 @@ func TestAgnesProviderFeatureCoverageUsesConcreteTests(t *testing.T) {
 	}
 }
 
+func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
+	matrix := readRepoText(t, "../../doc/FEATURES.md")
+	matrixZH := readRepoText(t, "../../doc/FEATURES_zh.md")
+	mockTests := readRepoText(t, "templates_mock_test.go")
+	integrationTests := readRepoText(t, "agnes_integration_test.go")
+	allTests := mockTests + "\n" + integrationTests
+
+	for _, capability := range []string{
+		"ReAct tool loop with model options and runtime IDs",
+		"ReAct checkpoint resume with tool, memory, and verification",
+		"Plan-Execute model planner and executor with request options",
+		"Plan-Execute approval checkpoint resume",
+		"Agent-as-Tool A2A delegation success and failure evidence",
+		"Agnes-backed ReAct, Plan-Execute, and Agent-as-Tool templates",
+	} {
+		if !strings.Contains(matrix, capability) {
+			t.Fatalf("FEATURES.md missing agent template capability %q", capability)
+		}
+		if !strings.Contains(matrixZH, capability) {
+			t.Fatalf("FEATURES_zh.md missing agent template capability %q", capability)
+		}
+	}
+
+	for _, testName := range []string{
+		"TestReActTemplateRunsToolThenFinalWithMockModel",
+		"TestPlanExecTemplateRunsWithMockModel",
+		"TestPlanExecTemplateResumesApprovalCheckpointWithMockModel",
+		"TestReActTemplateCanUsePlanExecAgentAsToolWithMockModel",
+		"TestReActTemplateFailsWhenPlanExecAgentToolFailsWithMockModel",
+		"TestAgnesIntegrationReActTemplateCapabilities",
+		"TestAgnesIntegrationPlanExecuteTemplate",
+		"TestAgnesIntegrationAgentAsToolTemplate",
+	} {
+		if !strings.Contains(allTests, testName) {
+			t.Fatalf("agent templates missing concrete test %q", testName)
+		}
+	}
+}
+
 func assertTestedModule(t *testing.T, path string) {
 	t.Helper()
 
