@@ -102,6 +102,7 @@ func TestModuleReadmesExposeGoReferenceBadges(t *testing.T) {
 		"agents/agenttool",
 		"agents/planexec",
 		"agents/react",
+		"agents/supervisor",
 		"devagent/filesnapshot",
 		"devagent/gitdiff",
 		"models/agnes",
