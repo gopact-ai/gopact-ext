@@ -19,7 +19,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 | `agents/agenttool` | Wrap an A2A agent as a regular `gopact.ToolFunc`. | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.14` |
 | `agents/planexec` | Plan-Execute template with replan, approval, checkpoint, and cancel support. | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.15` |
 | `agents/react` | ReAct model/tool loop with memory, checkpoint, resume, and verification hooks. | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.13` |
-| `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.0` |
+| `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.1` |
 | `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.12` |
 | `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.12` |
 | `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.15` |
