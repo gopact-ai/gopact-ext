@@ -12,6 +12,7 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | Plan-Execute agent template with replan, approval, checkpoint, and cancel | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | Not required |
 | Plan-Execute golden trajectory | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | Not required |
 | ReAct agent template | `agents/react` | `(cd agents/react && go test -count=1 ./...)` | Not required |
+| ReAct verification export process records and step-export resume | `agents/react` | `(cd agents/react && go test -count=1 ./...)` | Not required |
 | Supervisor agent template | `agents/supervisor` | `(cd agents/supervisor && go test -count=1 ./...)` | Not required |
 | ReAct tool loop with model options and runtime IDs | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | Not required |
 | ReAct checkpoint resume with tool, memory, and verification | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
