@@ -289,6 +289,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.14",
 		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.15",
 		"go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.13",
+		"go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.0",
 		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.12",
 		"go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.12",
 		"go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.15",
@@ -305,6 +306,7 @@ func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
 	for path, install := range map[string]string{
 		"agents/planexec/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.15",
 		"agents/react/README.md":          "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.13",
+		"agents/supervisor/README.md":     "go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.0",
 		"devagent/filesnapshot/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.12",
 		"devagent/gitdiff/README.md":      "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.12",
 		"models/agnes/README.md":          "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.16",
@@ -334,6 +336,7 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"Plan-Execute agent template with replan, approval, checkpoint, and cancel", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
 		{"Plan-Execute golden trajectory", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
 		{"ReAct agent template", "agents/react", "(cd agents/react && go test -count=1 ./...)", ""},
+		{"Supervisor agent template", "agents/supervisor", "(cd agents/supervisor && go test -count=1 ./...)", ""},
 		{"file snapshot evidence", "devagent/filesnapshot", "(cd devagent/filesnapshot && go test -count=1 ./...)", ""},
 		{"git diff evidence", "devagent/gitdiff", "(cd devagent/gitdiff && go test -count=1 ./...)", ""},
 		{"OpenAI provider", "models/openai", "(cd models/openai && go test -count=1 ./...)", "(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)"},
