@@ -1,0 +1,60 @@
+name: pr-governance
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  author-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate author and admin approval policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          pr_number="${PR_NUMBER}"
+          if [[ -z "${pr_number}" || "${pr_number}" == "null" ]]; then
+            pr_number="$(jq -r '.pull_request.number' "${GITHUB_EVENT_PATH}")"
+          fi
+
+          author="$(gh api "repos/${REPO}/pulls/${pr_number}" --jq '.user.login')"
+          head_sha="$(gh api "repos/${REPO}/pulls/${pr_number}" --jq '.head.sha')"
+          permission="$(gh api "repos/${REPO}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null || echo none)"
+
+          if [[ "${permission}" == "admin" ]]; then
+            echo "Admin-authored PR: CI gates are sufficient."
+            exit 0
+          fi
+
+          declare -A latest_state=()
+          declare -A latest_commit=()
+          while IFS=$'\t' read -r reviewer state commit_id; do
+            latest_state["${reviewer}"]="${state}"
+            latest_commit["${reviewer}"]="${commit_id}"
+          done < <(gh api --paginate "repos/${REPO}/pulls/${pr_number}/reviews" --jq '.[] | [.user.login, .state, .commit_id] | @tsv')
+
+          approved=0
+          for reviewer in "${!latest_state[@]}"; do
+            [[ "${latest_state[${reviewer}]}" == "APPROVED" ]] || continue
+            [[ "${latest_commit[${reviewer}]}" == "${head_sha}" ]] || continue
+            reviewer_permission="$(gh api "repos/${REPO}/collaborators/${reviewer}/permission" --jq '.permission' 2>/dev/null || echo none)"
+            if [[ "${reviewer_permission}" == "admin" ]]; then
+              approved=1
+              break
+            fi
+          done
+
+          if [[ "${approved}" != "1" ]]; then
+            echo "Non-admin-authored PRs require at least one admin approval on the latest commit." >&2
+            exit 1
+          fi

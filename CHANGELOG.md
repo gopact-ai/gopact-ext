@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add public readiness checks for tracked files and commit messages before
+  changing repository visibility.
+- Add PR governance workflows for admin auto-merge and non-admin admin approval.
+- Add `CONTRIBUTING.md`, `SECURITY.md`, and repository governance docs.
 - `agents/agenttool/v0.1.10`: require `github.com/gopact-ai/gopact v0.0.27` and expose the optional task `metadata` field in the agent-as-tool schema.
 - `agents/planexec/v0.2.10`: require `github.com/gopact-ai/gopact v0.0.27`.
 - `agents/react/v0.2.9`: require `github.com/gopact-ai/gopact v0.0.27`.
