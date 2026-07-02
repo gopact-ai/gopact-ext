@@ -4,36 +4,32 @@
 
 ## 中文
 
-本文档是 gopact 开源文档集的一部分，中文内容用于说明当前仓库约束、能力或维护流程。
-
-## English
-
-This document is part of the gopact open-source documentation set. The English section gives an entry point for readers who prefer English, while the remaining sections preserve the maintained technical details.
-
+`gopact-ext` 直接处理 provider token、tool payload、模型响应、agent event 和工程证据。安全策略的核心目标是：真实凭据不进入仓库，敏感数据不进入 CI 输出，provider adapter 的错误和日志默认可公开。
 
 ## Supported Versions
 
-`gopact-ext` is pre-v1. Security fixes target the `main` branch and the latest
-published extension tags until a stable release line is declared.
+`gopact-ext` 仍处于 pre-v1。安全修复优先落在 `main`，并回补到最新发布的 extension tag。稳定版本线建立后，本节会改为明确的版本支持表。
 
 ## Reporting a Vulnerability
 
-Do not open a public issue for suspected vulnerabilities. Report privately to
-the maintainers through the gopact-ai organization owner channel until a
-dedicated security advisory process is enabled.
+不要为疑似漏洞创建公开 issue。请通过 `gopact-ai` 组织维护者私有渠道报告，直到仓库启用 GitHub Security Advisory 流程。
 
-Include:
+报告时请包含：
 
-- affected extension module
-- reproduction steps
-- impact and trust boundary
-- whether provider credentials, prompts, tool payloads, artifacts, or external
-  tokens may be exposed
+- 受影响的 extension 模块和版本。
+- 最小复现步骤。
+- 影响边界：provider token、prompt、tool args/result、artifact、agent event、用户数据或本地文件。
+- 是否已在 fork、CI log、issue、PR 评论或 commit message 中暴露敏感信息。
 
-## Handling Guidelines
+处理要求：
 
-- Do not include secrets, tokens, raw prompts, raw model responses, raw tool
-  args/results, or private customer data in issues, tests, examples, or logs.
-- Keep `.env` local and use `.env.example` for placeholders only.
-- Provider adapters must preserve redaction, request-shape, timeout,
-  cancellation, and error-classification tests.
+- 不提交 `.env`、真实 token、真实 endpoint ID、私有 prompt、原始模型响应或客户数据。
+- `.env.example` 只能包含占位值。
+- public readiness check 必须扫描 tracked file 和 commit message 中的高置信敏感模式。
+- provider adapter 必须保留 timeout、cancel、错误分类、request shaping 和 redaction 相关测试。
+
+## English
+
+`gopact-ext` handles provider tokens, tool payloads, model responses, agent events, and engineering evidence. The security baseline is that real credentials never enter the repository, sensitive data never enters CI output, and provider errors are safe to inspect in public logs.
+
+Do not open public issues for suspected vulnerabilities. Report privately through the `gopact-ai` maintainer channel until GitHub Security Advisory handling is enabled. Include the affected module, reproduction steps, impact boundary, and whether any secret may already have appeared in a fork, CI log, issue, PR comment, or commit message.

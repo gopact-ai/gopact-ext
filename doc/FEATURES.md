@@ -4,14 +4,7 @@
 
 ## 中文
 
-本文档是 gopact 开源文档集的一部分，中文内容用于说明当前仓库约束、能力或维护流程。
-
-## English
-
-This document is part of the gopact open-source documentation set. The English section gives an entry point for readers who prefer English, while the remaining sections preserve the maintained technical details.
-
-
-This matrix is the extension repository contract for expected runnable capabilities. CI uses mock tests; provider-backed checks stay local unless explicitly run with integration tags.
+这个矩阵是 `gopact-ext` 的可执行能力契约。CI 默认运行 mock 测试，确保 extension 行为可重复、无外部依赖；真实 provider 测试通过 `integration` build tag 在本地手动执行。
 
 | Capability | Path | Mock test | Local integration |
 | --- | --- | --- | --- |
@@ -31,3 +24,15 @@ This matrix is the extension repository contract for expected runnable capabilit
 | Agnes provider error classification | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes provider cancel and timeout | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes-backed agent templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
+
+能力说明：
+
+- provider adapter 必须覆盖默认 model、per-call model override、参数预算、采样参数、stream、tool calling、structured output、thinking/reasoning 控制、超时/取消和错误分类。
+- agent template 必须覆盖成功路径、失败路径、组合路径和可恢复边界；涉及人工审批、checkpoint、memory、verification 的能力必须有具体测试固化。
+- dev-agent helper 必须只采集证据，不替调用方做发布决策或写入工作区。
+
+## English
+
+This matrix is the executable capability contract for `gopact-ext`. CI runs mock tests only so the repository remains deterministic and independent of provider credentials. Provider-backed checks are local opt-in tests behind the `integration` build tag.
+
+Provider adapters must cover default and per-call model selection, request budget, sampling, streaming, tool calling, structured output, thinking or reasoning controls, timeout/cancel behavior, and error classification. Agent templates must cover success paths, failure paths, composition paths, and resumable boundaries. Development-agent helpers collect evidence only; release decisions remain with the caller.
