@@ -7,23 +7,27 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
+  hygiene:
     runs-on: ubuntu-latest
     env:
       GOPRIVATE: github.com/gopact-ai/*
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.25.11'
-          cache-dependency-path: '**/go.sum'
-      - name: Install tools
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+          go-version: "1.25.11"
+          cache-dependency-path: "**/go.sum"
+
       - name: Configure private core access
         run: |
           if [ -n "${GOPACT_GITHUB_TOKEN:-}" ]; then
@@ -31,43 +35,194 @@ jobs:
           fi
         env:
           GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
+
       - name: Check whitespace
         run: git diff --check
+
       - name: Public readiness
         run: ./scripts/public-readiness-check.sh
+
       - name: Check module tidiness
         run: |
           for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
             (cd "$mod" && go mod tidy)
           done
           git diff --exit-code
+
+  unit:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/gopact-ai/*
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache-dependency-path: "**/go.sum"
+
+      - name: Configure private core access
+        run: |
+          if [ -n "${GOPACT_GITHUB_TOKEN:-}" ]; then
+            git config --global url."https://x-access-token:${GOPACT_GITHUB_TOKEN}@github.com/gopact-ai/".insteadOf "https://github.com/gopact-ai/"
+          fi
+        env:
+          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
+
       - name: Test modules
         run: |
           for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
             (cd "$mod" && go test -count=1 ./...)
           done
+
+  race:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/gopact-ai/*
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache-dependency-path: "**/go.sum"
+
+      - name: Configure private core access
+        run: |
+          if [ -n "${GOPACT_GITHUB_TOKEN:-}" ]; then
+            git config --global url."https://x-access-token:${GOPACT_GITHUB_TOKEN}@github.com/gopact-ai/".insteadOf "https://github.com/gopact-ai/"
+          fi
+        env:
+          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
+
       - name: Race modules
         run: |
           for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
             (cd "$mod" && go test -race -count=1 ./...)
           done
+
+  static:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/gopact-ai/*
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache-dependency-path: "**/go.sum"
+
+      - name: Configure private core access
+        run: |
+          if [ -n "${GOPACT_GITHUB_TOKEN:-}" ]; then
+            git config --global url."https://x-access-token:${GOPACT_GITHUB_TOKEN}@github.com/gopact-ai/".insteadOf "https://github.com/gopact-ai/"
+          fi
+        env:
+          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
+
+      - name: Install lint tool
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+
       - name: Vet modules
         run: |
           for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
             (cd "$mod" && go vet ./...)
           done
+
       - name: Lint modules
         run: |
           for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
             (cd "$mod" && golangci-lint run ./...)
           done
+
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/gopact-ai/*
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache-dependency-path: "**/go.sum"
+
+      - name: Configure private core access
+        run: |
+          if [ -n "${GOPACT_GITHUB_TOKEN:-}" ]; then
+            git config --global url."https://x-access-token:${GOPACT_GITHUB_TOKEN}@github.com/gopact-ai/".insteadOf "https://github.com/gopact-ai/"
+          fi
+        env:
+          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
+
       - name: Coverage modules
         run: |
           for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
             (cd "$mod" && go test -coverprofile=coverage.out ./...)
           done
+
+  security:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/gopact-ai/*
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache-dependency-path: "**/go.sum"
+
+      - name: Configure private core access
+        run: |
+          if [ -n "${GOPACT_GITHUB_TOKEN:-}" ]; then
+            git config --global url."https://x-access-token:${GOPACT_GITHUB_TOKEN}@github.com/gopact-ai/".insteadOf "https://github.com/gopact-ai/"
+          fi
+        env:
+          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
+
+      - name: Install security tool
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
       - name: Security modules
         run: |
           for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
             (cd "$mod" && govulncheck ./...)
           done
+
+  test:
+    runs-on: ubuntu-latest
+    needs: [hygiene, unit, race, static, coverage, security]
+    if: ${{ always() }}
+    steps:
+      - name: Summarize required gates
+        run: |
+          set -euo pipefail
+          failed=0
+          check_gate() {
+            name="$1"
+            result="$2"
+            echo "${name}: ${result}"
+            if [ "${result}" != "success" ]; then
+              failed=1
+            fi
+          }
+
+          check_gate hygiene "${{ needs.hygiene.result }}"
+          check_gate unit "${{ needs.unit.result }}"
+          check_gate race "${{ needs.race.result }}"
+          check_gate static "${{ needs.static.result }}"
+          check_gate coverage "${{ needs.coverage.result }}"
+          check_gate security "${{ needs.security.result }}"
+          exit "${failed}"
