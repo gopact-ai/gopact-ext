@@ -278,6 +278,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.14",
 		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.15",
 		"github.com/gopact-ai/gopact-ext/agents/react v0.2.13",
+		"github.com/gopact-ai/gopact-ext/agents/supervisor v0.1.0",
 		"github.com/gopact-ai/gopact-ext/models/agnes v0.1.16",
 	} {
 		if !strings.Contains(agentsGoMod, requirement) {
@@ -337,6 +338,12 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"Plan-Execute golden trajectory", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
 		{"ReAct agent template", "agents/react", "(cd agents/react && go test -count=1 ./...)", ""},
 		{"Supervisor agent template", "agents/supervisor", "(cd agents/supervisor && go test -count=1 ./...)", ""},
+		{"ReAct tool loop with model options and runtime IDs", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
+		{"ReAct checkpoint resume with tool, memory, and verification", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
+		{"Plan-Execute model planner and executor with request options", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
+		{"Plan-Execute approval checkpoint resume", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
+		{"Agent-as-Tool A2A delegation success and failure evidence", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
+		{"Supervisor routing to Plan-Execute child with runtime IDs", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
 		{"file snapshot evidence", "devagent/filesnapshot", "(cd devagent/filesnapshot && go test -count=1 ./...)", ""},
 		{"git diff evidence", "devagent/gitdiff", "(cd devagent/gitdiff && go test -count=1 ./...)", ""},
 		{"OpenAI provider", "models/openai", "(cd models/openai && go test -count=1 ./...)", "(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)"},
@@ -349,6 +356,7 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"Agnes provider error classification", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
 		{"Agnes provider cancel and timeout", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
 		{"Agnes-backed agent templates", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
+		{"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, and Supervisor templates", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
 	}
 
 	for _, tt := range tests {
@@ -398,7 +406,8 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"Plan-Execute model planner and executor with request options",
 		"Plan-Execute approval checkpoint resume",
 		"Agent-as-Tool A2A delegation success and failure evidence",
-		"Agnes-backed ReAct, Plan-Execute, and Agent-as-Tool templates",
+		"Supervisor routing to Plan-Execute child with runtime IDs",
+		"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, and Supervisor templates",
 	} {
 		if !strings.Contains(matrix, capability) {
 			t.Fatalf("FEATURES.md missing agent template capability %q", capability)
@@ -414,9 +423,11 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"TestPlanExecTemplateResumesApprovalCheckpointWithMockModel",
 		"TestReActTemplateCanUsePlanExecAgentAsToolWithMockModel",
 		"TestReActTemplateFailsWhenPlanExecAgentToolFailsWithMockModel",
+		"TestSupervisorTemplateRoutesToPlanExecChildWithMockModel",
 		"TestAgnesIntegrationReActTemplateCapabilities",
 		"TestAgnesIntegrationPlanExecuteTemplate",
 		"TestAgnesIntegrationAgentAsToolTemplate",
+		"TestAgnesIntegrationSupervisorTemplate",
 	} {
 		if !strings.Contains(allTests, testName) {
 			t.Fatalf("agent templates missing concrete test %q", testName)
