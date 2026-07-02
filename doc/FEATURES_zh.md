@@ -14,6 +14,7 @@
 | Plan-Execute agent template with replan, approval, checkpoint, and cancel | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
 | Plan-Execute golden trajectory | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
 | ReAct agent template | `agents/react` | `(cd agents/react && go test -count=1 ./...)` | - |
+| Supervisor agent template | `agents/supervisor` | `(cd agents/supervisor && go test -count=1 ./...)` | - |
 | ReAct tool loop with model options and runtime IDs | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | - |
 | ReAct checkpoint resume with tool, memory, and verification | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | Plan-Execute model planner and executor with request options | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
