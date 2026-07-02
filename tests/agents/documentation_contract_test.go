@@ -99,6 +99,7 @@ func TestRepositoryReadmeBadgesAndDocIndexAreConfigured(t *testing.T) {
 
 func TestModuleReadmesExposeGoReferenceBadges(t *testing.T) {
 	for _, module := range []string{
+		"agents/agentnode",
 		"agents/agenttool",
 		"agents/planexec",
 		"agents/react",

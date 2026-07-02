@@ -1,4 +1,4 @@
-module github.com/gopact-ai/gopact-ext/agents/agenttool
+module github.com/gopact-ai/gopact-ext/agents/agentnode
 
 go 1.25.11
 
