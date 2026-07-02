@@ -27,7 +27,7 @@ go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.12
 go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.12
 go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.15
 go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.13
-go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.15
+go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.16
 ```
 
 Extension modules are versioned with Go submodule tags such as `models/openai/v0.5.0`.

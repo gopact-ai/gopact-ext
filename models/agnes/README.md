@@ -5,7 +5,7 @@ Agnes AI text model provider adapter for `gopact`.
 ## Install
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.15
+go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.16
 ```
 
 ## Usage
