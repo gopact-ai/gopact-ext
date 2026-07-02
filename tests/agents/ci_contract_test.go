@@ -168,6 +168,27 @@ func TestRepositoryPublicReadinessAndPRGovernanceAreConfigured(t *testing.T) {
 	}
 }
 
+func TestRepositoryCIWorkflowOptimizesIndependentGatesForParallelFeedback(t *testing.T) {
+	workflow := readRepoText(t, "../../.github/workflows/ci.yml")
+
+	for _, want := range []string{
+		"concurrency:",
+		"group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+		"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+		"hygiene:",
+		"unit:",
+		"race:",
+		"static:",
+		"coverage:",
+		"security:",
+		"needs: [hygiene, unit, race, static, coverage, security]",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("workflow missing parallel feedback control %q", want)
+		}
+	}
+}
+
 func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 	readme := readRepoText(t, "../../README.md")
 
