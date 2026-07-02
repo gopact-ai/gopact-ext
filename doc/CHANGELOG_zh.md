@@ -6,11 +6,12 @@
 
 ## 中文
 
-本文件记录 `gopact-ext` 对用户可见的变更。每个 extension 作为独立 Go submodule 发布，tag 使用模块路径前缀，例如 `models/openai/v0.5.16`。
+本文件记录 `gopact-ext` 对用户可见的变更。每个 extension 作为独立 Go submodule 发布，tag 使用模块路径前缀，例如 `models/openai/v0.5.17`。
 
 ## Unreleased
 
 - 将 extension modules 同步到 `gopact` core `v0.0.37`。
+- 发布基于 `gopact` core `v0.0.37` 的当前 extension tags：`agents/agenttool/v0.1.16`、`agents/planexec/v0.2.17`、`agents/react/v0.2.15`、`agents/supervisor/v0.1.3`、`devagent/filesnapshot/v0.1.14`、`devagent/gitdiff/v0.1.14`、`models/openai/v0.5.17`、`models/ark/v0.2.15` 和 `models/agnes/v0.1.18`。
 - 增加 `agents/supervisor`：provider-neutral template，可将任务路由到指定子 runnable，并保留 runtime IDs 与 event evidence。
 - 增加 `tests/agents` 的 mock 与 Agnes-backed 覆盖，固化 supervisor 路由到 Plan-Execute 子 agent 的组合路径。
 - 将 ReAct verification export process records 与 step-export resume 纳入已测试 extension 能力契约。
