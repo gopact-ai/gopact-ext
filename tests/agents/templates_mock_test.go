@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"testing"
 
 	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/gopact-ext/agents/agentnode"
 	"github.com/gopact-ai/gopact-ext/agents/agenttool"
 	"github.com/gopact-ai/gopact-ext/agents/planexec"
 	"github.com/gopact-ai/gopact-ext/agents/react"
@@ -15,6 +17,7 @@ import (
 	"github.com/gopact-ai/gopact/a2a"
 	"github.com/gopact-ai/gopact/checkpoint"
 	"github.com/gopact-ai/gopact/gopacttest"
+	"github.com/gopact-ai/gopact/graph"
 )
 
 func TestReActTemplateRunsToolThenFinalWithMockModel(t *testing.T) {
@@ -450,6 +453,73 @@ func TestReActTemplateFailsWhenPlanExecAgentToolFailsWithMockModel(t *testing.T)
 		t.Fatalf("parent model requests = %d, want no final call after child failure", len(parentModel.requests))
 	}
 	requireMockModelRuntimeIDs(t, parentModel.requests, parentModel.contextIDs, parentIDs)
+}
+
+func TestAgentNodeDelegatesA2AAgentInsideGraphWithMock(t *testing.T) {
+	wantIDs := gopact.RuntimeIDs{RunID: "run-agentnode-mock", ThreadID: "thread-agentnode", TraceID: "trace-agentnode"}
+	child := a2a.FakeAgent{
+		CardValue: a2a.AgentCard{Name: "planner-agent", URL: "memory://planner-agent"},
+		StreamFunc: func(_ context.Context, task a2a.Task) iter.Seq2[a2a.TaskEvent, error] {
+			return func(yield func(a2a.TaskEvent, error) bool) {
+				yield(a2a.TaskEvent{
+					TaskID: task.ID,
+					IDs:    task.IDs,
+					Status: a2a.TaskStatusCompleted,
+					Result: &a2a.Result{TaskID: task.ID, Output: "plan accepted"},
+				}, nil)
+			}
+		},
+	}
+	node, err := agentnode.New[agentNodeState](
+		child,
+		func(ctx context.Context, state agentNodeState) (a2a.Task, error) {
+			ids, _ := gopact.RuntimeIDsFromContext(ctx)
+			return a2a.Task{ID: "task-agentnode", IDs: ids, Input: state.Input}, nil
+		},
+		func(_ context.Context, state agentNodeState, result a2a.Result) (agentNodeState, error) {
+			state.Output = result.Output
+			return state, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("agentnode.New() error = %v", err)
+	}
+	g := graph.New[agentNodeState]()
+	g.AddNode("delegate", node)
+	g.AddEdge(graph.Start, "delegate")
+	g.AddEdge("delegate", graph.End)
+	run, err := g.Compile()
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(run.Run(context.Background(), agentNodeState{Input: "ship examples"}, graph.WithRuntimeIDs(wantIDs)))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	gopacttest.RequireEventTypes(t, events,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventA2ATaskCompleted,
+		gopact.EventNodeCompleted,
+		gopact.EventRunCompleted,
+	)
+	if events[2].Metadata["agent_name"] != "planner-agent" ||
+		events[2].Metadata[graph.EventMetadataParentNode] != "delegate" {
+		t.Fatalf("A2A graph node metadata = %+v, want child and parent evidence", events[2].Metadata)
+	}
+	output, ok := events[3].StepSnapshot.Output.(agentNodeState)
+	if !ok {
+		t.Fatalf("output type = %T, want agentNodeState", events[3].StepSnapshot.Output)
+	}
+	if output.Output != "plan accepted" {
+		t.Fatalf("output = %+v, want mapped A2A result", output)
+	}
+}
+
+type agentNodeState struct {
+	Input  string
+	Output string
 }
 
 type mockResponseModel struct {

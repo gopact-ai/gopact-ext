@@ -8,6 +8,7 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 
 | Capability | Module | Mock command | Integration command |
 | --- | --- | --- | --- |
+| agent as graph node | `agents/agentnode` | `(cd agents/agentnode && go test -count=1 ./...)` | Not required |
 | agent as tool | `agents/agenttool` | `(cd agents/agenttool && go test -count=1 ./...)` | Not required |
 | Plan-Execute agent template with replan, approval, checkpoint, and cancel | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | Not required |
 | Plan-Execute golden trajectory | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | Not required |
@@ -20,6 +21,7 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | Plan-Execute approval checkpoint resume | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | Not required |
 | Agent-as-Tool A2A delegation success and failure evidence | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | Supervisor routing to Plan-Execute child with runtime IDs | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
+| A2A agent node inside graph workflow | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | Not required |
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | Not required |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | Not required |
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
