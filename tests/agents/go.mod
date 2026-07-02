@@ -9,6 +9,7 @@ require (
 	github.com/gopact-ai/gopact-ext/agents/react v0.2.13
 	github.com/gopact-ai/gopact-ext/agents/supervisor v0.1.1
 	github.com/gopact-ai/gopact-ext/models/agnes v0.1.16
+	golang.org/x/mod v0.37.0
 )
 
 require github.com/gopact-ai/gopact-ext/models/openai v0.5.15 // indirect
