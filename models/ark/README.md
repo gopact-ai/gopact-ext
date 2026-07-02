@@ -10,4 +10,4 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `models/ark` is the Volcengine Ark SDK adapter for `gopact`. It uses the Ark runtime SDK and supports API key authentication as well as AK/SK authentication.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.13`. If an Ark endpoint is being used as an OpenAI-compatible HTTP API, use `models/openai` instead; this module is for the Ark SDK path.
+Install it with `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.14`. If an Ark endpoint is being used as an OpenAI-compatible HTTP API, use `models/openai` instead; this module is for the Ark SDK path.

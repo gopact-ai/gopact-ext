@@ -4,5 +4,5 @@ go 1.25.11
 
 require (
 	github.com/gopact-ai/gopact v0.0.36
-	github.com/gopact-ai/gopact-ext/models/openai v0.5.15
+	github.com/gopact-ai/gopact-ext/models/openai v0.5.16
 )
