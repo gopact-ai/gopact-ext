@@ -1,19 +1,21 @@
 # Feature Coverage
 
-<!-- gopact:doc-language: en -->
+<!-- gopact:doc-language: zh -->
 
-Chinese documentation: [FEATURES_zh.md](FEATURES_zh.md)
+[英文文档](./FEATURES.md)
 
-This matrix is the executable capability contract for `gopact-ext`. CI runs mock tests only so the repository stays deterministic and independent of provider credentials. Provider-backed checks are local opt-in tests behind the `integration` build tag.
+## 中文
 
-| Capability | Module | Mock command | Integration command |
+这个矩阵是 `gopact-ext` 的可执行能力契约。CI 默认运行 mock 测试，确保 extension 行为可重复、无外部依赖；真实 provider 测试通过 `integration` build tag 在本地手动执行。
+
+| Capability | Path | Mock test | Local integration |
 | --- | --- | --- | --- |
-| agent as tool | `agents/agenttool` | `(cd agents/agenttool && go test -count=1 ./...)` | Not required |
-| Plan-Execute agent template with replan, approval, checkpoint, and cancel | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | Not required |
-| Plan-Execute golden trajectory | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | Not required |
-| ReAct agent template | `agents/react` | `(cd agents/react && go test -count=1 ./...)` | Not required |
-| file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | Not required |
-| git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | Not required |
+| agent as tool | `agents/agenttool` | `(cd agents/agenttool && go test -count=1 ./...)` | - |
+| Plan-Execute agent template with replan, approval, checkpoint, and cancel | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
+| Plan-Execute golden trajectory | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
+| ReAct agent template | `agents/react` | `(cd agents/react && go test -count=1 ./...)` | - |
+| file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | - |
+| git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | - |
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Ark provider | `models/ark` | `(cd models/ark && go test -count=1 ./...)` | `(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Agnes provider | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
@@ -25,4 +27,8 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | Agnes provider cancel and timeout | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes-backed agent templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 
-Provider adapters must cover default and per-call model selection, request budgets, sampling controls, streaming, tool calling, structured output, thinking or reasoning controls, timeout and cancel behavior, and error classification. Agent templates must cover success paths, failure paths, composition paths, and resumable boundaries. Development-agent helpers collect evidence only; release decisions remain with the caller.
+能力说明：
+
+- provider adapter 必须覆盖默认 model、per-call model override、参数预算、采样参数、stream、tool calling、structured output、thinking/reasoning 控制、超时/取消和错误分类。
+- agent template 必须覆盖成功路径、失败路径、组合路径和可恢复边界；涉及人工审批、checkpoint、memory、verification 的能力必须有具体测试固化。
+- dev-agent helper 必须只采集证据，不替调用方做发布决策或写入工作区。
