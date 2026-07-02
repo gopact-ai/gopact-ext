@@ -1,0 +1,30 @@
+# Changelog
+
+<!-- gopact:doc-language: zh -->
+
+[英文文档](./CHANGELOG.md)
+
+## 中文
+
+本文件记录 `gopact-ext` 对用户可见的变更。每个 extension 作为独立 Go submodule 发布，tag 使用模块路径前缀，例如 `models/openai/v0.5.15`。
+
+## Unreleased
+
+- 重写根 README、模块 README 和 `doc/` 文档，按公开开源项目标准补齐定位、安装、验证、真实 provider 测试、安全和治理说明。
+- 保持 CI mock-only，并继续通过 integration build tag 支持 OpenAI、Ark、Agnes 和跨 agent template 的真实服务测试。
+
+## 2026-07-02
+
+- 增加 public readiness 检查，扫描 tracked file 和 commit message 中的高置信敏感信息模式。
+- 增加 PR governance workflows：admin-authored PR 在必需门禁通过后自动 squash merge；non-admin-authored PR 需要至少一名 admin 审批。
+- 将 CI 拆成 hygiene、unit、race、static、coverage、security 等独立 job，并保留聚合的 `ci/test` required check。
+- 发布当前 extension tag：`agents/agenttool/v0.1.14`、`agents/planexec/v0.2.15`、`agents/react/v0.2.13`、`devagent/filesnapshot/v0.1.12`、`devagent/gitdiff/v0.1.12`、`models/openai/v0.5.15`、`models/ark/v0.2.13`、`models/agnes/v0.1.16`。
+- `models/agnes` 基于 `models/openai/v0.5.15`，覆盖 streaming、tool calling、structured output、thinking toggle、错误分类、取消和超时。
+- `tests/agents` 覆盖 ReAct、Plan-Execute、Agent-as-Tool 和 Agnes-backed template 组合路径。
+
+## 2026-07-01
+
+- 发布第一批可组合 extension：ReAct、Plan-Execute、agent-as-tool、file snapshot、git diff、OpenAI-compatible provider、Ark provider、Agnes provider。
+- OpenAI provider 支持 Chat Completions 和 Responses，包含 SSE streaming、tool calling、structured output、thinking/reasoning 参数、Responses image/text input 和 reasoning summary 映射。
+- Ark provider 通过 Volcengine Ark SDK 接入，支持 API key 与 AK/SK。
+- Dev-agent helper 提供文件快照和 git diff 证据采集，不修改工作区。
