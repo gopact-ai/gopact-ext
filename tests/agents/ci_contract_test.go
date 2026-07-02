@@ -191,6 +191,7 @@ func TestRepositoryCIWorkflowOptimizesIndependentGatesForParallelFeedback(t *tes
 
 func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 	readme := readRepoText(t, "../../README.md")
+	script := readRepoText(t, "../../scripts/local-agnes-integration.sh")
 
 	for _, command := range []string{
 		"(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)",
@@ -211,6 +212,23 @@ func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 	} {
 		if strings.Contains(readme, command) {
 			t.Fatalf("README contains unsupported integration command %q", command)
+		}
+	}
+
+	if !strings.Contains(readme, "./scripts/local-agnes-integration.sh") {
+		t.Fatal("README missing local Agnes integration script")
+	}
+	for _, command := range []string{
+		"(cd models/agnes && go test -tags=integration -count=1 ./...)",
+		"(cd tests/agents && go test -tags=integration -count=1 ./...)",
+	} {
+		if !strings.Contains(script, command) {
+			t.Fatalf("local Agnes integration script missing command %q", command)
+		}
+	}
+	for _, forbidden := range []string{"models/openai", "models/ark"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("local Agnes integration script must not run %s", forbidden)
 		}
 	}
 }
