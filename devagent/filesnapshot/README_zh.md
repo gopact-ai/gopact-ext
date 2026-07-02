@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.14
+go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.15
 ```
 
 ## 用法
