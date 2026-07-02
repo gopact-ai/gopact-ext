@@ -4,36 +4,36 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/gopact-ai/gopact-ext/agents/react.svg)](https://pkg.go.dev/github.com/gopact-ai/gopact-ext/agents/react)
 [![License](https://img.shields.io/github/license/gopact-ai/gopact-ext)](../../LICENSE)
 
-
 <!-- gopact:doc-language: zh,en -->
 
 ## 中文
 
-本文档是 gopact 开源文档集的一部分，中文内容用于说明当前仓库约束、能力或维护流程。
+`react` 是 ReAct 风格的 model/tool loop agent template。它适合“模型选择工具、执行工具、根据结果继续推理或完成回答”的交互式任务，并保持 provider-neutral。
 
-## English
-
-This document is part of the gopact open-source documentation set. The English section gives an entry point for readers who prefer English, while the remaining sections preserve the maintained technical details.
-
-
-ReAct-style model/tool loop agent template for `gopact`.
-
-## Install
+## 安装
 
 ```bash
 go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.13
 ```
 
-## Scope
-
-This module externalizes the ReAct template from core. It keeps the template provider-neutral: callers can pass any `gopact.ResponseModel`.
-
-## Usage
+## 用法
 
 ```go
+uppercase := gopact.ToolFunc{
+	SpecValue: gopact.ObjectToolSpec(
+		"uppercase",
+		"Uppercase text.",
+		gopact.RequiredStringField("text", "Text to uppercase."),
+	),
+	InvokeFunc: func(ctx context.Context, raw json.RawMessage) (gopact.ToolResult, error) {
+		return gopact.TextToolResult("GOPACT"), nil
+	},
+}
+
 agent, err := react.NewModelAgent(
 	model,
-	react.WithTools(ctx, uppercaseTool),
+	react.WithTools(ctx, uppercase),
+	react.WithMaxIterations(4),
 	react.WithModelOptions(
 		gopact.WithMaxOutputTokens(1024),
 		gopact.WithTemperature(0.2),
@@ -43,12 +43,24 @@ if err != nil {
 	return err
 }
 
-for event, err := range agent.Run(ctx, "uppercase gopact and answer briefly") {
-	if err != nil {
-		return err
-	}
-	_ = event
-}
+events, err := gopacttest.CollectEvents(agent.Run(ctx, "uppercase gopact"))
 ```
 
-Advanced callers can still use `New` with a custom `gopact.ChatModel` and `tools.Registry`.
+## 能力边界
+
+- `NewModelAgent` 接受 `gopact.ResponseModel`，如果 provider 支持 streaming，会通过 core adapter 使用 streaming。
+- `WithTools` 注册 visible local tools；tool policy、middleware 和 registry 仍由 core `tools` 包提供。
+- `WithMemory` 支持同步记忆写入，也支持 deferred memory effects，便于宿主进程异步处理。
+- checkpoint、artifact verifier、final verifier 都是可插拔能力，模板不内置持久化后端。
+
+## 验证
+
+```bash
+(cd agents/react && go test -count=1 ./...)
+```
+
+## English
+
+`react` is a ReAct-style model/tool loop template. Use it when the model should choose visible tools, observe results, and either continue the loop or produce a final answer.
+
+Install it with `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.13`. The template is provider-neutral, supports local tools, memory hooks, checkpoint/resume, artifact verification, and final run verification.
