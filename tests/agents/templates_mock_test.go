@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/gopact-ext/agents/agenttool"
 	"github.com/gopact-ai/gopact-ext/agents/planexec"
 	"github.com/gopact-ai/gopact-ext/agents/react"
+	"github.com/gopact-ai/gopact-ext/agents/supervisor"
 	"github.com/gopact-ai/gopact/a2a"
 	"github.com/gopact-ai/gopact/checkpoint"
 	"github.com/gopact-ai/gopact/gopacttest"
@@ -298,6 +299,77 @@ func TestReActTemplateCanUsePlanExecAgentAsToolWithMockModel(t *testing.T) {
 	requireMockModelRuntimeIDs(t, parentModel.requests, parentModel.contextIDs, parentIDs)
 	requireMockModelRuntimeIDs(t, childModel.requests, childModel.contextIDs, childIDs)
 	requireMockModelOptions(t, parentModel.requests, 1024, 0.2, "disabled")
+	requireMockModelOptions(t, childModel.requests, 1024, 0.2, "disabled")
+}
+
+func TestSupervisorTemplateRoutesToPlanExecChildWithMockModel(t *testing.T) {
+	parentIDs := gopact.RuntimeIDs{
+		RunID:    "run-supervisor-mock",
+		ThreadID: "thread-supervisor",
+		UserID:   "user-1",
+		TraceID:  "trace-supervisor",
+	}
+	childIDs := parentIDs
+	childIDs.AgentID = "planner"
+
+	childModel := &mockResponseModel{responses: []gopact.ModelResponse{
+		{Message: gopact.AssistantMessage("STEP: validate supervisor routing")},
+		{Message: gopact.AssistantMessage("routing validated")},
+	}}
+	child, err := planexec.NewModelAgent(
+		childModel,
+		planexec.WithModelOptions(
+			gopact.WithMaxOutputTokens(1024),
+			gopact.WithTemperature(0.2),
+			gopact.WithThinkingType("disabled"),
+		),
+	)
+	if err != nil {
+		t.Fatalf("planexec.NewModelAgent() error = %v", err)
+	}
+	agent, err := supervisor.New(
+		supervisor.RouterFunc(func(_ context.Context, request supervisor.Request) (supervisor.Route, error) {
+			if request.Task != "ship supervised plan" {
+				return supervisor.Route{}, fmt.Errorf("task = %q, want supervised task", request.Task)
+			}
+			return supervisor.Route{Agent: "planner", Input: request.Task}, nil
+		}),
+		supervisor.Child{Name: "planner", Runnable: child},
+	)
+	if err != nil {
+		t.Fatalf("supervisor.New() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship supervised plan", gopact.WithRuntimeIDs(parentIDs)))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	gopacttest.RequireEventTypes(t, events,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventNodeCompleted,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventNodeCompleted,
+		gopact.EventNodeStarted,
+		gopact.EventNodeCompleted,
+		gopact.EventNodeStarted,
+		gopact.EventNodeCompleted,
+		gopact.EventRunCompleted,
+		gopact.EventRunCompleted,
+	)
+	routeState, ok := events[2].StepSnapshot.Output.(supervisor.State)
+	if !ok || routeState.SelectedAgent != "planner" {
+		t.Fatalf("route output = %#v, want selected planner", events[2].StepSnapshot.Output)
+	}
+	childState, ok := events[9].StepSnapshot.Output.(planexec.State)
+	if !ok || childState.Summary != "completed 1 steps" || len(childState.Results) != 1 {
+		t.Fatalf("child output = %#v, want completed planexec state", events[9].StepSnapshot.Output)
+	}
+	if events[11].Metadata["selected_agent"] != "planner" {
+		t.Fatalf("supervisor completion metadata = %+v, want selected planner", events[11].Metadata)
+	}
+	requireMockModelRuntimeIDs(t, childModel.requests, childModel.contextIDs, childIDs)
 	requireMockModelOptions(t, childModel.requests, 1024, 0.2, "disabled")
 }
 

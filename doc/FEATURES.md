@@ -18,6 +18,7 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | Plan-Execute model planner and executor with request options | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | Plan-Execute approval checkpoint resume | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | Not required |
 | Agent-as-Tool A2A delegation success and failure evidence | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
+| Supervisor routing to Plan-Execute child with runtime IDs | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | Not required |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | Not required |
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
@@ -30,6 +31,6 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | Agnes provider error classification | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes provider cancel and timeout | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes-backed agent templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
-| Agnes-backed ReAct, Plan-Execute, and Agent-as-Tool templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
+| Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, and Supervisor templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 
 Provider adapters must cover default and per-call model selection, request budgets, sampling controls, streaming, tool calling, structured output, thinking or reasoning controls, timeout and cancel behavior, and error classification. Agent templates must cover success paths, failure paths, composition paths, and resumable boundaries. Development-agent helpers collect evidence only; release decisions remain with the caller.

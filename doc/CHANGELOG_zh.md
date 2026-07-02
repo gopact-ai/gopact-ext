@@ -11,6 +11,7 @@
 ## Unreleased
 
 - 增加 `agents/supervisor`：provider-neutral template，可将任务路由到指定子 runnable，并保留 runtime IDs 与 event evidence。
+- 增加 `tests/agents` 的 mock 与 Agnes-backed 覆盖，固化 supervisor 路由到 Plan-Execute 子 agent 的组合路径。
 - 重写根 README、模块 README 和 `doc/` 文档，按公开开源项目标准补齐定位、安装、验证、真实 provider 测试、安全和治理说明。
 - 保持 CI mock-only，并继续通过 integration build tag 支持 OpenAI、Ark、Agnes 和跨 agent template 的真实服务测试。
 

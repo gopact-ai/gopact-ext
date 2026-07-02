@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/gopact-ext/agents/agenttool"
 	"github.com/gopact-ai/gopact-ext/agents/planexec"
 	"github.com/gopact-ai/gopact-ext/agents/react"
+	"github.com/gopact-ai/gopact-ext/agents/supervisor"
 	"github.com/gopact-ai/gopact-ext/models/agnes"
 	"github.com/gopact-ai/gopact/a2a"
 	"github.com/gopact-ai/gopact/checkpoint"
@@ -327,6 +328,66 @@ func TestAgnesIntegrationAgentAsToolTemplate(t *testing.T) {
 	}
 }
 
+func TestAgnesIntegrationSupervisorTemplate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	agnesModel := newAgnesIntegrationModel(t)
+	child, err := planexec.NewModelAgent(
+		agnesModel,
+		planexec.WithModelOptions(
+			gopact.WithMaxOutputTokens(512),
+			gopact.WithTemperature(0.2),
+			agnes.DisableThinking(),
+		),
+	)
+	if err != nil {
+		t.Fatalf("planexec.NewModelAgent() error = %v", err)
+	}
+	agent, err := supervisor.New(
+		supervisor.RouterFunc(func(_ context.Context, request supervisor.Request) (supervisor.Route, error) {
+			if strings.TrimSpace(request.Task) == "" {
+				return supervisor.Route{}, errors.New("empty supervisor task")
+			}
+			return supervisor.Route{Agent: "agnes_planner", Input: request.Task}, nil
+		}),
+		supervisor.Child{Name: "agnes_planner", Runnable: child},
+	)
+	if err != nil {
+		t.Fatalf("supervisor.New() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(agent.Run(ctx,
+		"Create exactly one short step to validate supervisor routing with Agnes.",
+		gopact.WithRuntimeIDs(gopact.RuntimeIDs{
+			RunID:    "agnes-supervisor-parent",
+			ThreadID: "agnes-supervisor-thread",
+			TraceID:  "agnes-supervisor-trace",
+		}),
+	))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(events) == 0 || events[len(events)-1].Type != gopact.EventRunCompleted {
+		t.Fatalf("events = %v, want supervisor completion", gopacttest.EventTypes(events))
+	}
+	if events[len(events)-1].Metadata["selected_agent"] != "agnes_planner" {
+		t.Fatalf("supervisor completion metadata = %+v, want selected Agnes planner", events[len(events)-1].Metadata)
+	}
+	childState, ok := lastPlanExecStateForAgent(events, "agnes_planner")
+	if !ok {
+		t.Fatalf("events = %v, want Agnes-backed planexec child state", gopacttest.EventTypes(events))
+	}
+	if childState.Summary == "" || len(childState.Results) == 0 {
+		t.Fatalf("child state = %+v, want completed Agnes-backed planexec result", childState)
+	}
+	for _, result := range childState.Results {
+		if strings.TrimSpace(result.Output) == "" {
+			t.Fatalf("child state = %+v, want non-empty result outputs", childState)
+		}
+	}
+}
+
 type scriptedToolCallModel struct{}
 
 func (scriptedToolCallModel) Generate(_ context.Context, request gopact.ModelRequest) (gopact.Message, error) {
@@ -546,6 +607,19 @@ func hasMessageContaining(messages []gopact.Message, text string) bool {
 		}
 	}
 	return false
+}
+
+func lastPlanExecStateForAgent(events []gopact.Event, agentID string) (planexec.State, bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].IDs.AgentID != agentID || events[i].StepSnapshot == nil {
+			continue
+		}
+		state, ok := events[i].StepSnapshot.Output.(planexec.State)
+		if ok {
+			return state, true
+		}
+	}
+	return planexec.State{}, false
 }
 
 func loadAgnesIntegrationDotEnv(t *testing.T) {
