@@ -26,6 +26,8 @@ var (
 	ErrCommandLimitInvalid = errors.New("workspace: command output limit is invalid")
 	ErrGateRequired        = errors.New("workspace: gate is required")
 	ErrPathOutsideRoot     = errors.New("workspace: path is outside root")
+	ErrPatchRequired       = errors.New("workspace: patch diff is required")
+	ErrPatchApplyFailed    = errors.New("workspace: patch apply failed")
 )
 
 const defaultCommandOutputLimit = 64 * 1024
@@ -36,6 +38,14 @@ type Command struct {
 	Name     string
 	Args     []string
 	Dir      string
+	Metadata map[string]any
+}
+
+// Patch describes one caller-provided unified diff to apply inside the workspace.
+type Patch struct {
+	ID       string
+	Summary  string
+	Diff     string
 	Metadata map[string]any
 }
 
@@ -112,6 +122,13 @@ func (w *Workspace) Writer(paths ...string) selfbootstrap.Writer {
 	})
 }
 
+// PatchWriter returns a self-bootstrap writer that applies a caller-provided patch and then captures evidence.
+func (w *Workspace) PatchWriter(patch Patch, paths ...string) selfbootstrap.Writer {
+	return selfbootstrap.WriterFunc(func(ctx context.Context, request selfbootstrap.WriteRequest) (selfbootstrap.WriteResult, error) {
+		return w.ApplyPatch(ctx, request, patch, paths...)
+	})
+}
+
 // Tester returns a self-bootstrap tester that executes commands and maps them to CI gates.
 func (w *Workspace) Tester(commands ...Command) selfbootstrap.Tester {
 	return selfbootstrap.TesterFunc(func(ctx context.Context, _ selfbootstrap.TestRequest) (selfbootstrap.TestResult, error) {
@@ -153,6 +170,51 @@ func (w *Workspace) CaptureWrite(ctx context.Context, request selfbootstrap.Writ
 	return result, nil
 }
 
+// ApplyPatch applies a caller-provided unified diff inside the workspace and captures the resulting write evidence.
+func (w *Workspace) ApplyPatch(ctx context.Context, request selfbootstrap.WriteRequest, patch Patch, paths ...string) (selfbootstrap.WriteResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	metadata := w.patchMetadata(request.Request, patch, false)
+	result := selfbootstrap.WriteResult{
+		Summary:  "workspace patch apply failed",
+		Metadata: metadata,
+	}
+	if strings.TrimSpace(patch.Diff) == "" {
+		return result, ErrPatchRequired
+	}
+	patchPaths, err := w.patchPaths(ctx, patch.Diff)
+	if err != nil {
+		return result, err
+	}
+	for _, path := range patchPaths {
+		if _, err := w.validatePatchPath(path); err != nil {
+			return result, err
+		}
+	}
+	if err := w.checkPatch(ctx, patch.Diff); err != nil {
+		return result, err
+	}
+	if err := w.applyPatch(ctx, patch.Diff); err != nil {
+		return result, err
+	}
+
+	if len(paths) == 0 {
+		paths = patchPaths
+	}
+	result, err = w.CaptureWrite(ctx, request, paths...)
+	result.Summary = "workspace patch applied and evidence captured"
+	result.Metadata = w.patchMetadata(request.Request, patch, true)
+	if result.Diff != nil {
+		result.Diff.Metadata = mergeMetadata(result.Diff.Metadata, result.Metadata)
+	}
+	for i := range result.FileSnapshots {
+		result.FileSnapshots[i].Metadata = mergeMetadata(result.FileSnapshots[i].Metadata, result.Metadata)
+	}
+	return result, err
+}
+
 // RunTests executes local commands and records their observed results without treating non-zero exits as runtime errors.
 func (w *Workspace) RunTests(ctx context.Context, commands ...Command) (selfbootstrap.TestResult, error) {
 	if ctx == nil {
@@ -190,6 +252,19 @@ func (w *Workspace) RunTests(ctx context.Context, commands ...Command) (selfboot
 	return result, nil
 }
 
+func (w *Workspace) patchMetadata(request selfbootstrap.Request, patch Patch, applied bool) map[string]any {
+	metadata := mergeMetadata(w.requestMetadata(request), patch.Metadata)
+	metadata["patch_applied"] = applied
+	if patch.ID != "" {
+		metadata["patch_id"] = patch.ID
+	}
+	if patch.Summary != "" {
+		metadata["patch_summary"] = patch.Summary
+	}
+	metadata["source"] = "workspace"
+	return metadata
+}
+
 func (w *Workspace) requestMetadata(request selfbootstrap.Request) map[string]any {
 	metadata := mergeMetadata(w.metadata, request.Metadata)
 	if request.Repository != "" {
@@ -217,6 +292,38 @@ func (w *Workspace) resolvePath(path string) (string, string, error) {
 	return filepath.ToSlash(clean), absPath, nil
 }
 
+func (w *Workspace) validatePatchPath(path string) (string, error) {
+	if path == "" || path == "/dev/null" {
+		return "", nil
+	}
+	clean := filepath.Clean(filepath.FromSlash(path))
+	if filepath.IsAbs(clean) {
+		return "", fmt.Errorf("%w: %s", ErrPathOutsideRoot, path)
+	}
+	absPath := filepath.Join(w.root, clean)
+	if !isWithinRoot(w.root, absPath) {
+		return "", fmt.Errorf("%w: %s", ErrPathOutsideRoot, path)
+	}
+	if realPath, err := filepath.EvalSymlinks(absPath); err == nil && !isWithinRoot(w.root, realPath) {
+		return "", fmt.Errorf("%w: %s", ErrPathOutsideRoot, path)
+	}
+	parent := filepath.Dir(absPath)
+	for {
+		if realParent, err := filepath.EvalSymlinks(parent); err == nil {
+			if !isWithinRoot(w.root, realParent) {
+				return "", fmt.Errorf("%w: %s", ErrPathOutsideRoot, path)
+			}
+			break
+		}
+		next := filepath.Dir(parent)
+		if next == parent || !isWithinRoot(w.root, next) {
+			break
+		}
+		parent = next
+	}
+	return filepath.ToSlash(clean), nil
+}
+
 func (w *Workspace) commandDir(dir string) (string, string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return w.root, ".", nil
@@ -233,6 +340,60 @@ func (w *Workspace) commandDir(dir string) (string, string, error) {
 		return "", "", fmt.Errorf("workspace: command dir is not a directory: %s", rel)
 	}
 	return abs, rel, nil
+}
+
+func (w *Workspace) patchPaths(ctx context.Context, diff string) ([]string, error) {
+	out, err := w.gitPatchOutput(ctx, []string{"apply", "--numstat", "-z", "--"}, diff)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	seen := map[string]bool{}
+	for _, record := range strings.Split(out, "\x00") {
+		if record == "" {
+			continue
+		}
+		parts := strings.SplitN(record, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		path := parts[2]
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+func (w *Workspace) checkPatch(ctx context.Context, diff string) error {
+	_, err := w.gitPatchOutput(ctx, []string{"apply", "--check", "--"}, diff)
+	return err
+}
+
+func (w *Workspace) applyPatch(ctx context.Context, diff string) error {
+	_, err := w.gitPatchOutput(ctx, []string{"apply", "--whitespace=nowarn", "--"}, diff)
+	return err
+}
+
+func (w *Workspace) gitPatchOutput(ctx context.Context, args []string, diff string) (string, error) {
+	gitArgs := append([]string{"-c", "gc.auto=0", "-c", "maintenance.auto=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", gitArgs...)
+	cmd.Dir = w.root
+	cmd.Stdin = strings.NewReader(diff)
+	stdout := &boundedBuffer{limit: w.commandOutputLimit}
+	stderr := &boundedBuffer{limit: w.commandOutputLimit}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return stdout.String(), fmt.Errorf("%w: %s", ErrPatchApplyFailed, message)
+	}
+	return stdout.String(), nil
 }
 
 func runCommand(ctx context.Context, dir, displayDir string, outputLimit int, command Command) gopacttest.CommandResult {

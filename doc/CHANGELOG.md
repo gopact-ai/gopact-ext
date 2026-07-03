@@ -11,13 +11,13 @@ This changelog records user-visible changes for `gopact-ext`. Each extension is 
 The current unreleased work adds graph-node A2A composition while preserving the existing mock-only CI and opt-in integration tests for real providers. The 2026-07-02 release line added public-readiness checks, PR governance, parallel CI gates, current module tags, and broader Agnes-backed agent template coverage.
 
 - Update extension modules to `gopact` core `v0.0.45`.
-- Publish current extension tags on core `v0.0.45`: `agents/agentnode/v0.1.3`, `agents/agenttool/v0.1.22`, `agents/planexec/v0.2.23`, `agents/react/v0.2.21`, `agents/supervisor/v0.1.9`, `devagent/filesnapshot/v0.1.20`, `devagent/gitdiff/v0.1.20`, `models/openai/v0.5.23`, `models/ark/v0.2.21`, and `models/agnes/v0.1.24`.
+- Publish current extension tags on core `v0.0.45`: `agents/agentnode/v0.1.3`, `agents/agenttool/v0.1.22`, `agents/planexec/v0.2.23`, `agents/react/v0.2.21`, `agents/supervisor/v0.1.9`, `devagent/filesnapshot/v0.1.20`, `devagent/gitdiff/v0.1.20`, `devagent/workspace/v0.1.1`, `models/openai/v0.5.23`, `models/ark/v0.2.21`, and `models/agnes/v0.1.24`.
 - Add `agents/agentnode`, an A2A-to-graph adapter that preserves child A2A events in the parent graph stream.
 - Add `agents/supervisor`, a provider-neutral template that routes a task to a named child runnable while preserving runtime IDs and event evidence.
 - Add `agents/humanreview`, a provider-neutral human approval gate for graph workflows with step-export and checkpoint resume support.
 - Add `agents/scheduler`, a provider-neutral background worker primitive with queue transitions, lease renewal, retry, stop, dead-letter, drain, and schedule evidence.
 - Add `devagent/selfbootstrap`, a provider-neutral Dev Agent workflow that coordinates analyze, plan, write, test, and review evidence into a run export and verification report.
-- Add `devagent/workspace`, a local repository adapter that captures self-bootstrap diff, file snapshot, command, and CI gate evidence.
+- Add `devagent/workspace`, a local repository adapter that applies caller-provided patches and captures self-bootstrap diff, file snapshot, command, and CI gate evidence.
 - Add mock and Agnes-backed `tests/agents` coverage for supervisor routing to a Plan-Execute child.
 - Add Agnes-backed `tests/agents` coverage for A2A AgentNode graph delegation.
 - Add mock `tests/agents` coverage for HumanReview gate composition inside graph workflows.
