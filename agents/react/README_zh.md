@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.24
+go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.25
 ```
 
 ## 用法
