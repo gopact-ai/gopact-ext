@@ -16,18 +16,18 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 | Module | Purpose | Install |
 | --- | --- | --- |
-| `agents/agentnode` | Wrap an A2A agent as a typed graph node with nested child-event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.2` |
-| `agents/agenttool` | Wrap an A2A agent as a regular `gopact.ToolFunc`. | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.21` |
-| `agents/planexec` | Plan-Execute template with replan, approval, checkpoint, and cancel support. | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.22` |
-| `agents/react` | ReAct model/tool loop with memory, checkpoint, resume, and verification hooks. | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.20` |
-| `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.8` |
-| `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.19` |
-| `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.19` |
-| `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.22` |
-| `models/ark` | Volcengine Ark SDK provider adapter with API-key and AK/SK paths. | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.20` |
-| `models/agnes` | Agnes AI OpenAI-compatible Chat Completions provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.23` |
+| `agents/agentnode` | Wrap an A2A agent as a typed graph node with nested child-event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.3` |
+| `agents/agenttool` | Wrap an A2A agent as a regular `gopact.ToolFunc`. | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.22` |
+| `agents/planexec` | Plan-Execute template with replan, approval, checkpoint, and cancel support. | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.23` |
+| `agents/react` | ReAct model/tool loop with memory, checkpoint, resume, and verification hooks. | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.21` |
+| `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9` |
+| `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20` |
+| `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20` |
+| `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.23` |
+| `models/ark` | Volcengine Ark SDK provider adapter with API-key and AK/SK paths. | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.21` |
+| `models/agnes` | Agnes AI OpenAI-compatible Chat Completions provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.24` |
 
-Submodule tags include the module path prefix, for example `models/openai/v0.5.22`.
+Submodule tags include the module path prefix, for example `models/openai/v0.5.23`.
 
 ## Usage
 

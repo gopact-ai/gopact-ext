@@ -10,4 +10,4 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `models/agnes` adapts Agnes AI to the `gopact` model contract. Agnes exposes an OpenAI-compatible Chat Completions API, so this module wraps `models/openai` with Agnes defaults and a provider-specific thinking toggle.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.23`. Use `New` for the default Agnes endpoint or `NewClient` when tests need a mock server or a custom gateway.
+Install it with `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.24`. Use `New` for the default Agnes endpoint or `NewClient` when tests need a mock server or a custom gateway.
