@@ -4,16 +4,16 @@ go 1.25.11
 
 require (
 	github.com/gopact-ai/gopact v0.0.42
-	github.com/gopact-ai/gopact-ext/agents/agentnode v0.1.0
-	github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.19
-	github.com/gopact-ai/gopact-ext/agents/planexec v0.2.20
-	github.com/gopact-ai/gopact-ext/agents/react v0.2.18
-	github.com/gopact-ai/gopact-ext/agents/supervisor v0.1.6
-	github.com/gopact-ai/gopact-ext/models/agnes v0.1.21
+	github.com/gopact-ai/gopact-ext/agents/agentnode v0.1.1
+	github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.20
+	github.com/gopact-ai/gopact-ext/agents/planexec v0.2.21
+	github.com/gopact-ai/gopact-ext/agents/react v0.2.19
+	github.com/gopact-ai/gopact-ext/agents/supervisor v0.1.7
+	github.com/gopact-ai/gopact-ext/models/agnes v0.1.22
 	golang.org/x/mod v0.37.0
 )
 
-require github.com/gopact-ai/gopact-ext/models/openai v0.5.20 // indirect
+require github.com/gopact-ai/gopact-ext/models/openai v0.5.21 // indirect
 
 replace (
 	github.com/gopact-ai/gopact-ext/agents/agentnode => ../../agents/agentnode

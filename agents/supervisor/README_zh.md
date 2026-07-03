@@ -13,7 +13,7 @@
 安装：
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.6
+go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.7
 ```
 
 验证：
