@@ -287,6 +287,7 @@ func TestSelfBootstrapMockSuiteIsExecutableAndUsedByCI(t *testing.T) {
 		"(cd agents/supervisor && go test -count=1 ./...)",
 		"(cd devagent/filesnapshot && go test -count=1 ./...)",
 		"(cd devagent/gitdiff && go test -count=1 ./...)",
+		"(cd devagent/selfbootstrap && go test -count=1 ./...)",
 		"(cd models/agnes && go test -count=1 ./...)",
 		"(cd models/ark && go test -count=1 ./...)",
 		"(cd models/openai && go test -count=1 ./...)",
@@ -401,6 +402,7 @@ func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 		"agents/supervisor",
 		"devagent/filesnapshot",
 		"devagent/gitdiff",
+		"devagent/selfbootstrap",
 		"models/agnes",
 		"models/ark",
 		"models/openai",
@@ -446,6 +448,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 		"go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9",
 		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20",
 		"go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20",
+		"go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.0",
 		"go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.23",
 		"go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.21",
 		"go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.24",
@@ -458,15 +461,16 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 
 func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
 	for path, install := range map[string]string{
-		"agents/agentnode/README.md":      "go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.3",
-		"agents/planexec/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.23",
-		"agents/react/README.md":          "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.21",
-		"agents/supervisor/README.md":     "go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9",
-		"devagent/filesnapshot/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20",
-		"devagent/gitdiff/README.md":      "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20",
-		"models/agnes/README.md":          "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.24",
-		"models/ark/README.md":            "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.21",
-		"models/openai/README.md":         "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.23",
+		"agents/agentnode/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.3",
+		"agents/planexec/README.md":        "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.23",
+		"agents/react/README.md":           "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.21",
+		"agents/supervisor/README.md":      "go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9",
+		"devagent/filesnapshot/README.md":  "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20",
+		"devagent/gitdiff/README.md":       "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20",
+		"devagent/selfbootstrap/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.0",
+		"models/agnes/README.md":           "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.24",
+		"models/ark/README.md":             "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.21",
+		"models/openai/README.md":          "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.23",
 	} {
 		if !strings.Contains(readRepoText(t, "../../"+path), install) {
 			t.Fatalf("%s missing install command %q", path, install)
@@ -503,6 +507,7 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"A2A agent node inside graph workflow", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
 		{"file snapshot evidence", "devagent/filesnapshot", "(cd devagent/filesnapshot && go test -count=1 ./...)", ""},
 		{"git diff evidence", "devagent/gitdiff", "(cd devagent/gitdiff && go test -count=1 ./...)", ""},
+		{"self-bootstrap Dev Agent workflow with analyze, plan, write, test, review, failure attribution, and verification report evidence", "devagent/selfbootstrap", "(cd devagent/selfbootstrap && go test -count=1 ./...)", ""},
 		{"OpenAI provider", "models/openai", "(cd models/openai && go test -count=1 ./...)", "(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)"},
 		{"Ark provider", "models/ark", "(cd models/ark && go test -count=1 ./...)", "(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)"},
 		{"Agnes provider", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},

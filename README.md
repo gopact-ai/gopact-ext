@@ -25,6 +25,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 | `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9` |
 | `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20` |
 | `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20` |
+| `devagent/selfbootstrap` | Coordinate analyze, plan, write, test, and review evidence into a self-bootstrap run export and verification report. | `go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.0` |
 | `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.23` |
 | `models/ark` | Volcengine Ark SDK provider adapter with API-key and AK/SK paths. | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.21` |
 | `models/agnes` | Agnes AI OpenAI-compatible Chat Completions provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.24` |

@@ -16,6 +16,7 @@
 - 增加 `agents/supervisor`：provider-neutral template，可将任务路由到指定子 runnable，并保留 runtime IDs 与 event evidence。
 - 增加 `agents/humanreview`：provider-neutral 的人工审批 graph gate，支持 step-export 和 checkpoint resume。
 - 增加 `agents/scheduler`：provider-neutral 的后台 worker 原语，支持队列状态转换、lease renewal、retry、stop、dead-letter、drain 和 schedule evidence。
+- 增加 `devagent/selfbootstrap`：provider-neutral 的 Dev Agent workflow，编排 analyze、plan、write、test、review 证据并产出 run export 与 verification report。
 - 增加 `tests/agents` 的 mock 与 Agnes-backed 覆盖，固化 supervisor 路由到 Plan-Execute 子 agent 的组合路径。
 - 增加 `tests/agents` 的 Agnes-backed 覆盖，固化 A2A AgentNode graph 委托路径。
 - 增加 `tests/agents` 的 mock 覆盖，固化 HumanReview gate 在 graph workflow 中的组合路径。
