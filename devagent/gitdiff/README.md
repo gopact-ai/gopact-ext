@@ -10,4 +10,4 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `gitdiff` converts worktree or staged git diffs into `gopacttest.DiffSnapshot` evidence. It reads diff data and statistics only; callers decide whether a change is acceptable.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.21`.
+Install it with `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.22`.

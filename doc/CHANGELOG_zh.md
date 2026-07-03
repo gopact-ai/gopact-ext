@@ -11,7 +11,7 @@
 ## Unreleased
 
 - 将 extension modules 同步到 `gopact` core `v0.0.49`。
-- 保持当前 extension tag 集合的文档记录：`agents/agentnode/v0.1.4`、`agents/agenttool/v0.1.23`、`agents/humanreview/v0.1.1`、`agents/planexec/v0.2.24`、`agents/react/v0.2.22`、`agents/scheduler/v0.1.1`、`agents/supervisor/v0.1.10`、`devagent/filesnapshot/v0.1.21`、`devagent/gitdiff/v0.1.21`、`devagent/selfbootstrap/v0.1.2`、`devagent/workspace/v0.1.3`、`models/openai/v0.5.24`、`models/ark/v0.2.22`、`models/agnes/v0.1.25`。
+- 保持当前 extension tag 集合的文档记录：`agents/agentnode/v0.1.5`、`agents/agenttool/v0.1.24`、`agents/humanreview/v0.1.2`、`agents/planexec/v0.2.25`、`agents/react/v0.2.23`、`agents/scheduler/v0.1.2`、`agents/supervisor/v0.1.11`、`devagent/filesnapshot/v0.1.22`、`devagent/gitdiff/v0.1.22`、`devagent/selfbootstrap/v0.1.3`、`devagent/workspace/v0.1.4`、`models/openai/v0.5.25`、`models/ark/v0.2.23`、`models/agnes/v0.1.26`。
 - 增加 `agents/agentnode`：把 A2A agent 适配为 graph node，并把子 A2A events 保留在父 graph stream 中。
 - 增加 `agents/supervisor`：provider-neutral template，可将任务路由到指定子 runnable，并保留 runtime IDs 与 event evidence。
 - 增加 `agents/humanreview`：provider-neutral 的人工审批 graph gate，支持 step-export 和 checkpoint resume。
