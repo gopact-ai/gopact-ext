@@ -421,7 +421,7 @@ func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 
 func TestAgnesProviderUsesCurrentOpenAIExtension(t *testing.T) {
 	goMod := readRepoText(t, "../../models/agnes/go.mod")
-	const currentOpenAIExtension = "github.com/gopact-ai/gopact-ext/models/openai v0.5.27"
+	const currentOpenAIExtension = "github.com/gopact-ai/gopact-ext/models/openai v0.5.28"
 	if !strings.Contains(goMod, currentOpenAIExtension) {
 		t.Fatalf("models/agnes/go.mod must require %s", currentOpenAIExtension)
 	}
@@ -432,13 +432,13 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 	agentsGoMod := readRepoText(t, "go.mod")
 
 	for _, requirement := range []string{
-		"github.com/gopact-ai/gopact-ext/agents/agentnode v0.1.7",
-		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.26",
-		"github.com/gopact-ai/gopact-ext/agents/humanreview v0.1.4",
-		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.27",
-		"github.com/gopact-ai/gopact-ext/agents/react v0.2.25",
-		"github.com/gopact-ai/gopact-ext/agents/supervisor v0.1.13",
-		"github.com/gopact-ai/gopact-ext/models/agnes v0.1.28",
+		"github.com/gopact-ai/gopact-ext/agents/agentnode v0.1.8",
+		"github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.27",
+		"github.com/gopact-ai/gopact-ext/agents/humanreview v0.1.5",
+		"github.com/gopact-ai/gopact-ext/agents/planexec v0.2.28",
+		"github.com/gopact-ai/gopact-ext/agents/react v0.2.26",
+		"github.com/gopact-ai/gopact-ext/agents/supervisor v0.1.14",
+		"github.com/gopact-ai/gopact-ext/models/agnes v0.1.29",
 	} {
 		if !strings.Contains(agentsGoMod, requirement) {
 			t.Fatalf("tests/agents/go.mod missing current released module %q", requirement)
@@ -446,20 +446,20 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 	}
 
 	for _, install := range []string{
-		"go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.7",
-		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.26",
-		"go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.4",
-		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.27",
-		"go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.25",
-		"go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.4",
-		"go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.13",
-		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.24",
-		"go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.24",
-		"go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.5",
-		"go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.6",
-		"go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.27",
-		"go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.25",
-		"go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.28",
+		"go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.8",
+		"go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.27",
+		"go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.5",
+		"go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.28",
+		"go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.26",
+		"go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.5",
+		"go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.14",
+		"go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.25",
+		"go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.25",
+		"go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.6",
+		"go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.7",
+		"go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.28",
+		"go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.26",
+		"go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.29",
 	} {
 		if !strings.Contains(readme, install) {
 			t.Fatalf("README missing install command %q", install)
@@ -469,20 +469,20 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 
 func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
 	for path, install := range map[string]string{
-		"agents/agentnode/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.7",
-		"agents/agenttool/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.26",
-		"agents/humanreview/README.md":     "go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.4",
-		"agents/planexec/README.md":        "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.27",
-		"agents/react/README.md":           "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.25",
-		"agents/scheduler/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.4",
-		"agents/supervisor/README.md":      "go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.13",
-		"devagent/filesnapshot/README.md":  "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.24",
-		"devagent/gitdiff/README.md":       "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.24",
-		"devagent/selfbootstrap/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.5",
-		"devagent/workspace/README.md":     "go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.6",
-		"models/agnes/README.md":           "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.28",
-		"models/ark/README.md":             "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.25",
-		"models/openai/README.md":          "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.27",
+		"agents/agentnode/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.8",
+		"agents/agenttool/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.27",
+		"agents/humanreview/README.md":     "go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.5",
+		"agents/planexec/README.md":        "go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.28",
+		"agents/react/README.md":           "go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.26",
+		"agents/scheduler/README.md":       "go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.5",
+		"agents/supervisor/README.md":      "go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.14",
+		"devagent/filesnapshot/README.md":  "go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.25",
+		"devagent/gitdiff/README.md":       "go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.25",
+		"devagent/selfbootstrap/README.md": "go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.6",
+		"devagent/workspace/README.md":     "go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.7",
+		"models/agnes/README.md":           "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.29",
+		"models/ark/README.md":             "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.26",
+		"models/openai/README.md":          "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.28",
 	} {
 		if !strings.Contains(readRepoText(t, "../../"+path), install) {
 			t.Fatalf("%s missing install command %q", path, install)
