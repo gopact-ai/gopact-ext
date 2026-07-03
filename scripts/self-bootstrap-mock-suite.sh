@@ -13,6 +13,7 @@ cd "$(dirname "$0")/.."
 (cd devagent/filesnapshot && go test -count=1 ./...)
 (cd devagent/gitdiff && go test -count=1 ./...)
 (cd devagent/selfbootstrap && go test -count=1 ./...)
+(cd devagent/workspace && go test -count=1 ./...)
 (cd models/agnes && go test -count=1 ./...)
 (cd models/ark && go test -count=1 ./...)
 (cd models/openai && go test -count=1 ./...)
