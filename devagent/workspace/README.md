@@ -10,7 +10,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `workspace` adapts a local repository root into self-bootstrap evidence. It combines controlled patch apply, git diff scanning, file snapshots, local command execution, and CI gate mapping into `selfbootstrap.Writer` and `selfbootstrap.Tester` implementations.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.7`.
+Install it with `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.8`.
 
 ```go
 ws, err := workspace.New("/path/to/repo")
