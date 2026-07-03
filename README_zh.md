@@ -21,6 +21,7 @@
 | --- | --- | --- |
 | `agents/agentnode` | 将 A2A agent 包装成 typed graph node，并保留嵌套 child-event evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.3` |
 | `agents/agenttool` | 将 A2A agent 包装成普通 `gopact.ToolFunc`。 | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.22` |
+| `agents/humanreview` | 为 graph workflow 提供 provider-neutral 的人工审批 gate，支持 interrupt/resume。 | `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.0` |
 | `agents/planexec` | Plan-Execute agent template，支持 replan、approval、checkpoint、cancel。 | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.23` |
 | `agents/react` | ReAct model/tool loop template，支持 memory、checkpoint、resume、verification。 | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.21` |
 | `agents/supervisor` | 将任务路由到指定子 runnable，并保留 event evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9` |

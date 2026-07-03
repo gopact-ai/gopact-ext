@@ -12,6 +12,7 @@
 | --- | --- | --- | --- |
 | agent as graph node | `agents/agentnode` | `(cd agents/agentnode && go test -count=1 ./...)` | - |
 | agent as tool | `agents/agenttool` | `(cd agents/agenttool && go test -count=1 ./...)` | - |
+| human review approval gate with checkpoint and step-export resume | `agents/humanreview` | `(cd agents/humanreview && go test -count=1 ./...)` | - |
 | Plan-Execute agent template with replan, approval, checkpoint, and cancel | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
 | Plan-Execute golden trajectory | `agents/planexec` | `(cd agents/planexec && go test -count=1 ./...)` | - |
 | ReAct agent template | `agents/react` | `(cd agents/react && go test -count=1 ./...)` | - |
@@ -24,6 +25,7 @@
 | Agent-as-Tool A2A delegation success and failure evidence | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | Supervisor routing to Plan-Execute child with runtime IDs | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | A2A agent node inside graph workflow | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | - |
+| Human review gate inside graph workflow | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | - |
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | - |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | - |
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
