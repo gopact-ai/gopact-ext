@@ -333,7 +333,7 @@ func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
 }
 
 func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
-	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.41"
+	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.42"
 
 	for _, module := range []string{
 		"agents/agentnode",
