@@ -393,7 +393,7 @@ func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
 }
 
 func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
-	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.50"
+	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.51"
 
 	for _, module := range []string{
 		"agents/agentnode",
@@ -517,6 +517,7 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"Agent-as-Tool A2A delegation success and failure evidence", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
 		{"Supervisor routing to Plan-Execute child with runtime IDs", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
 		{"A2A agent node inside graph workflow", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
+		{"A2A card registrar conformance consumed from downstream modules", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
 		{"file snapshot evidence", "devagent/filesnapshot", "(cd devagent/filesnapshot && go test -count=1 ./...)", ""},
 		{"git diff evidence", "devagent/gitdiff", "(cd devagent/gitdiff && go test -count=1 ./...)", ""},
 		{"self-bootstrap Dev Agent workflow with analyze, plan patch proposal policy, write, test, review, failure attribution, and verification report evidence", "devagent/selfbootstrap", "(cd devagent/selfbootstrap && go test -count=1 ./...)", ""},
@@ -572,9 +573,10 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 	matrix := readRepoText(t, "../../doc/FEATURES.md")
 	matrixZH := readRepoText(t, "../../doc/FEATURES_zh.md")
 	mockTests := readRepoText(t, "templates_mock_test.go")
+	a2aConformanceTests := readRepoText(t, "a2a_conformance_test.go")
 	integrationTests := readRepoText(t, "agnes_integration_test.go")
 	reactTests := readRepoText(t, "../../agents/react/react_test.go")
-	allTests := mockTests + "\n" + integrationTests + "\n" + reactTests
+	allTests := mockTests + "\n" + a2aConformanceTests + "\n" + integrationTests + "\n" + reactTests
 
 	for _, capability := range []string{
 		"ReAct tool loop with model options and runtime IDs",
@@ -585,6 +587,7 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"Agent-as-Tool A2A delegation success and failure evidence",
 		"Supervisor routing to Plan-Execute child with runtime IDs",
 		"A2A agent node inside graph workflow",
+		"A2A card registrar conformance consumed from downstream modules",
 		"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, Supervisor, and AgentNode templates",
 	} {
 		if !strings.Contains(matrix, capability) {
@@ -603,6 +606,7 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"TestReActTemplateFailsWhenPlanExecAgentToolFailsWithMockModel",
 		"TestSupervisorTemplateRoutesToPlanExecChildWithMockModel",
 		"TestAgentNodeDelegatesA2AAgentInsideGraphWithMock",
+		"TestDownstreamUsesA2ACardRegistrarConformance",
 		"TestAgnesIntegrationReActTemplateCapabilities",
 		"TestAgnesIntegrationPlanExecuteTemplate",
 		"TestAgnesIntegrationAgentAsToolTemplate",

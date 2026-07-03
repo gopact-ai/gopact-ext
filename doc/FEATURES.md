@@ -24,6 +24,7 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | Agent-as-Tool A2A delegation success and failure evidence | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | Supervisor routing to Plan-Execute child with runtime IDs | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | A2A agent node inside graph workflow | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | Not required |
+| A2A card registrar conformance consumed from downstream modules | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | Not required |
 | Human review gate inside graph workflow | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | Not required |
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | Not required |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | Not required |
