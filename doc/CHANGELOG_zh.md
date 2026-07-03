@@ -6,12 +6,12 @@
 
 ## 中文
 
-本文件记录 `gopact-ext` 对用户可见的变更。每个 extension 作为独立 Go submodule 发布，tag 使用模块路径前缀，例如 `models/openai/v0.5.21`。
+本文件记录 `gopact-ext` 对用户可见的变更。每个 extension 作为独立 Go submodule 发布，tag 使用模块路径前缀，例如 `models/openai/v0.5.22`。
 
 ## Unreleased
 
-- 将 extension modules 同步到 `gopact` core `v0.0.42`。
-- 发布基于 core `v0.0.42` 的当前 extension tag：`agents/agentnode/v0.1.1`、`agents/agenttool/v0.1.20`、`agents/planexec/v0.2.21`、`agents/react/v0.2.19`、`agents/supervisor/v0.1.7`、`devagent/filesnapshot/v0.1.18`、`devagent/gitdiff/v0.1.18`、`models/openai/v0.5.21`、`models/ark/v0.2.19`、`models/agnes/v0.1.22`。
+- 将 extension modules 同步到 `gopact` core `v0.0.43`。
+- 发布基于 core `v0.0.43` 的当前 extension tag：`agents/agentnode/v0.1.2`、`agents/agenttool/v0.1.21`、`agents/planexec/v0.2.22`、`agents/react/v0.2.20`、`agents/supervisor/v0.1.8`、`devagent/filesnapshot/v0.1.19`、`devagent/gitdiff/v0.1.19`、`models/openai/v0.5.22`、`models/ark/v0.2.20`、`models/agnes/v0.1.23`。
 - 增加 `agents/agentnode`：把 A2A agent 适配为 graph node，并把子 A2A events 保留在父 graph stream 中。
 - 增加 `agents/supervisor`：provider-neutral template，可将任务路由到指定子 runnable，并保留 runtime IDs 与 event evidence。
 - 增加 `tests/agents` 的 mock 与 Agnes-backed 覆盖，固化 supervisor 路由到 Plan-Execute 子 agent 的组合路径。

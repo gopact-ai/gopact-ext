@@ -8,8 +8,6 @@ github.com/envoyproxy/protoc-gen-validate v0.1.0 h1:EQciDnbrYxy13PgWoY8AqoxGiPrp
 github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b h1:VKtxabqXZkF25pY9ekfRL6a582T4P37/31XEstQ5p58=
 github.com/golang/mock v1.1.1 h1:G5FRp8JnTd7RQH5kemVNlMeyXQAztQ3mOWV95KxsXH8=
 github.com/golang/protobuf v1.5.0 h1:LUVKkCeviFUMKqHa4tXIIij/lbhnMbP7Fn5wKdKkRh4=
-github.com/gopact-ai/gopact v0.0.42 h1:JImTgbwgTpaUvPDP3KMwrFRrGta+yIkkgAj6fWnw/GA=
-github.com/gopact-ai/gopact v0.0.42/go.mod h1:lozSDuCDxwNrJpJnIOUensxOeEG9roEemegbzjpb4YU=
 github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.9/go.mod h1:WpJ/lk/Vh8yAlkA+Wyb7sBlQq6AF9YoAcjmTOL1NwBo=
 github.com/gopact-ai/gopact-ext/models/agnes v0.1.0/go.mod h1:A3MbSmVcac+QDigp+IFp7MYr4fNs/TpljrLGuDo+6rk=
 github.com/kr/pty v1.1.1 h1:VkoXIwSboBpnk99O/KFauAEILuNHv5DVFKZMBN/gUgw=

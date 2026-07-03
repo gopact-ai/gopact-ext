@@ -10,4 +10,4 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `react` is a ReAct-style model/tool loop template. Use it when the model should choose visible tools, observe results, and either continue the loop or produce a final answer.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.19`. The template is provider-neutral, supports local tools, memory hooks, checkpoint/resume, artifact verification, and final run verification.
+Install it with `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.20`. The template is provider-neutral, supports local tools, memory hooks, checkpoint/resume, artifact verification, and final run verification.
