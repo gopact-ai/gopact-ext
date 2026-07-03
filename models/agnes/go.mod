@@ -4,7 +4,7 @@ go 1.25.11
 
 require (
 	github.com/gopact-ai/gopact v0.0.42
-	github.com/gopact-ai/gopact-ext/models/openai v0.5.20
+	github.com/gopact-ai/gopact-ext/models/openai v0.5.21
 )
 
 replace github.com/gopact-ai/gopact-ext/models/openai => ../openai
