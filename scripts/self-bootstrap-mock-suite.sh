@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 (cd agents/agentnode && go test -count=1 ./...)
 (cd agents/agenttool && go test -count=1 ./...)
+(cd agents/humanreview && go test -count=1 ./...)
 (cd agents/planexec && go test -count=1 ./...)
 (cd agents/react && go test -count=1 ./...)
 (cd agents/supervisor && go test -count=1 ./...)

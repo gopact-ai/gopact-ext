@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact-ext/agents/agentnode"
 	"github.com/gopact-ai/gopact-ext/agents/agenttool"
+	"github.com/gopact-ai/gopact-ext/agents/humanreview"
 	"github.com/gopact-ai/gopact-ext/agents/planexec"
 	"github.com/gopact-ai/gopact-ext/agents/react"
 	"github.com/gopact-ai/gopact-ext/agents/supervisor"
@@ -517,9 +518,118 @@ func TestAgentNodeDelegatesA2AAgentInsideGraphWithMock(t *testing.T) {
 	}
 }
 
+func TestHumanReviewTemplateGatesGraphAndResumesWithMock(t *testing.T) {
+	wantIDs := gopact.RuntimeIDs{RunID: "run-humanreview-mock", ThreadID: "thread-humanreview", TraceID: "trace-humanreview"}
+	store := checkpoint.NewMemory[humanReviewState]()
+	mapCalls := 0
+	applyCalls := 0
+
+	gate, err := humanreview.New(func(ctx context.Context, state humanReviewState) (humanreview.Request, error) {
+		mapCalls++
+		ids, _ := gopact.RuntimeIDsFromContext(ctx)
+		if ids != wantIDs {
+			t.Fatalf("runtime ids = %+v, want %+v", ids, wantIDs)
+		}
+		if state.Task != "ship self-bootstrap" {
+			t.Fatalf("state task = %q, want ship self-bootstrap", state.Task)
+		}
+		return humanreview.Request{
+			ID:         "approval:self-bootstrap",
+			Reason:     "human approval required",
+			RequiredBy: "release-manager",
+			Prompt:     gopact.UserMessage("Approve self-bootstrap release?"),
+			Metadata:   map[string]any{"workflow": "release"},
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("humanreview.New() error = %v", err)
+	}
+
+	g := graph.New[humanReviewState]()
+	g.AddNode("review", gate)
+	g.AddNode("apply", func(_ context.Context, state humanReviewState) (humanReviewState, error) {
+		applyCalls++
+		state.Approved = true
+		state.Trace = append(state.Trace, "apply")
+		return state, nil
+	})
+	g.AddEdge(graph.Start, "review")
+	g.AddEdge("review", "apply")
+	g.AddEdge("apply", graph.End)
+	run, err := g.Compile()
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(run.Run(context.Background(), humanReviewState{Task: "ship self-bootstrap"},
+		graph.WithRuntimeIDs(wantIDs),
+		graph.WithCheckpointStore(store),
+	))
+	if !errors.Is(err, gopact.ErrInterrupted) {
+		t.Fatalf("Run() error = %v, want ErrInterrupted", err)
+	}
+	gopacttest.RequireEventTypes(t, events,
+		gopact.EventRunStarted,
+		gopact.EventNodeStarted,
+		gopact.EventInterrupted,
+		gopact.EventRunInterrupted,
+	)
+	if mapCalls != 1 || applyCalls != 0 {
+		t.Fatalf("before resume map/apply calls = %d/%d, want 1/0", mapCalls, applyCalls)
+	}
+	latest, ok, err := store.Latest(context.Background(), wantIDs.ThreadID)
+	if err != nil || !ok || latest.Pending == nil {
+		t.Fatalf("Latest() = checkpoint:%+v ok:%v err:%v, want interrupted checkpoint", latest, ok, err)
+	}
+	if latest.Pending.ID != "approval:self-bootstrap" ||
+		latest.Pending.Type != gopact.InterruptApproval ||
+		latest.Pending.RequiredBy != "release-manager" ||
+		latest.Pending.Metadata["template"] != "humanreview" ||
+		latest.Pending.Metadata["workflow"] != "release" {
+		t.Fatalf("pending = %+v, want humanreview approval metadata", latest.Pending)
+	}
+
+	resumed, err := gopacttest.CollectEvents(run.Run(context.Background(), humanReviewState{},
+		graph.WithRuntimeIDs(wantIDs),
+		graph.WithCheckpointStore(store),
+		graph.WithResumeRequest(gopact.ResumeRequest{
+			CheckpointID: latest.ID,
+			InterruptID:  latest.Pending.ID,
+			Payload:      map[string]any{"approved": true},
+		}),
+	))
+	if err != nil {
+		t.Fatalf("resume Run() error = %v", err)
+	}
+	gopacttest.RequireEventTypes(t, resumed,
+		gopact.EventRunStarted,
+		gopact.EventCheckpointLoaded,
+		gopact.EventResumeReceived,
+		gopact.EventNodeResumed,
+		gopact.EventNodeCompleted,
+		gopact.EventRunCompleted,
+	)
+	if mapCalls != 1 || applyCalls != 1 {
+		t.Fatalf("after resume map/apply calls = %d/%d, want 1/1", mapCalls, applyCalls)
+	}
+	output, ok := resumed[4].StepSnapshot.Output.(humanReviewState)
+	if !ok {
+		t.Fatalf("resumed output type = %T, want humanReviewState", resumed[4].StepSnapshot.Output)
+	}
+	if !output.Approved || len(output.Trace) != 1 || output.Trace[0] != "apply" {
+		t.Fatalf("resumed output = %+v, want approved apply trace", output)
+	}
+}
+
 type agentNodeState struct {
 	Input  string
 	Output string
+}
+
+type humanReviewState struct {
+	Task     string
+	Approved bool
+	Trace    []string
 }
 
 type mockResponseModel struct {

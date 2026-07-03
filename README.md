@@ -18,6 +18,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 | --- | --- | --- |
 | `agents/agentnode` | Wrap an A2A agent as a typed graph node with nested child-event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.3` |
 | `agents/agenttool` | Wrap an A2A agent as a regular `gopact.ToolFunc`. | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.22` |
+| `agents/humanreview` | Add provider-neutral human approval gates to graph workflows with interrupt/resume support. | `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.0` |
 | `agents/planexec` | Plan-Execute template with replan, approval, checkpoint, and cancel support. | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.23` |
 | `agents/react` | ReAct model/tool loop with memory, checkpoint, resume, and verification hooks. | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.21` |
 | `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9` |
