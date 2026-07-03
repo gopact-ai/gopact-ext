@@ -10,7 +10,7 @@
 
 ## Unreleased
 
-- 将 extension modules 同步到 `gopact` core `v0.0.51`。
+- 将 extension modules 同步到 `gopact` core `v0.0.52`。
 - 增加 `tests/agents` 的 downstream 覆盖，固化可复用 A2A card registrar conformance。
 - 保持当前 extension tag 集合的文档记录：`agents/agentnode/v0.1.7`、`agents/agenttool/v0.1.26`、`agents/humanreview/v0.1.4`、`agents/planexec/v0.2.27`、`agents/react/v0.2.25`、`agents/scheduler/v0.1.4`、`agents/supervisor/v0.1.13`、`devagent/filesnapshot/v0.1.24`、`devagent/gitdiff/v0.1.24`、`devagent/selfbootstrap/v0.1.5`、`devagent/workspace/v0.1.6`、`models/openai/v0.5.27`、`models/ark/v0.2.25`、`models/agnes/v0.1.28`。
 - 增加 `agents/agentnode`：把 A2A agent 适配为 graph node，并把子 A2A events 保留在父 graph stream 中。
