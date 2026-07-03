@@ -16,6 +16,7 @@ The current unreleased work adds graph-node A2A composition while preserving the
 - Add `agents/supervisor`, a provider-neutral template that routes a task to a named child runnable while preserving runtime IDs and event evidence.
 - Add `agents/humanreview`, a provider-neutral human approval gate for graph workflows with step-export and checkpoint resume support.
 - Add `agents/scheduler`, a provider-neutral background worker primitive with queue transitions, lease renewal, retry, stop, dead-letter, drain, and schedule evidence.
+- Add `devagent/selfbootstrap`, a provider-neutral Dev Agent workflow that coordinates analyze, plan, write, test, and review evidence into a run export and verification report.
 - Add mock and Agnes-backed `tests/agents` coverage for supervisor routing to a Plan-Execute child.
 - Add Agnes-backed `tests/agents` coverage for A2A AgentNode graph delegation.
 - Add mock `tests/agents` coverage for HumanReview gate composition inside graph workflows.
