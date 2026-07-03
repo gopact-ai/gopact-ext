@@ -455,7 +455,7 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"Agnes provider error classification", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
 		{"Agnes provider cancel and timeout", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
 		{"Agnes-backed agent templates", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
-		{"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, and Supervisor templates", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
+		{"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, Supervisor, and AgentNode templates", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
 	}
 
 	for _, tt := range tests {
@@ -509,7 +509,7 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"Agent-as-Tool A2A delegation success and failure evidence",
 		"Supervisor routing to Plan-Execute child with runtime IDs",
 		"A2A agent node inside graph workflow",
-		"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, and Supervisor templates",
+		"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, Supervisor, and AgentNode templates",
 	} {
 		if !strings.Contains(matrix, capability) {
 			t.Fatalf("FEATURES.md missing agent template capability %q", capability)
@@ -531,6 +531,7 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"TestAgnesIntegrationPlanExecuteTemplate",
 		"TestAgnesIntegrationAgentAsToolTemplate",
 		"TestAgnesIntegrationSupervisorTemplate",
+		"TestAgnesIntegrationAgentNodeTemplate",
 		"TestAgentRunsVerifierBeforeCompletingRun",
 		"TestAgentVerificationExportRecordsResumeInterventionProcessRecords",
 		"TestAgentResumesToolApprovalFromInterruptedStepExport",

@@ -36,7 +36,7 @@
 | Agnes provider error classification | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes provider cancel and timeout | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes-backed agent templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
-| Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, and Supervisor templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
+| Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, Supervisor, and AgentNode templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 
 能力说明：
 
