@@ -24,6 +24,7 @@
 | `agents/humanreview` | 为 graph workflow 提供 provider-neutral 的人工审批 gate，支持 interrupt/resume。 | `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.0` |
 | `agents/planexec` | Plan-Execute agent template，支持 replan、approval、checkpoint、cancel。 | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.23` |
 | `agents/react` | ReAct model/tool loop template，支持 memory、checkpoint、resume、verification。 | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.21` |
+| `agents/scheduler` | 支持 leased background jobs、retry、stop、dead-letter、drain 和 schedule evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.0` |
 | `agents/supervisor` | 将任务路由到指定子 runnable，并保留 event evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9` |
 | `devagent/filesnapshot` | 采集文件 hash、大小、mode、mtime，用于工程证据固化。 | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20` |
 | `devagent/gitdiff` | 采集 worktree 或 staged git diff，用于开发 agent 验证。 | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20` |
