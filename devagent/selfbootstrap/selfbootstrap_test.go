@@ -139,6 +139,125 @@ func TestWorkflowStopsWhenReviewRejects(t *testing.T) {
 	requireFailedCheck(t, result.Report, "review:selfbootstrap")
 }
 
+func TestWorkflowAuthorizesPlanPatchBeforeWrite(t *testing.T) {
+	var events []string
+	workflow := mustWorkflow(t,
+		WithPlanner(PlannerFunc(func(context.Context, PlanRequest) (Plan, error) {
+			return Plan{
+				Summary: "propose one patch",
+				Patch: &PatchProposal{
+					ID:      "patch-1",
+					Summary: "update greeting",
+					Diff:    "diff --git a/hello.txt b/hello.txt\n",
+					Files:   []PatchFile{{Path: "hello.txt", Intent: "modify"}},
+					Metadata: map[string]any{
+						"source_step": "plan",
+					},
+				},
+			}, nil
+		})),
+		WithPatchPolicy(gopact.PolicyFunc(func(_ context.Context, request gopact.PolicyRequest) (gopact.PolicyDecision, error) {
+			events = append(events, "policy")
+			if request.Boundary != gopact.PolicyBoundarySandbox || request.Action != gopact.PolicyActionWrite {
+				t.Fatalf("policy request = %+v, want sandbox write", request)
+			}
+			input, ok := request.Input.(PatchPolicyInput)
+			if !ok {
+				t.Fatalf("policy input type = %T, want PatchPolicyInput", request.Input)
+			}
+			if input.ID != "patch-1" || input.Summary != "update greeting" ||
+				!input.HasDiff || input.DiffBytes == 0 ||
+				len(input.Files) != 1 || input.Files[0].Path != "hello.txt" {
+				t.Fatalf("policy input = %+v, want sanitized patch summary", input)
+			}
+			return gopact.PolicyDecision{
+				Action: gopact.PolicyAllow,
+				Reason: "small scoped patch",
+				Metadata: map[string]any{
+					"reviewer": "unit-policy",
+				},
+			}, nil
+		})),
+		WithWriter(WriterFunc(func(_ context.Context, request WriteRequest) (WriteResult, error) {
+			events = append(events, "writer")
+			if request.Plan.Patch == nil || request.Plan.Patch.ID != "patch-1" {
+				t.Fatalf("write request patch = %+v, want patch-1", request.Plan.Patch)
+			}
+			if request.PatchDecision == nil || request.PatchDecision.Action != gopact.PolicyAllow {
+				t.Fatalf("write request patch decision = %+v, want allow", request.PatchDecision)
+			}
+			return WriteResult{
+				Summary: "patch applied",
+				Diff: &gopacttest.DiffSnapshot{
+					ID:         "diff:worktree",
+					Ref:        "git:worktree",
+					Diff:       "diff --git a/hello.txt b/hello.txt\n",
+					Files:      []string{"hello.txt"},
+					Insertions: 1,
+				},
+			}, nil
+		})),
+	)
+
+	result, err := workflow.Run(context.Background(), defaultRequest("selfbootstrap-patch-policy-allowed"))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(events, []string{"policy", "writer"}) {
+		t.Fatalf("events = %+v, want policy before writer", events)
+	}
+	if result.PatchDecision.Action != gopact.PolicyAllow {
+		t.Fatalf("result patch decision = %+v, want allow", result.PatchDecision)
+	}
+	requireEvidenceTypes(t, result.Report, []string{
+		gopact.VerificationEvidenceTypePolicyDecision,
+		gopacttest.VerificationEvidenceTypeDiff,
+	})
+	requireEventTypes(t, result.RunExport, []gopact.EventType{
+		gopact.EventPolicyRequested,
+		gopact.EventPolicyDecided,
+	})
+}
+
+func TestWorkflowStopsBeforeWriteWhenPatchPolicyDenies(t *testing.T) {
+	writerCalled := false
+	workflow := mustWorkflow(t,
+		WithPlanner(PlannerFunc(func(context.Context, PlanRequest) (Plan, error) {
+			return Plan{
+				Summary: "propose risky patch",
+				Patch: &PatchProposal{
+					ID:      "patch-risky",
+					Summary: "modify generated file",
+					Diff:    "diff --git a/generated.go b/generated.go\n",
+					Files:   []PatchFile{{Path: "generated.go", Intent: "modify"}},
+				},
+			}, nil
+		})),
+		WithPatchPolicy(gopact.PolicyFunc(func(context.Context, gopact.PolicyRequest) (gopact.PolicyDecision, error) {
+			return gopact.PolicyDecision{Action: gopact.PolicyDeny, Reason: "generated file"}, nil
+		})),
+		WithWriter(WriterFunc(func(context.Context, WriteRequest) (WriteResult, error) {
+			writerCalled = true
+			return WriteResult{}, nil
+		})),
+	)
+
+	result, err := workflow.Run(context.Background(), defaultRequest("selfbootstrap-patch-policy-denied"))
+	if !errors.Is(err, gopact.ErrPolicyDenied) {
+		t.Fatalf("Run() error = %v, want gopact.ErrPolicyDenied", err)
+	}
+	if writerCalled {
+		t.Fatal("writer was called after patch policy denied")
+	}
+	if result.RunExport.Outcome != gopact.RunFailed {
+		t.Fatalf("RunExport.Outcome = %q, want failed", result.RunExport.Outcome)
+	}
+	if result.RunExport.Failures[0].Kind != gopact.FailurePolicy {
+		t.Fatalf("failure kind = %q, want policy", result.RunExport.Failures[0].Kind)
+	}
+	requireFailedCheck(t, result.Report, "policy-decision:selfbootstrap-patch-policy-denied:sandbox:write")
+}
+
 func TestWorkflowPreservesTestFailureEvidence(t *testing.T) {
 	workflow := mustWorkflow(t,
 		WithTester(TesterFunc(func(context.Context, TestRequest) (TestResult, error) {
@@ -413,4 +532,17 @@ func requireFailedCheck(t *testing.T, report gopact.VerificationReport, id strin
 		}
 	}
 	t.Fatalf("check %q not found; checks=%+v", id, report.Checks)
+}
+
+func requireEventTypes(t *testing.T, export gopact.RunExport, want []gopact.EventType) {
+	t.Helper()
+	got := map[gopact.EventType]bool{}
+	for _, event := range export.Events {
+		got[event.Type] = true
+	}
+	for _, eventType := range want {
+		if !got[eventType] {
+			t.Fatalf("run export missing event type %q; events=%+v", eventType, export.Events)
+		}
+	}
 }

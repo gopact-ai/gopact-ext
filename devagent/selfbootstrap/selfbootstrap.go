@@ -27,6 +27,7 @@ var (
 	ErrVerificationFailed  = errors.New("selfbootstrap: verification failed")
 	ErrReviewRejected      = errors.New("selfbootstrap: review rejected")
 	ErrWorkflowUnavailable = errors.New("selfbootstrap: workflow is unavailable")
+	ErrPatchPolicyRequired = errors.New("selfbootstrap: patch policy is required")
 )
 
 // Request describes one self-bootstrap development slice.
@@ -50,10 +51,37 @@ type PlanStep struct {
 	Metadata map[string]any
 }
 
+// PatchFile describes one file touched by a proposed patch.
+type PatchFile struct {
+	Path     string
+	Intent   string
+	Metadata map[string]any
+}
+
+// PatchProposal is a generated patch suggestion, not proof that the patch was applied.
+type PatchProposal struct {
+	ID       string
+	Summary  string
+	Diff     string
+	Files    []PatchFile
+	Metadata map[string]any
+}
+
+// PatchPolicyInput is the sanitized patch summary passed through the root policy boundary.
+type PatchPolicyInput struct {
+	ID        string
+	Summary   string
+	Files     []PatchFile
+	HasDiff   bool
+	DiffBytes int
+	Metadata  map[string]any
+}
+
 // Plan is the plan-stage output.
 type Plan struct {
 	Summary  string
 	Steps    []PlanStep
+	Patch    *PatchProposal
 	Metadata map[string]any
 }
 
@@ -76,14 +104,15 @@ type TestResult struct {
 
 // Result carries the durable evidence produced by a workflow run.
 type Result struct {
-	Analysis  Analysis
-	Plan      Plan
-	Write     WriteResult
-	Test      TestResult
-	Review    gopacttest.ReviewResult
-	Checks    []gopact.VerificationCheck
-	Report    gopact.VerificationReport
-	RunExport gopact.RunExport
+	Analysis      Analysis
+	Plan          Plan
+	PatchDecision gopact.PolicyDecision
+	Write         WriteResult
+	Test          TestResult
+	Review        gopacttest.ReviewResult
+	Checks        []gopact.VerificationCheck
+	Report        gopact.VerificationReport
+	RunExport     gopact.RunExport
 }
 
 // Analyzer produces development-slice analysis.
@@ -118,9 +147,10 @@ func (f PlannerFunc) Plan(ctx context.Context, request PlanRequest) (Plan, error
 
 // WriteRequest carries plan context into the writer.
 type WriteRequest struct {
-	Request  Request
-	Analysis Analysis
-	Plan     Plan
+	Request       Request
+	Analysis      Analysis
+	Plan          Plan
+	PatchDecision *gopact.PolicyDecision
 }
 
 // Writer produces already-observed patch, diff, and file snapshot evidence.
@@ -137,10 +167,11 @@ func (f WriterFunc) Write(ctx context.Context, request WriteRequest) (WriteResul
 
 // TestRequest carries write context into the tester.
 type TestRequest struct {
-	Request  Request
-	Analysis Analysis
-	Plan     Plan
-	Write    WriteResult
+	Request       Request
+	Analysis      Analysis
+	Plan          Plan
+	PatchDecision *gopact.PolicyDecision
+	Write         WriteResult
 }
 
 // Tester produces already-observed command and CI gate evidence.
@@ -157,12 +188,13 @@ func (f TesterFunc) Test(ctx context.Context, request TestRequest) (TestResult, 
 
 // ReviewRequest carries all observed pre-review evidence.
 type ReviewRequest struct {
-	Request  Request
-	Analysis Analysis
-	Plan     Plan
-	Write    WriteResult
-	Test     TestResult
-	Checks   []gopact.VerificationCheck
+	Request       Request
+	Analysis      Analysis
+	Plan          Plan
+	PatchDecision *gopact.PolicyDecision
+	Write         WriteResult
+	Test          TestResult
+	Checks        []gopact.VerificationCheck
 }
 
 // Reviewer produces an already-observed human, model, CI, or external review decision.
@@ -179,11 +211,12 @@ func (f ReviewerFunc) Review(ctx context.Context, request ReviewRequest) (gopact
 
 // Workflow coordinates one development-agent self-bootstrap slice.
 type Workflow struct {
-	analyzer Analyzer
-	planner  Planner
-	writer   Writer
-	tester   Tester
-	reviewer Reviewer
+	analyzer    Analyzer
+	planner     Planner
+	patchPolicy gopact.Policy
+	writer      Writer
+	tester      Tester
+	reviewer    Reviewer
 }
 
 // Option configures a workflow.
@@ -207,6 +240,17 @@ func WithPlanner(planner Planner) Option {
 			return fmt.Errorf("%w: planner", ErrStageRequired)
 		}
 		w.planner = planner
+		return nil
+	}
+}
+
+// WithPatchPolicy sets the policy that must allow a plan-stage patch proposal before writing.
+func WithPatchPolicy(policy gopact.Policy) Option {
+	return func(w *Workflow) error {
+		if policy == nil {
+			return fmt.Errorf("%w: patch policy", ErrStageRequired)
+		}
+		w.patchPolicy = policy
 		return nil
 	}
 }
@@ -316,7 +360,12 @@ func (w *Workflow) Run(ctx context.Context, request Request) (Result, error) {
 		return state.finish(ctx, nodePlan, 2, err, gopact.FailureRuntime)
 	}
 
-	writeRequest := WriteRequest{Request: request, Analysis: analysis, Plan: plan}
+	patchDecision, err := w.authorizePlanPatch(ctx, state, request, plan)
+	if err != nil {
+		return state.finish(ctx, nodeWrite, 3, err, gopact.FailurePolicy)
+	}
+
+	writeRequest := WriteRequest{Request: request, Analysis: analysis, Plan: plan, PatchDecision: patchDecision}
 	write, err := w.writer.Write(ctx, writeRequest)
 	state.result.Write = copyWriteResult(write)
 	if err != nil {
@@ -332,7 +381,13 @@ func (w *Workflow) Run(ctx context.Context, request Request) (Result, error) {
 		return state.failVerification(ctx, nodeWrite, 3, err)
 	}
 
-	testRequest := TestRequest{Request: request, Analysis: analysis, Plan: plan, Write: write}
+	testRequest := TestRequest{
+		Request:       request,
+		Analysis:      analysis,
+		Plan:          plan,
+		PatchDecision: copyPolicyDecisionPtr(patchDecision),
+		Write:         write,
+	}
 	test, err := w.tester.Test(ctx, testRequest)
 	state.result.Test = copyTestResult(test)
 	if err != nil {
@@ -352,12 +407,13 @@ func (w *Workflow) Run(ctx context.Context, request Request) (Result, error) {
 	}
 
 	reviewRequest := ReviewRequest{
-		Request:  request,
-		Analysis: analysis,
-		Plan:     plan,
-		Write:    write,
-		Test:     test,
-		Checks:   state.verification.Checks(),
+		Request:       request,
+		Analysis:      analysis,
+		Plan:          plan,
+		PatchDecision: copyPolicyDecisionPtr(patchDecision),
+		Write:         write,
+		Test:          test,
+		Checks:        state.verification.Checks(),
 	}
 	review, err := w.reviewer.Review(ctx, reviewRequest)
 	state.result.Review = copyReviewResult(review)
@@ -381,6 +437,38 @@ func (w *Workflow) Run(ctx context.Context, request Request) (Result, error) {
 	}
 
 	return state.finish(ctx, "", 0, nil, "")
+}
+
+func (w *Workflow) authorizePlanPatch(
+	ctx context.Context,
+	state *runState,
+	request Request,
+	plan Plan,
+) (*gopact.PolicyDecision, error) {
+	if !hasPatchProposal(plan.Patch) {
+		return nil, nil
+	}
+	if w.patchPolicy == nil {
+		return nil, ErrPatchPolicyRequired
+	}
+
+	policyRequest := patchPolicyRequest(request, plan)
+	if err := state.record(gopact.NewPolicyRequestedEvent(policyRequest)); err != nil {
+		return nil, err
+	}
+	decision, err := w.patchPolicy.Decide(ctx, policyRequest)
+	state.result.PatchDecision = copyPolicyDecision(decision)
+	if err != nil {
+		return nil, fmt.Errorf("selfbootstrap: patch policy: %w", err)
+	}
+	if err := state.record(gopact.NewPolicyDecidedEvent(policyRequest, decision)); err != nil {
+		return nil, err
+	}
+	if err := gopact.RecordPolicyDecisionCheck(state.verification, policyRequest, decision); err != nil {
+		return nil, errors.Join(&gopact.PolicyDeniedError{Decision: decision, Request: policyRequest}, err)
+	}
+	copied := copyPolicyDecision(decision)
+	return &copied, nil
 }
 
 type runState struct {
@@ -639,6 +727,10 @@ func copyPlan(in Plan) Plan {
 		step.Metadata = copyMetadata(step.Metadata)
 		out.Steps[i] = step
 	}
+	if in.Patch != nil {
+		patch := copyPatchProposal(*in.Patch)
+		out.Patch = &patch
+	}
 	return out
 }
 
@@ -682,6 +774,79 @@ func copyTestResult(in TestResult) TestResult {
 func copyReviewResult(in gopacttest.ReviewResult) gopacttest.ReviewResult {
 	in.Metadata = copyMetadata(in.Metadata)
 	return in
+}
+
+func copyPatchProposal(in PatchProposal) PatchProposal {
+	out := in
+	out.Metadata = copyMetadata(in.Metadata)
+	out.Files = make([]PatchFile, len(in.Files))
+	for i, file := range in.Files {
+		file.Metadata = copyMetadata(file.Metadata)
+		out.Files[i] = file
+	}
+	return out
+}
+
+func copyPatchFiles(in []PatchFile) []PatchFile {
+	out := make([]PatchFile, len(in))
+	for i, file := range in {
+		file.Metadata = copyMetadata(file.Metadata)
+		out[i] = file
+	}
+	return out
+}
+
+func copyPolicyDecision(in gopact.PolicyDecision) gopact.PolicyDecision {
+	out := in
+	out.Metadata = copyMetadata(in.Metadata)
+	return out
+}
+
+func copyPolicyDecisionPtr(in *gopact.PolicyDecision) *gopact.PolicyDecision {
+	if in == nil {
+		return nil
+	}
+	out := copyPolicyDecision(*in)
+	return &out
+}
+
+func hasPatchProposal(patch *PatchProposal) bool {
+	if patch == nil {
+		return false
+	}
+	return strings.TrimSpace(patch.ID) != "" ||
+		strings.TrimSpace(patch.Summary) != "" ||
+		strings.TrimSpace(patch.Diff) != "" ||
+		len(patch.Files) > 0 ||
+		len(patch.Metadata) > 0
+}
+
+func patchPolicyRequest(request Request, plan Plan) gopact.PolicyRequest {
+	return gopact.PolicyRequest{
+		IDs:      request.IDs,
+		Boundary: gopact.PolicyBoundarySandbox,
+		Action:   gopact.PolicyActionWrite,
+		Input:    patchPolicyInput(plan.Patch),
+		Metadata: map[string]any{
+			"objective":  request.Objective,
+			"repository": request.Repository,
+			"stage":      nodeWrite,
+		},
+	}
+}
+
+func patchPolicyInput(patch *PatchProposal) PatchPolicyInput {
+	if patch == nil {
+		return PatchPolicyInput{}
+	}
+	return PatchPolicyInput{
+		ID:        patch.ID,
+		Summary:   patch.Summary,
+		Files:     copyPatchFiles(patch.Files),
+		HasDiff:   strings.TrimSpace(patch.Diff) != "",
+		DiffBytes: len(patch.Diff),
+		Metadata:  copyMetadata(patch.Metadata),
+	}
 }
 
 func copyMetadata(in map[string]any) map[string]any {
