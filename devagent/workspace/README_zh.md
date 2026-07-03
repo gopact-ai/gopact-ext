@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.3
+go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.4
 ```
 
 ## 用法

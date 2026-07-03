@@ -13,7 +13,7 @@
 安装：
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.1
+go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.2
 ```
 
 用法：
