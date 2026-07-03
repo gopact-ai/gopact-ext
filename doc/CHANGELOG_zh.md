@@ -11,13 +11,13 @@
 ## Unreleased
 
 - 将 extension modules 同步到 `gopact` core `v0.0.45`。
-- 发布基于 core `v0.0.45` 的当前 extension tag：`agents/agentnode/v0.1.3`、`agents/agenttool/v0.1.22`、`agents/planexec/v0.2.23`、`agents/react/v0.2.21`、`agents/supervisor/v0.1.9`、`devagent/filesnapshot/v0.1.20`、`devagent/gitdiff/v0.1.20`、`devagent/selfbootstrap/v0.1.1`、`devagent/workspace/v0.1.1`、`models/openai/v0.5.23`、`models/ark/v0.2.21`、`models/agnes/v0.1.24`。
+- 发布基于 core `v0.0.45` 的当前 extension tag：`agents/agentnode/v0.1.3`、`agents/agenttool/v0.1.22`、`agents/planexec/v0.2.23`、`agents/react/v0.2.21`、`agents/supervisor/v0.1.9`、`devagent/filesnapshot/v0.1.20`、`devagent/gitdiff/v0.1.20`、`devagent/selfbootstrap/v0.1.1`、`devagent/workspace/v0.1.2`、`models/openai/v0.5.23`、`models/ark/v0.2.21`、`models/agnes/v0.1.24`。
 - 增加 `agents/agentnode`：把 A2A agent 适配为 graph node，并把子 A2A events 保留在父 graph stream 中。
 - 增加 `agents/supervisor`：provider-neutral template，可将任务路由到指定子 runnable，并保留 runtime IDs 与 event evidence。
 - 增加 `agents/humanreview`：provider-neutral 的人工审批 graph gate，支持 step-export 和 checkpoint resume。
 - 增加 `agents/scheduler`：provider-neutral 的后台 worker 原语，支持队列状态转换、lease renewal、retry、stop、dead-letter、drain 和 schedule evidence。
 - 增加 `devagent/selfbootstrap`：provider-neutral 的 Dev Agent workflow，编排 analyze、plan patch proposal policy、write、test、review 证据并产出 run export 与 verification report。
-- 增加 `devagent/workspace`：本地仓库适配器，应用调用方提供的 patch，并采集 self-bootstrap 所需的 diff、file snapshot、command 和 CI gate evidence。
+- 增加 `devagent/workspace`：本地仓库适配器，应用 policy-approved plan patch 或调用方提供的 patch，并采集 self-bootstrap 所需的 diff、file snapshot、command 和 CI gate evidence。
 - 增加 `tests/agents` 的 mock 与 Agnes-backed 覆盖，固化 supervisor 路由到 Plan-Execute 子 agent 的组合路径。
 - 增加 `tests/agents` 的 Agnes-backed 覆盖，固化 A2A AgentNode graph 委托路径。
 - 增加 `tests/agents` 的 mock 覆盖，固化 HumanReview gate 在 graph workflow 中的组合路径。

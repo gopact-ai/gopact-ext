@@ -26,7 +26,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 | `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20` |
 | `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20` |
 | `devagent/selfbootstrap` | Coordinate analyze, plan patch proposal policy, write, test, and review evidence into a self-bootstrap run export and verification report. | `go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.1` |
-| `devagent/workspace` | Adapt a local repository into self-bootstrap patch apply, diff, file snapshot, command, and CI gate evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.1` |
+| `devagent/workspace` | Adapt a local repository into policy-approved plan patch apply, diff, file snapshot, command, and CI gate evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.2` |
 | `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.23` |
 | `models/ark` | Volcengine Ark SDK provider adapter with API-key and AK/SK paths. | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.21` |
 | `models/agnes` | Agnes AI OpenAI-compatible Chat Completions provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.24` |

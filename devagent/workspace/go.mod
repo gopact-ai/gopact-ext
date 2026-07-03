@@ -6,5 +6,5 @@ require (
 	github.com/gopact-ai/gopact v0.0.45
 	github.com/gopact-ai/gopact-ext/devagent/filesnapshot v0.1.13
 	github.com/gopact-ai/gopact-ext/devagent/gitdiff v0.1.13
-	github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.0
+	github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.1
 )
