@@ -254,10 +254,68 @@ func TestRepositoryCIWorkflowOptimizesIndependentGatesForParallelFeedback(t *tes
 		"static:",
 		"coverage:",
 		"security:",
-		"needs: [hygiene, unit, race, static, coverage, security]",
+		"self-bootstrap:",
+		"needs: [hygiene, unit, race, static, coverage, security, self-bootstrap]",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("workflow missing parallel feedback control %q", want)
+		}
+	}
+}
+
+func TestSelfBootstrapMockSuiteIsExecutableAndUsedByCI(t *testing.T) {
+	workflow := readRepoText(t, "../../.github/workflows/ci.yml")
+	readme := readRepoText(t, "../../README.md")
+	readmeZH := readRepoText(t, "../../README_zh.md")
+	scriptPath := "../../scripts/self-bootstrap-mock-suite.sh"
+	script := readRepoText(t, scriptPath)
+
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatalf("stat self-bootstrap mock suite: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatal("self-bootstrap mock suite must be executable")
+	}
+
+	command := "./scripts/self-bootstrap-mock-suite.sh"
+	for _, want := range []string{
+		"(cd agents/agentnode && go test -count=1 ./...)",
+		"(cd agents/agenttool && go test -count=1 ./...)",
+		"(cd agents/planexec && go test -count=1 ./...)",
+		"(cd agents/react && go test -count=1 ./...)",
+		"(cd agents/supervisor && go test -count=1 ./...)",
+		"(cd devagent/filesnapshot && go test -count=1 ./...)",
+		"(cd devagent/gitdiff && go test -count=1 ./...)",
+		"(cd models/agnes && go test -count=1 ./...)",
+		"(cd models/ark && go test -count=1 ./...)",
+		"(cd models/openai && go test -count=1 ./...)",
+		"(cd tests/agents && go test -count=1 ./...)",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("self-bootstrap mock suite missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"-tags=integration", ".env"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("self-bootstrap mock suite contains %q; it must stay mock-only", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"self-bootstrap:",
+		command,
+		"needs: [hygiene, unit, race, static, coverage, security, self-bootstrap]",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("workflow missing self-bootstrap suite control %q", want)
+		}
+	}
+	for path, body := range map[string]string{
+		"README.md":    readme,
+		"README_zh.md": readmeZH,
+	} {
+		if !strings.Contains(body, command) {
+			t.Fatalf("%s missing self-bootstrap mock suite command %q", path, command)
 		}
 	}
 }
