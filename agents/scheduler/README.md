@@ -10,7 +10,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `scheduler` provides provider-neutral background worker primitives for durable agent work. The package owns `RunOnce` and bounded `Drain` orchestration, queue transitions, retry/stop/dead-letter decisions, optional lease ownership, lease renewal, and schedule verification evidence.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.0`.
+Install it with `go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.1`.
 
 ```go
 queue := scheduler.NewMemoryQueue(scheduler.Job{
