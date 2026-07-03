@@ -101,6 +101,7 @@ func TestModuleReadmesExposeGoReferenceBadges(t *testing.T) {
 	for _, module := range []string{
 		"agents/agentnode",
 		"agents/agenttool",
+		"agents/humanreview",
 		"agents/planexec",
 		"agents/react",
 		"agents/supervisor",
