@@ -6,12 +6,12 @@
 
 ## 中文
 
-`selfbootstrap` 提供 provider-neutral 的 Dev Agent workflow：analyze、plan、write、test、review。每个阶段都由宿主注入，因此模块本身不会调用模型、执行命令、应用 patch 或读取工作区。它只把宿主已经观察到的 command、CI gate、diff、file snapshot、review、run export、failure attribution 和 verification report 证据串成稳定结果。
+`selfbootstrap` 提供 provider-neutral 的 Dev Agent workflow：analyze、plan、patch proposal policy 授权、write、test、review。每个阶段都由宿主注入，因此模块本身不会调用模型、执行命令、应用 patch 或读取工作区。它只把宿主已经观察到的 policy decision、command、CI gate、diff、file snapshot、review、run export、failure attribution 和 verification report 证据串成稳定结果。
 
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.0
+go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.1
 ```
 
 ## 用法
@@ -20,6 +20,7 @@ go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.0
 workflow, err := selfbootstrap.New(
 	selfbootstrap.WithAnalyzer(analyzer),
 	selfbootstrap.WithPlanner(planner),
+	selfbootstrap.WithPatchPolicy(policy),
 	selfbootstrap.WithWriter(writer),
 	selfbootstrap.WithTester(tester),
 	selfbootstrap.WithReviewer(reviewer),
