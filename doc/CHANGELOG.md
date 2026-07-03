@@ -12,7 +12,7 @@ The current unreleased work adds graph-node A2A composition while preserving the
 
 - Update extension modules to `gopact` core `v0.0.53`.
 - Add downstream `tests/agents` coverage for reusable A2A card registrar conformance.
-- Keep the current extension tag set documented: `agents/agentnode/v0.1.8`, `agents/agenttool/v0.1.27`, `agents/humanreview/v0.1.5`, `agents/planexec/v0.2.28`, `agents/react/v0.2.26`, `agents/scheduler/v0.1.5`, `agents/supervisor/v0.1.14`, `devagent/filesnapshot/v0.1.25`, `devagent/gitdiff/v0.1.25`, `devagent/selfbootstrap/v0.1.6`, `devagent/workspace/v0.1.7`, `models/openai/v0.5.28`, `models/ark/v0.2.26`, and `models/agnes/v0.1.29`.
+- Keep the current extension tag set documented: `agents/agentnode/v0.1.9`, `agents/agenttool/v0.1.28`, `agents/humanreview/v0.1.6`, `agents/planexec/v0.2.29`, `agents/react/v0.2.27`, `agents/scheduler/v0.1.6`, `agents/supervisor/v0.1.15`, `devagent/filesnapshot/v0.1.26`, `devagent/gitdiff/v0.1.26`, `devagent/selfbootstrap/v0.1.7`, `devagent/workspace/v0.1.8`, `models/openai/v0.5.29`, `models/ark/v0.2.27`, and `models/agnes/v0.1.30`.
 - Add `agents/agentnode`, an A2A-to-graph adapter that preserves child A2A events in the parent graph stream.
 - Add `agents/supervisor`, a provider-neutral template that routes a task to a named child runnable while preserving runtime IDs and event evidence.
 - Add `agents/humanreview`, a provider-neutral human approval gate for graph workflows with step-export and checkpoint resume support.
