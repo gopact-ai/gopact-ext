@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact-ext/devagent/selfbootstrap"
@@ -104,6 +105,128 @@ func TestPatchWriterAppliesPatchAndCapturesEvidence(t *testing.T) {
 	if len(result.FileSnapshots) != 1 || result.FileSnapshots[0].Path != "hello.txt" ||
 		result.FileSnapshots[0].Metadata["patch_id"] != "patch-1" {
 		t.Fatalf("snapshots = %+v, want patched file snapshot with patch metadata", result.FileSnapshots)
+	}
+}
+
+func TestPlanPatchWriterAppliesApprovedPlanPatch(t *testing.T) {
+	root := newGitRepo(t)
+	writeFile(t, root, "hello.txt", "hello\n")
+	runGitTest(t, root, "add", "hello.txt")
+	runGitTest(t, root, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+
+	ws, err := New(root)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	result, err := ws.PlanPatchWriter("hello.txt").Write(context.Background(), selfbootstrap.WriteRequest{
+		Request: selfbootstrap.Request{Repository: "demo"},
+		Plan: selfbootstrap.Plan{
+			Patch: &selfbootstrap.PatchProposal{
+				ID:       "plan-patch-1",
+				Summary:  "extend greeting",
+				Diff:     helloPatchDiff(),
+				Metadata: map[string]any{"source_step": "plan"},
+			},
+		},
+		PatchDecision: &gopact.PolicyDecision{
+			Action: gopact.PolicyAllow,
+			Reason: "small patch",
+			Metadata: map[string]any{
+				"reviewer": "unit-policy",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, "hello.txt"))
+	if err != nil {
+		t.Fatalf("read patched file: %v", err)
+	}
+	if string(content) != "hello\nworkspace\n" {
+		t.Fatalf("patched file = %q, want approved plan patch applied", content)
+	}
+	if result.Metadata["patch_id"] != "plan-patch-1" ||
+		result.Metadata["patch_policy_action"] != string(gopact.PolicyAllow) ||
+		result.Metadata["patch_policy_reason"] != "small patch" ||
+		result.Metadata["source_step"] != "plan" {
+		t.Fatalf("metadata = %+v, want plan patch and policy metadata", result.Metadata)
+	}
+}
+
+func TestPlanPatchWriterRequiresPolicyAllowBeforeApply(t *testing.T) {
+	root := newGitRepo(t)
+	writeFile(t, root, "hello.txt", "hello\n")
+	runGitTest(t, root, "add", "hello.txt")
+	runGitTest(t, root, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+
+	ws, err := New(root)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	request := selfbootstrap.WriteRequest{
+		Request: selfbootstrap.Request{
+			Objective:  "apply greeting patch",
+			Repository: "demo",
+		},
+		Plan: selfbootstrap.Plan{
+			Patch: &selfbootstrap.PatchProposal{
+				ID:      "plan-patch-denied",
+				Summary: "extend greeting",
+				Files: []selfbootstrap.PatchFile{
+					{Path: "hello.txt", Intent: "modify"},
+				},
+				Diff:     helloPatchDiff(),
+				Metadata: map[string]any{"source_step": "plan"},
+			},
+		},
+	}
+
+	_, err = ws.PlanPatchWriter("hello.txt").Write(context.Background(), request)
+	if !errors.Is(err, ErrPatchDecisionRequired) {
+		t.Fatalf("Write(missing decision) error = %v, want ErrPatchDecisionRequired", err)
+	}
+	request.PatchDecision = &gopact.PolicyDecision{Action: gopact.PolicyDeny, Reason: "blocked"}
+	result, err := ws.PlanPatchWriter("hello.txt").Write(context.Background(), request)
+	if !errors.Is(err, gopact.ErrPolicyDenied) {
+		t.Fatalf("Write(denied decision) error = %v, want gopact.ErrPolicyDenied", err)
+	}
+	if result.Summary != "workspace plan patch policy blocked" {
+		t.Fatalf("denied summary = %q, want policy blocked", result.Summary)
+	}
+	var denied *gopact.PolicyDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("Write(denied decision) error = %T, want *gopact.PolicyDeniedError", err)
+	}
+	if denied.Request.Boundary != gopact.PolicyBoundarySandbox ||
+		denied.Request.Action != gopact.PolicyActionWrite ||
+		denied.Request.Metadata["stage"] != "write" ||
+		denied.Request.Metadata["objective"] != "apply greeting patch" ||
+		denied.Request.Metadata["repository"] != "demo" {
+		t.Fatalf("denied policy request = %+v, want self-bootstrap patch policy context", denied.Request)
+	}
+	input, ok := denied.Request.Input.(selfbootstrap.PatchPolicyInput)
+	if !ok {
+		t.Fatalf("denied policy input type = %T, want selfbootstrap.PatchPolicyInput", denied.Request.Input)
+	}
+	if input.ID != "plan-patch-denied" ||
+		input.Summary != "extend greeting" ||
+		!input.HasDiff ||
+		input.DiffBytes != len(helloPatchDiff()) ||
+		len(input.Files) != 1 ||
+		input.Files[0].Path != "hello.txt" ||
+		input.Metadata["source_step"] != "plan" {
+		t.Fatalf("denied policy input = %+v, want sanitized plan patch summary", input)
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, "hello.txt"))
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(content) != "hello\n" {
+		t.Fatalf("file = %q, want unchanged without allow decision", content)
 	}
 }
 
@@ -312,7 +435,21 @@ func TestWorkspaceValidatesRootFilesAndCommands(t *testing.T) {
 
 func newGitRepo(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", strings.ReplaceAll(t.Name(), "/", "-")+"-*")
+	if err != nil {
+		t.Fatalf("create temp git repo: %v", err)
+	}
+	t.Cleanup(func() {
+		var err error
+		for range 20 {
+			err = os.RemoveAll(dir)
+			if err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("remove temp git repo: %v", err)
+	})
 	runGitTest(t, dir, "init")
 	return dir
 }
@@ -326,6 +463,18 @@ func writeFile(t *testing.T, dir, name, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+func helloPatchDiff() string {
+	return strings.Join([]string{
+		"diff --git a/hello.txt b/hello.txt",
+		"--- a/hello.txt",
+		"+++ b/hello.txt",
+		"@@ -1 +1,2 @@",
+		" hello",
+		"+workspace",
+		"",
+	}, "\n")
 }
 
 func runGitTest(t *testing.T, dir string, args ...string) {

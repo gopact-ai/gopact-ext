@@ -10,7 +10,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `workspace` adapts a local repository root into self-bootstrap evidence. It combines controlled patch apply, git diff scanning, file snapshots, local command execution, and CI gate mapping into `selfbootstrap.Writer` and `selfbootstrap.Tester` implementations.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.1`.
+Install it with `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.2`.
 
 ```go
 ws, err := workspace.New("/path/to/repo")
@@ -21,10 +21,8 @@ if err != nil {
 workflow, err := selfbootstrap.New(
 	selfbootstrap.WithAnalyzer(analyzer),
 	selfbootstrap.WithPlanner(planner),
-	selfbootstrap.WithWriter(ws.PatchWriter(workspace.Patch{
-		ID:   "patch-1",
-		Diff: unifiedDiff,
-	}, "go.mod", "README.md")),
+	selfbootstrap.WithPatchPolicy(policy),
+	selfbootstrap.WithWriter(ws.PlanPatchWriter("go.mod", "README.md")),
 	selfbootstrap.WithTester(ws.Tester(workspace.Command{
 		Gate: gopacttest.SelfBootstrapCIGateUnit,
 		Args: []string{"go", "test", "-count=1", "./..."},
@@ -33,7 +31,7 @@ workflow, err := selfbootstrap.New(
 )
 ```
 
-Use `Writer(paths...)` when another host component has already made the change and the workflow only needs evidence. Use `PatchWriter(patch, paths...)` when the host wants this adapter to apply a caller-provided unified diff before evidence capture.
+Use `Writer(paths...)` when another host component has already made the change and the workflow only needs evidence. Use `PatchWriter(patch, paths...)` when the host wants this adapter to apply a caller-provided unified diff before evidence capture. Use `PlanPatchWriter(paths...)` when the self-bootstrap planner produced a `PatchProposal`; it requires an allow `PatchDecision` from `WithPatchPolicy` before applying the patch.
 
 The adapter validates patch paths before applying them, rejects paths outside the repository root and symlink escapes, and records repo-relative paths and command evidence. It does not decide whether a release is acceptable; release gates remain with the caller.
 

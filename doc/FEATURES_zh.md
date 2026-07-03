@@ -30,7 +30,7 @@
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | - |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | - |
 | self-bootstrap Dev Agent workflow with analyze, plan patch proposal policy, write, test, review, failure attribution, and verification report evidence | `devagent/selfbootstrap` | `(cd devagent/selfbootstrap && go test -count=1 ./...)` | - |
-| local workspace adapter for self-bootstrap controlled patch apply, diff, file snapshot, command, and CI gate evidence | `devagent/workspace` | `(cd devagent/workspace && go test -count=1 ./...)` | - |
+| local workspace adapter for self-bootstrap policy-approved plan patch apply, controlled patch apply, diff, file snapshot, command, and CI gate evidence | `devagent/workspace` | `(cd devagent/workspace && go test -count=1 ./...)` | - |
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Ark provider | `models/ark` | `(cd models/ark && go test -count=1 ./...)` | `(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Agnes provider | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |

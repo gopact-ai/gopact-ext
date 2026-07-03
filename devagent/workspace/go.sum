@@ -4,5 +4,5 @@ github.com/gopact-ai/gopact-ext/devagent/filesnapshot v0.1.13 h1:iKtWGC7SSBwDq54
 github.com/gopact-ai/gopact-ext/devagent/filesnapshot v0.1.13/go.mod h1:AmFbK+k4qpy2B585Bmj0tPeQPm5rrLyv6m0chJ3f9vk=
 github.com/gopact-ai/gopact-ext/devagent/gitdiff v0.1.13 h1:pxcS7U8YZNfl6XrlCOX1Zz0ZhPw0LK1UNW9m08sWOn0=
 github.com/gopact-ai/gopact-ext/devagent/gitdiff v0.1.13/go.mod h1:8rF+zcLr3add9xb8mvd3aOuYF6YlAANMDXEar3YW0is=
-github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.0 h1:ZPnJLFUio1sUGZPzuebcyQj3miGNKP/d41YLyK3UZkQ=
-github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.0/go.mod h1:KQ+S4AXABukDgnbD5qVlwY/tJe3I8ujFwTXWOjv3ahU=
+github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.1 h1:GX5F9tY4NCNhzA929qn82CIc6laPxo1G4C2ATp7ZjX4=
+github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.1/go.mod h1:KQ+S4AXABukDgnbD5qVlwY/tJe3I8ujFwTXWOjv3ahU=

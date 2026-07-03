@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact-ext/devagent/filesnapshot"
 	"github.com/gopact-ai/gopact-ext/devagent/gitdiff"
 	"github.com/gopact-ai/gopact-ext/devagent/selfbootstrap"
@@ -21,13 +22,14 @@ import (
 )
 
 var (
-	ErrRootRequired        = errors.New("workspace: root is required")
-	ErrCommandRequired     = errors.New("workspace: command is required")
-	ErrCommandLimitInvalid = errors.New("workspace: command output limit is invalid")
-	ErrGateRequired        = errors.New("workspace: gate is required")
-	ErrPathOutsideRoot     = errors.New("workspace: path is outside root")
-	ErrPatchRequired       = errors.New("workspace: patch diff is required")
-	ErrPatchApplyFailed    = errors.New("workspace: patch apply failed")
+	ErrRootRequired          = errors.New("workspace: root is required")
+	ErrCommandRequired       = errors.New("workspace: command is required")
+	ErrCommandLimitInvalid   = errors.New("workspace: command output limit is invalid")
+	ErrGateRequired          = errors.New("workspace: gate is required")
+	ErrPathOutsideRoot       = errors.New("workspace: path is outside root")
+	ErrPatchRequired         = errors.New("workspace: patch diff is required")
+	ErrPatchApplyFailed      = errors.New("workspace: patch apply failed")
+	ErrPatchDecisionRequired = errors.New("workspace: patch decision is required")
 )
 
 const defaultCommandOutputLimit = 64 * 1024
@@ -129,6 +131,13 @@ func (w *Workspace) PatchWriter(patch Patch, paths ...string) selfbootstrap.Writ
 	})
 }
 
+// PlanPatchWriter returns a writer that applies the patch proposal carried by the self-bootstrap plan.
+func (w *Workspace) PlanPatchWriter(paths ...string) selfbootstrap.Writer {
+	return selfbootstrap.WriterFunc(func(ctx context.Context, request selfbootstrap.WriteRequest) (selfbootstrap.WriteResult, error) {
+		return w.ApplyPlanPatch(ctx, request, paths...)
+	})
+}
+
 // Tester returns a self-bootstrap tester that executes commands and maps them to CI gates.
 func (w *Workspace) Tester(commands ...Command) selfbootstrap.Tester {
 	return selfbootstrap.TesterFunc(func(ctx context.Context, _ selfbootstrap.TestRequest) (selfbootstrap.TestResult, error) {
@@ -215,6 +224,38 @@ func (w *Workspace) ApplyPatch(ctx context.Context, request selfbootstrap.WriteR
 	return result, err
 }
 
+// ApplyPlanPatch applies the self-bootstrap plan patch after an allow policy decision.
+func (w *Workspace) ApplyPlanPatch(ctx context.Context, request selfbootstrap.WriteRequest, paths ...string) (selfbootstrap.WriteResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	result := selfbootstrap.WriteResult{
+		Summary:  "workspace plan patch policy required",
+		Metadata: w.requestMetadata(request.Request),
+	}
+	if request.Plan.Patch == nil {
+		return result, ErrPatchRequired
+	}
+	if request.PatchDecision == nil {
+		return result, ErrPatchDecisionRequired
+	}
+	if !request.PatchDecision.Allowed() {
+		result.Summary = "workspace plan patch policy blocked"
+		return result, &gopact.PolicyDeniedError{
+			Decision: *request.PatchDecision,
+			Request:  planPatchPolicyRequest(request),
+		}
+	}
+	patch := Patch{
+		ID:       request.Plan.Patch.ID,
+		Summary:  request.Plan.Patch.Summary,
+		Diff:     request.Plan.Patch.Diff,
+		Metadata: mergeMetadata(request.Plan.Patch.Metadata, patchDecisionMetadata(*request.PatchDecision)),
+	}
+	return w.ApplyPatch(ctx, request, patch, paths...)
+}
+
 // RunTests executes local commands and records their observed results without treating non-zero exits as runtime errors.
 func (w *Workspace) RunTests(ctx context.Context, commands ...Command) (selfbootstrap.TestResult, error) {
 	if ctx == nil {
@@ -263,6 +304,56 @@ func (w *Workspace) patchMetadata(request selfbootstrap.Request, patch Patch, ap
 	}
 	metadata["source"] = "workspace"
 	return metadata
+}
+
+func patchDecisionMetadata(decision gopact.PolicyDecision) map[string]any {
+	metadata := map[string]any{
+		"patch_policy_action": string(decision.Action),
+	}
+	if decision.Reason != "" {
+		metadata["patch_policy_reason"] = decision.Reason
+	}
+	if len(decision.Metadata) > 0 {
+		metadata["patch_policy_metadata"] = copyMetadata(decision.Metadata)
+	}
+	return metadata
+}
+
+func planPatchPolicyRequest(request selfbootstrap.WriteRequest) gopact.PolicyRequest {
+	return gopact.PolicyRequest{
+		IDs:      request.Request.IDs,
+		Boundary: gopact.PolicyBoundarySandbox,
+		Action:   gopact.PolicyActionWrite,
+		Input:    planPatchPolicyInput(request.Plan.Patch),
+		Metadata: map[string]any{
+			"objective":  request.Request.Objective,
+			"repository": request.Request.Repository,
+			"stage":      "write",
+		},
+	}
+}
+
+func planPatchPolicyInput(patch *selfbootstrap.PatchProposal) selfbootstrap.PatchPolicyInput {
+	if patch == nil {
+		return selfbootstrap.PatchPolicyInput{}
+	}
+	return selfbootstrap.PatchPolicyInput{
+		ID:        patch.ID,
+		Summary:   patch.Summary,
+		Files:     copyPlanPatchFiles(patch.Files),
+		HasDiff:   strings.TrimSpace(patch.Diff) != "",
+		DiffBytes: len(patch.Diff),
+		Metadata:  copyMetadata(patch.Metadata),
+	}
+}
+
+func copyPlanPatchFiles(in []selfbootstrap.PatchFile) []selfbootstrap.PatchFile {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]selfbootstrap.PatchFile, len(in))
+	copy(out, in)
+	return out
 }
 
 func (w *Workspace) requestMetadata(request selfbootstrap.Request) map[string]any {
