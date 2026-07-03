@@ -10,7 +10,7 @@
 
 ## Unreleased
 
-- 将 extension modules 同步到 `gopact` core `v0.0.47`。
+- 将 extension modules 同步到 `gopact` core `v0.0.49`。
 - 保持当前 extension tag 集合的文档记录：`agents/agentnode/v0.1.4`、`agents/agenttool/v0.1.23`、`agents/humanreview/v0.1.1`、`agents/planexec/v0.2.24`、`agents/react/v0.2.22`、`agents/scheduler/v0.1.1`、`agents/supervisor/v0.1.10`、`devagent/filesnapshot/v0.1.21`、`devagent/gitdiff/v0.1.21`、`devagent/selfbootstrap/v0.1.2`、`devagent/workspace/v0.1.3`、`models/openai/v0.5.24`、`models/ark/v0.2.22`、`models/agnes/v0.1.25`。
 - 增加 `agents/agentnode`：把 A2A agent 适配为 graph node，并把子 A2A events 保留在父 graph stream 中。
 - 增加 `agents/supervisor`：provider-neutral template，可将任务路由到指定子 runnable，并保留 runtime IDs 与 event evidence。
