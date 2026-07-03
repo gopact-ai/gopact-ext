@@ -78,6 +78,7 @@ CI 是 mock-only，不能依赖真实 provider、`.env` 或外部网络。提交
 
 ```bash
 git diff --check
+./scripts/self-bootstrap-mock-suite.sh
 for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go mod tidy); done
 git diff --exit-code
 for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -count=1 ./...); done
