@@ -18,7 +18,7 @@ API path 在模块内部固定：
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.26
+go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.27
 ```
 
 ## Chat Completions
