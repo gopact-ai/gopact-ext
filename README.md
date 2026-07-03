@@ -75,6 +75,7 @@ CI is mock-only and must not depend on real providers, `.env`, or external netwo
 
 ```bash
 git diff --check
+./scripts/self-bootstrap-mock-suite.sh
 for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go mod tidy); done
 git diff --exit-code
 for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -count=1 ./...); done
