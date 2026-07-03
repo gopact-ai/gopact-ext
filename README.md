@@ -21,6 +21,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 | `agents/humanreview` | Add provider-neutral human approval gates to graph workflows with interrupt/resume support. | `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.0` |
 | `agents/planexec` | Plan-Execute template with replan, approval, checkpoint, and cancel support. | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.23` |
 | `agents/react` | ReAct model/tool loop with memory, checkpoint, resume, and verification hooks. | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.21` |
+| `agents/scheduler` | Run leased background jobs with retry, stop, dead-letter, drain, and schedule evidence. | `go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.0` |
 | `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.9` |
 | `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.20` |
 | `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.20` |

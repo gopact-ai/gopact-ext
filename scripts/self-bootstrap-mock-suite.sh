@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 (cd agents/humanreview && go test -count=1 ./...)
 (cd agents/planexec && go test -count=1 ./...)
 (cd agents/react && go test -count=1 ./...)
+(cd agents/scheduler && go test -count=1 ./...)
 (cd agents/supervisor && go test -count=1 ./...)
 (cd devagent/filesnapshot && go test -count=1 ./...)
 (cd devagent/gitdiff && go test -count=1 ./...)
