@@ -10,7 +10,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `humanreview` provides provider-neutral approval-gate graph nodes. A gate maps typed graph state to a `gopact.InterruptRecord`, stops execution with `gopact.ErrInterrupted`, and lets the graph continue from the approved boundary through step-export or checkpoint resume.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.1`.
+Install it with `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.2`.
 
 ```go
 gate, err := humanreview.New(func(_ context.Context, state ReleaseState) (humanreview.Request, error) {
