@@ -13,7 +13,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.23
+go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.24
 ```
 
 ## API key 用法

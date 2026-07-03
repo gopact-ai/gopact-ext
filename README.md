@@ -16,22 +16,22 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 | Module | Purpose | Install |
 | --- | --- | --- |
-| `agents/agentnode` | Wrap an A2A agent as a typed graph node with nested child-event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.5` |
-| `agents/agenttool` | Wrap an A2A agent as a regular `gopact.ToolFunc`. | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.24` |
-| `agents/humanreview` | Add provider-neutral human approval gates to graph workflows with interrupt/resume support. | `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.2` |
-| `agents/planexec` | Plan-Execute template with replan, approval, checkpoint, and cancel support. | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.25` |
-| `agents/react` | ReAct model/tool loop with memory, checkpoint, resume, and verification hooks. | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.23` |
-| `agents/scheduler` | Run leased background jobs with retry, stop, dead-letter, drain, and schedule evidence. | `go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.2` |
-| `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.11` |
-| `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.22` |
-| `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.22` |
-| `devagent/selfbootstrap` | Coordinate analyze, plan patch proposal policy, write, test, and review evidence into a self-bootstrap run export and verification report. | `go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.3` |
-| `devagent/workspace` | Adapt a local repository into policy-approved plan patch apply, diff, file snapshot, command, and CI gate evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.4` |
-| `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.25` |
-| `models/ark` | Volcengine Ark SDK provider adapter with API-key and AK/SK paths. | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.23` |
-| `models/agnes` | Agnes AI OpenAI-compatible Chat Completions provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.26` |
+| `agents/agentnode` | Wrap an A2A agent as a typed graph node with nested child-event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.6` |
+| `agents/agenttool` | Wrap an A2A agent as a regular `gopact.ToolFunc`. | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.25` |
+| `agents/humanreview` | Add provider-neutral human approval gates to graph workflows with interrupt/resume support. | `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.3` |
+| `agents/planexec` | Plan-Execute template with replan, approval, checkpoint, and cancel support. | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.26` |
+| `agents/react` | ReAct model/tool loop with memory, checkpoint, resume, and verification hooks. | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.24` |
+| `agents/scheduler` | Run leased background jobs with retry, stop, dead-letter, drain, and schedule evidence. | `go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.3` |
+| `agents/supervisor` | Route one task to a named child runnable while preserving event evidence. | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.12` |
+| `devagent/filesnapshot` | Capture file size, mode, mtime, and hashes as reproducible engineering evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.23` |
+| `devagent/gitdiff` | Capture worktree or staged git diffs for development-agent verification. | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.23` |
+| `devagent/selfbootstrap` | Coordinate analyze, plan patch proposal policy, write, test, and review evidence into a self-bootstrap run export and verification report. | `go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.4` |
+| `devagent/workspace` | Adapt a local repository into policy-approved plan patch apply, diff, file snapshot, command, and CI gate evidence. | `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.5` |
+| `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.26` |
+| `models/ark` | Volcengine Ark SDK provider adapter with API-key and AK/SK paths. | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.24` |
+| `models/agnes` | Agnes AI OpenAI-compatible Chat Completions provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.27` |
 
-Submodule tags include the module path prefix, for example `models/openai/v0.5.25`.
+Submodule tags include the module path prefix, for example `models/openai/v0.5.26`.
 
 ## Usage
 

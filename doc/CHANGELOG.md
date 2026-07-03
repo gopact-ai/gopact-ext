@@ -10,8 +10,8 @@ This changelog records user-visible changes for `gopact-ext`. Each extension is 
 
 The current unreleased work adds graph-node A2A composition while preserving the existing mock-only CI and opt-in integration tests for real providers. The 2026-07-02 release line added public-readiness checks, PR governance, parallel CI gates, current module tags, and broader Agnes-backed agent template coverage.
 
-- Update extension modules to `gopact` core `v0.0.49`.
-- Keep the current extension tag set documented: `agents/agentnode/v0.1.5`, `agents/agenttool/v0.1.24`, `agents/humanreview/v0.1.2`, `agents/planexec/v0.2.25`, `agents/react/v0.2.23`, `agents/scheduler/v0.1.2`, `agents/supervisor/v0.1.11`, `devagent/filesnapshot/v0.1.22`, `devagent/gitdiff/v0.1.22`, `devagent/selfbootstrap/v0.1.3`, `devagent/workspace/v0.1.4`, `models/openai/v0.5.25`, `models/ark/v0.2.23`, and `models/agnes/v0.1.26`.
+- Update extension modules to `gopact` core `v0.0.50`.
+- Keep the current extension tag set documented: `agents/agentnode/v0.1.6`, `agents/agenttool/v0.1.25`, `agents/humanreview/v0.1.3`, `agents/planexec/v0.2.26`, `agents/react/v0.2.24`, `agents/scheduler/v0.1.3`, `agents/supervisor/v0.1.12`, `devagent/filesnapshot/v0.1.23`, `devagent/gitdiff/v0.1.23`, `devagent/selfbootstrap/v0.1.4`, `devagent/workspace/v0.1.5`, `models/openai/v0.5.26`, `models/ark/v0.2.24`, and `models/agnes/v0.1.27`.
 - Add `agents/agentnode`, an A2A-to-graph adapter that preserves child A2A events in the parent graph stream.
 - Add `agents/supervisor`, a provider-neutral template that routes a task to a named child runnable while preserving runtime IDs and event evidence.
 - Add `agents/humanreview`, a provider-neutral human approval gate for graph workflows with step-export and checkpoint resume support.
