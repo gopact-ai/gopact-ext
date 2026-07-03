@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.5
+go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.6
 ```
 
 ## 用法

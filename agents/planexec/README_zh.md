@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.27
+go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.28
 ```
 
 ## 用法
