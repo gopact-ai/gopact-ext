@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/gopact-ext/agents/agentnode"
 	"github.com/gopact-ai/gopact-ext/agents/agenttool"
 	"github.com/gopact-ai/gopact-ext/agents/planexec"
 	"github.com/gopact-ai/gopact-ext/agents/react"
@@ -24,6 +25,7 @@ import (
 	"github.com/gopact-ai/gopact/a2a"
 	"github.com/gopact-ai/gopact/checkpoint"
 	"github.com/gopact-ai/gopact/gopacttest"
+	"github.com/gopact-ai/gopact/graph"
 	"github.com/gopact-ai/gopact/memory"
 	"github.com/gopact-ai/gopact/provider"
 )
@@ -385,6 +387,112 @@ func TestAgnesIntegrationSupervisorTemplate(t *testing.T) {
 		if strings.TrimSpace(result.Output) == "" {
 			t.Fatalf("child state = %+v, want non-empty result outputs", childState)
 		}
+	}
+}
+
+func TestAgnesIntegrationAgentNodeTemplate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	agnesModel := newAgnesIntegrationModel(t)
+	child, err := planexec.NewModelAgent(
+		agnesModel,
+		planexec.WithModelOptions(
+			gopact.WithMaxOutputTokens(512),
+			gopact.WithTemperature(0.2),
+			agnes.DisableThinking(),
+		),
+	)
+	if err != nil {
+		t.Fatalf("planexec.NewModelAgent() error = %v", err)
+	}
+	childA2A, err := a2a.NewRunnableAgent(
+		a2a.AgentCard{Name: "agnes_agentnode_child", Description: "Agnes-backed graph-node child."},
+		child,
+		a2a.WithRunnableInputMapper(func(_ context.Context, task a2a.Task) (any, error) {
+			return task.Input, nil
+		}),
+		a2a.WithRunnableResultMapper(func(_ context.Context, task a2a.Task, events []gopact.Event) (a2a.Result, error) {
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i].StepSnapshot == nil {
+					continue
+				}
+				state, ok := events[i].StepSnapshot.Output.(planexec.State)
+				if ok && state.Summary != "" {
+					return a2a.Result{TaskID: task.ID, Output: state.Summary}, nil
+				}
+			}
+			return a2a.Result{TaskID: task.ID}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("a2a.NewRunnableAgent() error = %v", err)
+	}
+	node, err := agentnode.New[agentNodeState](
+		childA2A,
+		func(ctx context.Context, state agentNodeState) (a2a.Task, error) {
+			ids, _ := gopact.RuntimeIDsFromContext(ctx)
+			return a2a.Task{ID: "agnes-agentnode-task", IDs: ids, Input: state.Input}, nil
+		},
+		func(_ context.Context, state agentNodeState, result a2a.Result) (agentNodeState, error) {
+			state.Output = result.Output
+			return state, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("agentnode.New() error = %v", err)
+	}
+	g := graph.New[agentNodeState]()
+	g.AddNode("delegate", node)
+	g.AddEdge(graph.Start, "delegate")
+	g.AddEdge("delegate", graph.End)
+	run, err := g.Compile()
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	events, err := gopacttest.CollectEvents(run.Run(ctx, agentNodeState{
+		Input: "Create exactly one short step to validate agent-node routing with Agnes.",
+	}, graph.WithRuntimeIDs(gopact.RuntimeIDs{
+		RunID:    "agnes-agentnode-parent",
+		ThreadID: "agnes-agentnode-thread",
+		TraceID:  "agnes-agentnode-trace",
+	})))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(events) == 0 || events[len(events)-1].Type != gopact.EventRunCompleted {
+		t.Fatalf("events = %v, want graph run completion", gopacttest.EventTypes(events))
+	}
+
+	var completed *gopact.Event
+	for i := range events {
+		if events[i].Type == gopact.EventA2ATaskCompleted {
+			completed = &events[i]
+			break
+		}
+	}
+	if completed == nil || completed.Result == nil || strings.TrimSpace(completed.Result.Content) == "" {
+		t.Fatalf("events = %v, want Agnes-backed A2A completion with result", gopacttest.EventTypes(events))
+	}
+	if completed.Metadata["agent_name"] != "agnes_agentnode_child" ||
+		completed.Metadata["a2a_task_id"] != "agnes-agentnode-task" ||
+		completed.Metadata[graph.EventMetadataParentNode] != "delegate" {
+		t.Fatalf("A2A graph node metadata = %+v, want child and parent evidence", completed.Metadata)
+	}
+	var output agentNodeState
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != gopact.EventNodeCompleted || events[i].StepSnapshot == nil {
+			continue
+		}
+		var ok bool
+		output, ok = events[i].StepSnapshot.Output.(agentNodeState)
+		if ok {
+			break
+		}
+	}
+	if strings.TrimSpace(output.Output) == "" {
+		t.Fatalf("events = %v, want mapped Agnes-backed A2A result", gopacttest.EventTypes(events))
 	}
 }
 

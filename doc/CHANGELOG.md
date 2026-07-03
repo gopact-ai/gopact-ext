@@ -15,4 +15,5 @@ The current unreleased work adds graph-node A2A composition while preserving the
 - Add `agents/agentnode`, an A2A-to-graph adapter that preserves child A2A events in the parent graph stream.
 - Add `agents/supervisor`, a provider-neutral template that routes a task to a named child runnable while preserving runtime IDs and event evidence.
 - Add mock and Agnes-backed `tests/agents` coverage for supervisor routing to a Plan-Execute child.
+- Add Agnes-backed `tests/agents` coverage for A2A AgentNode graph delegation.
 - Document ReAct verification export process records and step-export resume as tested extension capabilities.
