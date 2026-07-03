@@ -9,7 +9,7 @@
 安装：
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.5
+go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.6
 ```
 
 最小用法：
