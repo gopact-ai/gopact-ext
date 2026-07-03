@@ -3,7 +3,7 @@ module github.com/gopact-ai/gopact-ext/tests/agents
 go 1.25.11
 
 require (
-	github.com/gopact-ai/gopact v0.0.47
+	github.com/gopact-ai/gopact v0.0.49
 	github.com/gopact-ai/gopact-ext/agents/agentnode v0.1.4
 	github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.23
 	github.com/gopact-ai/gopact-ext/agents/humanreview v0.1.1
