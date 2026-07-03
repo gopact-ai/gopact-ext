@@ -6,12 +6,12 @@
 
 ## 中文
 
-`workspace` 将本地仓库根目录适配为 self-bootstrap evidence。它组合 git diff、file snapshot、本地命令执行和 CI gate 映射，提供 `selfbootstrap.Writer` 与 `selfbootstrap.Tester` 实现。
+`workspace` 将本地仓库根目录适配为 self-bootstrap evidence。它组合受控 patch apply、git diff、file snapshot、本地命令执行和 CI gate 映射，提供 `selfbootstrap.Writer` 与 `selfbootstrap.Tester` 实现。
 
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.0
+go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.1
 ```
 
 ## 用法
@@ -25,7 +25,10 @@ if err != nil {
 workflow, err := selfbootstrap.New(
 	selfbootstrap.WithAnalyzer(analyzer),
 	selfbootstrap.WithPlanner(planner),
-	selfbootstrap.WithWriter(ws.Writer("go.mod", "README.md")),
+	selfbootstrap.WithWriter(ws.PatchWriter(workspace.Patch{
+		ID:   "patch-1",
+		Diff: unifiedDiff,
+	}, "go.mod", "README.md")),
 	selfbootstrap.WithTester(ws.Tester(workspace.Command{
 		Gate: gopacttest.SelfBootstrapCIGateUnit,
 		Args: []string{"go", "test", "-count=1", "./..."},
@@ -34,7 +37,9 @@ workflow, err := selfbootstrap.New(
 )
 ```
 
-该 adapter 记录 repo-relative path 和 command evidence。它只采集并转交证据，不替调用方判断 release 是否可接受。
+当其他宿主组件已经完成修改时，使用 `Writer(paths...)` 只采集 evidence。当宿主希望 adapter 应用调用方提供的 unified diff 后再采集 evidence 时，使用 `PatchWriter(patch, paths...)`。
+
+该 adapter 在应用 patch 前会校验路径，拒绝越过 repository root 的路径和 symlink escape，并记录 repo-relative path 和 command evidence。它不替调用方判断 release 是否可接受。
 
 ## 验证
 

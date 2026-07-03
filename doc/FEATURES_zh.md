@@ -30,7 +30,7 @@
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | - |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | - |
 | self-bootstrap Dev Agent workflow with analyze, plan, write, test, review, failure attribution, and verification report evidence | `devagent/selfbootstrap` | `(cd devagent/selfbootstrap && go test -count=1 ./...)` | - |
-| local workspace adapter for self-bootstrap diff, file snapshot, command, and CI gate evidence | `devagent/workspace` | `(cd devagent/workspace && go test -count=1 ./...)` | - |
+| local workspace adapter for self-bootstrap controlled patch apply, diff, file snapshot, command, and CI gate evidence | `devagent/workspace` | `(cd devagent/workspace && go test -count=1 ./...)` | - |
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Ark provider | `models/ark` | `(cd models/ark && go test -count=1 ./...)` | `(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Agnes provider | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
@@ -47,4 +47,4 @@
 
 - provider adapter 必须覆盖默认 model、per-call model override、参数预算、采样参数、stream、tool calling、structured output、thinking/reasoning 控制、超时/取消和错误分类。
 - agent template 必须覆盖成功路径、失败路径、组合路径和可恢复边界；涉及人工审批、checkpoint、memory、verification 的能力必须有具体测试固化。
-- dev-agent helper 必须只采集证据，不替调用方做发布决策或写入工作区。
+- dev-agent helper 必须通过显式 host-controlled workspace action 暴露写入能力并采集证据，不替调用方做发布决策。

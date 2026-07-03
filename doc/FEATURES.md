@@ -28,7 +28,7 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | file snapshot evidence | `devagent/filesnapshot` | `(cd devagent/filesnapshot && go test -count=1 ./...)` | Not required |
 | git diff evidence | `devagent/gitdiff` | `(cd devagent/gitdiff && go test -count=1 ./...)` | Not required |
 | self-bootstrap Dev Agent workflow with analyze, plan, write, test, review, failure attribution, and verification report evidence | `devagent/selfbootstrap` | `(cd devagent/selfbootstrap && go test -count=1 ./...)` | Not required |
-| local workspace adapter for self-bootstrap diff, file snapshot, command, and CI gate evidence | `devagent/workspace` | `(cd devagent/workspace && go test -count=1 ./...)` | Not required |
+| local workspace adapter for self-bootstrap controlled patch apply, diff, file snapshot, command, and CI gate evidence | `devagent/workspace` | `(cd devagent/workspace && go test -count=1 ./...)` | Not required |
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Ark provider | `models/ark` | `(cd models/ark && go test -count=1 ./...)` | `(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Agnes provider | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
@@ -41,4 +41,4 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | Agnes-backed agent templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 | Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, Supervisor, and AgentNode templates | `tests/agents` | `(cd tests/agents && go test -count=1 ./...)` | `(cd tests/agents && go test -tags=integration -count=1 ./...)` |
 
-Provider adapters must cover default and per-call model selection, request budgets, sampling controls, streaming, tool calling, structured output, thinking or reasoning controls, timeout and cancel behavior, and error classification. Agent templates must cover success paths, failure paths, composition paths, and resumable boundaries. Development-agent helpers collect evidence only; release decisions remain with the caller.
+Provider adapters must cover default and per-call model selection, request budgets, sampling controls, streaming, tool calling, structured output, thinking or reasoning controls, timeout and cancel behavior, and error classification. Agent templates must cover success paths, failure paths, composition paths, and resumable boundaries. Development-agent helpers expose explicit host-controlled workspace actions and collect evidence; release decisions remain with the caller.

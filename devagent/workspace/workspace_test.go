@@ -52,6 +52,116 @@ func TestWriterCapturesWorktreeDiffAndRepoRelativeFileSnapshots(t *testing.T) {
 	}
 }
 
+func TestPatchWriterAppliesPatchAndCapturesEvidence(t *testing.T) {
+	root := newGitRepo(t)
+	writeFile(t, root, "hello.txt", "hello\n")
+	runGitTest(t, root, "add", "hello.txt")
+	runGitTest(t, root, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+
+	ws, err := New(root, WithMetadata(map[string]any{"suite": "unit"}))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	result, err := ws.PatchWriter(Patch{
+		ID:      "patch-1",
+		Summary: "extend greeting",
+		Diff: strings.Join([]string{
+			"diff --git a/hello.txt b/hello.txt",
+			"--- a/hello.txt",
+			"+++ b/hello.txt",
+			"@@ -1 +1,2 @@",
+			" hello",
+			"+workspace",
+			"",
+		}, "\n"),
+		Metadata: map[string]any{"source_step": "plan"},
+	}, "hello.txt").Write(context.Background(), selfbootstrap.WriteRequest{
+		Request: selfbootstrap.Request{Repository: "demo"},
+	})
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, "hello.txt"))
+	if err != nil {
+		t.Fatalf("read patched file: %v", err)
+	}
+	if string(content) != "hello\nworkspace\n" {
+		t.Fatalf("patched file = %q, want applied patch", content)
+	}
+	if result.Summary != "workspace patch applied and evidence captured" {
+		t.Fatalf("summary = %q, want patch applied summary", result.Summary)
+	}
+	if result.Metadata["patch_id"] != "patch-1" || result.Metadata["patch_applied"] != true ||
+		result.Metadata["source_step"] != "plan" {
+		t.Fatalf("metadata = %+v, want patch metadata", result.Metadata)
+	}
+	if result.Diff == nil || len(result.Diff.Files) != 1 || result.Diff.Files[0] != "hello.txt" ||
+		result.Diff.Insertions != 1 || result.Diff.Deletions != 0 {
+		t.Fatalf("diff = %+v, want applied patch diff", result.Diff)
+	}
+	if len(result.FileSnapshots) != 1 || result.FileSnapshots[0].Path != "hello.txt" ||
+		result.FileSnapshots[0].Metadata["patch_id"] != "patch-1" {
+		t.Fatalf("snapshots = %+v, want patched file snapshot with patch metadata", result.FileSnapshots)
+	}
+}
+
+func TestPatchWriterRejectsUnsafePatchPathsBeforeApply(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret\n"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "outside-link")); err != nil {
+		t.Fatalf("symlink outside file: %v", err)
+	}
+
+	ws, err := New(root)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = ws.PatchWriter(Patch{
+		ID: "patch-symlink",
+		Diff: strings.Join([]string{
+			"diff --git a/outside-link b/outside-link",
+			"--- a/outside-link",
+			"+++ b/outside-link",
+			"@@ -1 +1 @@",
+			"-secret",
+			"+leaked",
+			"",
+		}, "\n"),
+	}).Write(context.Background(), selfbootstrap.WriteRequest{})
+	if !errors.Is(err, ErrPathOutsideRoot) {
+		t.Fatalf("Write(symlink patch) error = %v, want ErrPathOutsideRoot", err)
+	}
+	content, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatalf("read outside file: %v", err)
+	}
+	if string(content) != "secret\n" {
+		t.Fatalf("outside file = %q, want unchanged", content)
+	}
+
+	_, err = ws.PatchWriter(Patch{
+		ID: "patch-parent",
+		Diff: strings.Join([]string{
+			"diff --git a/../outside.txt b/../outside.txt",
+			"--- a/../outside.txt",
+			"+++ b/../outside.txt",
+			"@@ -1 +1 @@",
+			"-secret",
+			"+leaked",
+			"",
+		}, "\n"),
+	}).Write(context.Background(), selfbootstrap.WriteRequest{})
+	if !errors.Is(err, ErrPathOutsideRoot) {
+		t.Fatalf("Write(parent path patch) error = %v, want ErrPathOutsideRoot", err)
+	}
+}
+
 func TestTesterRunsCommandsAndMapsCIGates(t *testing.T) {
 	root := t.TempDir()
 	ws, err := New(root)
