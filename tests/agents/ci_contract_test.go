@@ -282,8 +282,10 @@ func TestSelfBootstrapMockSuiteIsExecutableAndUsedByCI(t *testing.T) {
 	for _, want := range []string{
 		"(cd agents/agentnode && go test -count=1 ./...)",
 		"(cd agents/agenttool && go test -count=1 ./...)",
+		"(cd agents/humanreview && go test -count=1 ./...)",
 		"(cd agents/planexec && go test -count=1 ./...)",
 		"(cd agents/react && go test -count=1 ./...)",
+		"(cd agents/scheduler && go test -count=1 ./...)",
 		"(cd agents/supervisor && go test -count=1 ./...)",
 		"(cd devagent/filesnapshot && go test -count=1 ./...)",
 		"(cd devagent/gitdiff && go test -count=1 ./...)",
@@ -507,10 +509,12 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 	}{
 		{"agent as graph node", "agents/agentnode", "(cd agents/agentnode && go test -count=1 ./...)", ""},
 		{"agent as tool", "agents/agenttool", "(cd agents/agenttool && go test -count=1 ./...)", ""},
+		{"human review approval gate with checkpoint and step-export resume", "agents/humanreview", "(cd agents/humanreview && go test -count=1 ./...)", ""},
 		{"Plan-Execute agent template with replan, approval, checkpoint, and cancel", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
 		{"Plan-Execute golden trajectory", "agents/planexec", "(cd agents/planexec && go test -count=1 ./...)", ""},
 		{"ReAct agent template", "agents/react", "(cd agents/react && go test -count=1 ./...)", ""},
 		{"ReAct verification export process records and step-export resume", "agents/react", "(cd agents/react && go test -count=1 ./...)", ""},
+		{"durable background scheduler with queue transitions, lease renewal, retry, drain, and evidence", "agents/scheduler", "(cd agents/scheduler && go test -count=1 ./...)", ""},
 		{"Supervisor agent template", "agents/supervisor", "(cd agents/supervisor && go test -count=1 ./...)", ""},
 		{"ReAct tool loop with model options and runtime IDs", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
 		{"ReAct checkpoint resume with tool, memory, and verification", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
@@ -520,6 +524,7 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"Supervisor routing to Plan-Execute child with runtime IDs", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", "(cd tests/agents && go test -tags=integration -count=1 ./...)"},
 		{"A2A agent node inside graph workflow", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
 		{"A2A card registrar conformance consumed from downstream modules", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
+		{"Human review gate inside graph workflow", "tests/agents", "(cd tests/agents && go test -count=1 ./...)", ""},
 		{"file snapshot evidence", "devagent/filesnapshot", "(cd devagent/filesnapshot && go test -count=1 ./...)", ""},
 		{"git diff evidence", "devagent/gitdiff", "(cd devagent/gitdiff && go test -count=1 ./...)", ""},
 		{"self-bootstrap Dev Agent workflow with analyze, plan patch proposal policy, write, test, review, failure attribution, and verification report evidence", "devagent/selfbootstrap", "(cd devagent/selfbootstrap && go test -count=1 ./...)", ""},
@@ -590,6 +595,7 @@ func TestAgentTemplateFeatureCoverageUsesConcreteTests(t *testing.T) {
 		"Supervisor routing to Plan-Execute child with runtime IDs",
 		"A2A agent node inside graph workflow",
 		"A2A card registrar conformance consumed from downstream modules",
+		"Human review gate inside graph workflow",
 		"Agnes-backed ReAct, Plan-Execute, Agent-as-Tool, Supervisor, and AgentNode templates",
 	} {
 		if !strings.Contains(matrix, capability) {
