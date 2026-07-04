@@ -119,6 +119,8 @@ provider-specific override：
 ```bash
 GOPACT_AGNES_API_KEY=your-agnes-token
 GOPACT_AGNES_SK=your-agnes-token
+GOPACT_AGNES_HTTP_TIMEOUT=90s
+GOPACT_AGNES_MAX_ATTEMPTS=2
 GOPACT_ARK_API_KEY=your-ark-api-key
 GOPACT_OPENAI_API_KEY=your-openai-api-key
 ```
