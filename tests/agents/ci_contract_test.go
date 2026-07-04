@@ -377,6 +377,8 @@ func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
 		"GOPACT_LLM_MODEL",
 		"GOPACT_AGNES_API_KEY",
 		"GOPACT_AGNES_SK",
+		"GOPACT_AGNES_HTTP_TIMEOUT",
+		"GOPACT_AGNES_MAX_ATTEMPTS",
 		"GOPACT_ARK_API_KEY",
 		"GOPACT_OPENAI_API_KEY",
 	} {
@@ -393,7 +395,7 @@ func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
 }
 
 func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
-	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.53"
+	const currentCoreSDK = "github.com/gopact-ai/gopact v0.0.54"
 
 	for _, module := range []string{
 		"agents/agentnode",
