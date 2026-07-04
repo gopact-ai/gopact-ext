@@ -10,4 +10,4 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `filesnapshot` converts one local file into a `gopacttest.FileSnapshot` for dev-agent and release-gate evidence. It records hash and file metadata only; callers decide how that evidence is verified.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.27`.
+Install it with `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.28`.
