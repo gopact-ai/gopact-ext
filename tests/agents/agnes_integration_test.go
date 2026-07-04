@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -31,9 +32,38 @@ import (
 )
 
 const (
-	agnesIntegrationHTTPTimeout = 45 * time.Second
-	agnesIntegrationMaxAttempts = 2
+	defaultAgnesIntegrationHTTPTimeout = 90 * time.Second
+	defaultAgnesIntegrationMaxAttempts = 2
 )
+
+func TestAgnesIntegrationRuntimeConfig(t *testing.T) {
+	t.Setenv("GOPACT_AGNES_HTTP_TIMEOUT", "")
+	t.Setenv("GOPACT_AGNES_MAX_ATTEMPTS", "")
+	if got := agnesIntegrationHTTPTimeout(); got != defaultAgnesIntegrationHTTPTimeout {
+		t.Fatalf("default HTTP timeout = %s, want %s", got, defaultAgnesIntegrationHTTPTimeout)
+	}
+	if got := agnesIntegrationMaxAttempts(); got != defaultAgnesIntegrationMaxAttempts {
+		t.Fatalf("default max attempts = %d, want %d", got, defaultAgnesIntegrationMaxAttempts)
+	}
+
+	t.Setenv("GOPACT_AGNES_HTTP_TIMEOUT", "150s")
+	t.Setenv("GOPACT_AGNES_MAX_ATTEMPTS", "3")
+	if got := agnesIntegrationHTTPTimeout(); got != 150*time.Second {
+		t.Fatalf("env HTTP timeout = %s, want 150s", got)
+	}
+	if got := agnesIntegrationMaxAttempts(); got != 3 {
+		t.Fatalf("env max attempts = %d, want 3", got)
+	}
+
+	t.Setenv("GOPACT_AGNES_HTTP_TIMEOUT", "invalid")
+	t.Setenv("GOPACT_AGNES_MAX_ATTEMPTS", "0")
+	if got := agnesIntegrationHTTPTimeout(); got != defaultAgnesIntegrationHTTPTimeout {
+		t.Fatalf("invalid HTTP timeout = %s, want default %s", got, defaultAgnesIntegrationHTTPTimeout)
+	}
+	if got := agnesIntegrationMaxAttempts(); got != defaultAgnesIntegrationMaxAttempts {
+		t.Fatalf("invalid max attempts = %d, want default %d", got, defaultAgnesIntegrationMaxAttempts)
+	}
+}
 
 func TestAgnesIntegrationReActTemplate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -617,7 +647,7 @@ func newAgnesIntegrationModel(t *testing.T) gopact.StreamingResponseModel {
 		gopact.WithTemperature(0.2),
 		gopact.EnableStreaming(),
 		agnes.DisableThinking(),
-		agnes.WithHTTPClient(&http.Client{Timeout: agnesIntegrationHTTPTimeout}),
+		agnes.WithHTTPClient(&http.Client{Timeout: agnesIntegrationHTTPTimeout()}),
 	)
 	if err != nil {
 		t.Fatalf("agnes.NewClient() error = %v", err)
@@ -631,9 +661,10 @@ type agnesIntegrationRetryModel struct {
 
 func (m agnesIntegrationRetryModel) Generate(ctx context.Context, request gopact.ModelRequest) (gopact.ModelResponse, error) {
 	var lastErr error
-	for attempt := 1; attempt <= agnesIntegrationMaxAttempts; attempt++ {
+	maxAttempts := agnesIntegrationMaxAttempts()
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		response, err := m.model.Generate(ctx, request)
-		if err == nil || !isRetryableAgnesIntegrationError(err) || attempt == agnesIntegrationMaxAttempts {
+		if err == nil || !isRetryableAgnesIntegrationError(err) || attempt == maxAttempts {
 			return response, err
 		}
 		lastErr = err
@@ -647,9 +678,10 @@ func (m agnesIntegrationRetryModel) Generate(ctx context.Context, request gopact
 func (m agnesIntegrationRetryModel) Stream(ctx context.Context, request gopact.ModelRequest) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
 		var lastErr error
-		for attempt := 1; attempt <= agnesIntegrationMaxAttempts; attempt++ {
+		maxAttempts := agnesIntegrationMaxAttempts()
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			events, err := gopacttest.CollectEvents(m.model.Stream(ctx, request))
-			if err != nil && isRetryableAgnesIntegrationError(err) && attempt < agnesIntegrationMaxAttempts {
+			if err != nil && isRetryableAgnesIntegrationError(err) && attempt < maxAttempts {
 				lastErr = err
 				if err := waitAgnesIntegrationRetry(ctx, attempt); err != nil {
 					yield(gopact.Event{Type: gopact.EventModelProviderAttemptFailed, IDs: request.IDs, Err: err}, fmt.Errorf("agnes integration retry after %w: %w", lastErr, err))
@@ -697,6 +729,30 @@ func waitAgnesIntegrationRetry(ctx context.Context, attempt int) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func agnesIntegrationHTTPTimeout() time.Duration {
+	value := strings.TrimSpace(os.Getenv("GOPACT_AGNES_HTTP_TIMEOUT"))
+	if value == "" {
+		return defaultAgnesIntegrationHTTPTimeout
+	}
+	timeout, err := time.ParseDuration(value)
+	if err != nil || timeout <= 0 {
+		return defaultAgnesIntegrationHTTPTimeout
+	}
+	return timeout
+}
+
+func agnesIntegrationMaxAttempts() int {
+	value := strings.TrimSpace(os.Getenv("GOPACT_AGNES_MAX_ATTEMPTS"))
+	if value == "" {
+		return defaultAgnesIntegrationMaxAttempts
+	}
+	attempts, err := strconv.Atoi(value)
+	if err != nil || attempts < 1 {
+		return defaultAgnesIntegrationMaxAttempts
+	}
+	return attempts
 }
 
 func hasAgnesIntegrationEvent(events []gopact.Event, eventType gopact.EventType) bool {
