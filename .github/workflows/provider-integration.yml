@@ -1,0 +1,51 @@
+name: provider-integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      glm_model:
+        description: "GLM model for integration tests; leave empty to use GOPACT_GLM_MODEL secret"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  glm-international:
+    runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: github.com/gopact-ai/*
+      GOPACT_GLM_INTERNATIONAL_API_KEY: ${{ secrets.GOPACT_GLM_INTERNATIONAL_API_KEY || secrets.GLM_API_KEY }}
+      GOPACT_GLM_MODEL: ${{ inputs.glm_model || secrets.GOPACT_GLM_MODEL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache-dependency-path: "**/go.sum"
+
+      - name: Configure private core access
+        run: |
+          if [ -n "${GOPACT_GITHUB_TOKEN:-}" ]; then
+            git config --global url."https://x-access-token:${GOPACT_GITHUB_TOKEN}@github.com/gopact-ai/".insteadOf "https://github.com/gopact-ai/"
+          fi
+        env:
+          GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
+
+      - name: Check GLM integration configuration
+        run: |
+          if [ -z "${GOPACT_GLM_INTERNATIONAL_API_KEY:-}" ]; then
+            echo "::error::missing GOPACT_GLM_INTERNATIONAL_API_KEY or GLM_API_KEY secret"
+            exit 1
+          fi
+          if [ -z "${GOPACT_GLM_MODEL:-}" ]; then
+            echo "::error::missing glm_model workflow input or GOPACT_GLM_MODEL secret"
+            exit 1
+          fi
+
+      - name: Run GLM international integration
+        run: (cd models/glm && go test -tags=integration -count=1 -v ./... -run TestGLMIntegrationInternationalConformance)

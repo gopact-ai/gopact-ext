@@ -293,6 +293,7 @@ func TestSelfBootstrapMockSuiteIsExecutableAndUsedByCI(t *testing.T) {
 		"(cd devagent/workspace && go test -count=1 ./...)",
 		"(cd models/agnes && go test -count=1 ./...)",
 		"(cd models/ark && go test -count=1 ./...)",
+		"(cd models/glm && go test -count=1 ./...)",
 		"(cd models/openai && go test -count=1 ./...)",
 		"(cd tests/agents && go test -count=1 ./...)",
 	} {
@@ -332,6 +333,7 @@ func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 		"(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)",
 		"(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)",
 		"(cd models/agnes && go test -tags=integration -count=1 ./...)",
+		"(cd models/glm && go test -tags=integration -count=1 ./...)",
 		"(cd tests/agents && go test -tags=integration -count=1 ./...)",
 	} {
 		if !strings.Contains(readme, command) {
@@ -368,6 +370,34 @@ func TestRepositoryIntegrationCommandsRunInsideModules(t *testing.T) {
 	}
 }
 
+func TestProviderIntegrationWorkflowIsManualAndUsesGLMSecrets(t *testing.T) {
+	workflow := readRepoText(t, "../../.github/workflows/provider-integration.yml")
+
+	for _, want := range []string{
+		"workflow_dispatch:",
+		"glm_model:",
+		"(cd models/glm && go test -tags=integration -count=1 -v ./... -run TestGLMIntegrationInternationalConformance)",
+		"GOPACT_GLM_INTERNATIONAL_API_KEY: ${{ secrets.GOPACT_GLM_INTERNATIONAL_API_KEY || secrets.GLM_API_KEY }}",
+		"GOPACT_GLM_MODEL: ${{ inputs.glm_model || secrets.GOPACT_GLM_MODEL }}",
+		"missing GOPACT_GLM_INTERNATIONAL_API_KEY or GLM_API_KEY secret",
+		"missing glm_model workflow input or GOPACT_GLM_MODEL secret",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("provider integration workflow missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"pull_request:",
+		"push:",
+		"GOPACT_GLM_INTERNATIONAL_API_KEY=",
+		"GOPACT_GLM_MODEL=",
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Fatalf("provider integration workflow must not contain %q", forbidden)
+		}
+	}
+}
+
 func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
 	readme := readRepoText(t, "../../README.md")
 	envExample := readRepoText(t, "../../.env.example")
@@ -382,6 +412,12 @@ func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
 		"GOPACT_AGNES_HTTP_TIMEOUT",
 		"GOPACT_AGNES_MAX_ATTEMPTS",
 		"GOPACT_ARK_API_KEY",
+		"GOPACT_GLM_API_KEY",
+		"GLM_API_KEY",
+		"GOPACT_GLM_BASEURL",
+		"GOPACT_GLM_INTERNATIONAL_API_KEY",
+		"GOPACT_GLM_INTERNATIONAL_BASEURL",
+		"GOPACT_GLM_MODEL",
 		"GOPACT_OPENAI_API_KEY",
 	} {
 		if !strings.Contains(readme, key) {
@@ -413,6 +449,7 @@ func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 		"devagent/workspace",
 		"models/agnes",
 		"models/ark",
+		"models/glm",
 		"models/openai",
 		"tests/agents",
 	} {
@@ -425,9 +462,13 @@ func TestRepositoryModulesUseCurrentCoreSDK(t *testing.T) {
 
 func TestAgnesProviderUsesCurrentOpenAIExtension(t *testing.T) {
 	goMod := readRepoText(t, "../../models/agnes/go.mod")
+	glmGoMod := readRepoText(t, "../../models/glm/go.mod")
 	const currentOpenAIExtension = "github.com/gopact-ai/gopact-ext/models/openai v0.5.31"
 	if !strings.Contains(goMod, currentOpenAIExtension) {
 		t.Fatalf("models/agnes/go.mod must require %s", currentOpenAIExtension)
+	}
+	if !strings.Contains(glmGoMod, currentOpenAIExtension) {
+		t.Fatalf("models/glm/go.mod must require %s", currentOpenAIExtension)
 	}
 }
 
@@ -464,6 +505,7 @@ func TestRepositoryDocumentsCurrentExtensionTags(t *testing.T) {
 		"go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.31",
 		"go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.29",
 		"go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.32",
+		"go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.0",
 	} {
 		if !strings.Contains(readme, install) {
 			t.Fatalf("README missing install command %q", install)
@@ -486,6 +528,7 @@ func TestModuleReadmesDocumentCurrentExtensionTags(t *testing.T) {
 		"devagent/workspace/README.md":     "go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.10",
 		"models/agnes/README.md":           "go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.32",
 		"models/ark/README.md":             "go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.29",
+		"models/glm/README.md":             "go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.0",
 		"models/openai/README.md":          "go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.31",
 	} {
 		if !strings.Contains(readRepoText(t, "../../"+path), install) {
@@ -532,6 +575,8 @@ func TestFeatureCoverageMatrixDocumentsExtensionCapabilities(t *testing.T) {
 		{"OpenAI provider", "models/openai", "(cd models/openai && go test -count=1 ./...)", "(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)"},
 		{"Ark provider", "models/ark", "(cd models/ark && go test -count=1 ./...)", "(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)"},
 		{"Agnes provider", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
+		{"GLM provider China and international endpoints", "models/glm", "(cd models/glm && go test -count=1 ./...)", "(cd models/glm && go test -tags=integration -count=1 ./...)"},
+		{"GLM provider streaming and tool calling", "models/glm", "(cd models/glm && go test -count=1 ./...)", "(cd models/glm && go test -tags=integration -count=1 ./...)"},
 		{"Agnes provider streaming", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
 		{"Agnes provider tool calling", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
 		{"Agnes provider structured output", "models/agnes", "(cd models/agnes && go test -count=1 ./...)", "(cd models/agnes && go test -tags=integration -count=1 ./...)"},
