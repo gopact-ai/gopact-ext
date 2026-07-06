@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOPRIVATE: github.com/gopact-ai/*
-      GOPACT_GLM_INTERNATIONAL_API_KEY: ${{ secrets.GOPACT_GLM_INTERNATIONAL_API_KEY }}
+      GOPACT_GLM_INTERNATIONAL_API_KEY: ${{ secrets.GOPACT_GLM_INTERNATIONAL_API_KEY || secrets.GLM_API_KEY }}
       GOPACT_GLM_MODEL: ${{ inputs.glm_model || secrets.GOPACT_GLM_MODEL }}
     steps:
       - name: Checkout
@@ -36,5 +36,16 @@ jobs:
         env:
           GOPACT_GITHUB_TOKEN: ${{ secrets.GOPACT_GITHUB_TOKEN || github.token }}
 
+      - name: Check GLM integration configuration
+        run: |
+          if [ -z "${GOPACT_GLM_INTERNATIONAL_API_KEY:-}" ]; then
+            echo "::error::missing GOPACT_GLM_INTERNATIONAL_API_KEY or GLM_API_KEY secret"
+            exit 1
+          fi
+          if [ -z "${GOPACT_GLM_MODEL:-}" ]; then
+            echo "::error::missing glm_model workflow input or GOPACT_GLM_MODEL secret"
+            exit 1
+          fi
+
       - name: Run GLM international integration
-        run: (cd models/glm && go test -tags=integration -count=1 ./...)
+        run: (cd models/glm && go test -tags=integration -count=1 -v ./... -run TestGLMIntegrationInternationalConformance)

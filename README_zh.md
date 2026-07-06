@@ -125,6 +125,7 @@ GOPACT_AGNES_HTTP_TIMEOUT=90s
 GOPACT_AGNES_MAX_ATTEMPTS=2
 GOPACT_ARK_API_KEY=your-ark-api-key
 GOPACT_GLM_API_KEY=your-glm-api-key
+GLM_API_KEY=your-glm-api-key
 GOPACT_GLM_BASEURL=https://open.bigmodel.cn/api/paas/v4
 GOPACT_GLM_INTERNATIONAL_API_KEY=your-glm-international-api-key
 GOPACT_GLM_INTERNATIONAL_BASEURL=https://api.z.ai/api/coding/paas/v4
