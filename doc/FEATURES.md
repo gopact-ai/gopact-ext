@@ -33,6 +33,8 @@ This matrix is the executable capability contract for `gopact-ext`. CI runs mock
 | OpenAI provider | `models/openai` | `(cd models/openai && go test -count=1 ./...)` | `(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Ark provider | `models/ark` | `(cd models/ark && go test -count=1 ./...)` | `(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)` |
 | Agnes provider | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
+| GLM provider China and international endpoints | `models/glm` | `(cd models/glm && go test -count=1 ./...)` | `(cd models/glm && go test -tags=integration -count=1 ./...)` |
+| GLM provider streaming and tool calling | `models/glm` | `(cd models/glm && go test -count=1 ./...)` | `(cd models/glm && go test -tags=integration -count=1 ./...)` |
 | Agnes provider streaming | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes provider tool calling | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |
 | Agnes provider structured output | `models/agnes` | `(cd models/agnes && go test -count=1 ./...)` | `(cd models/agnes && go test -tags=integration -count=1 ./...)` |

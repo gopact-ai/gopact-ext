@@ -14,6 +14,7 @@ use (
 	./devagent/workspace
 	./models/agnes
 	./models/ark
+	./models/glm
 	./models/openai
 	./tests/agents
 )

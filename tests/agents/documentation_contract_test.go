@@ -112,6 +112,7 @@ func TestModuleReadmesExposeGoReferenceBadges(t *testing.T) {
 		"devagent/workspace",
 		"models/agnes",
 		"models/ark",
+		"models/glm",
 		"models/openai",
 	} {
 		readme := readRepoText(t, "../../"+module+"/README.md")
