@@ -50,6 +50,7 @@ Real provider tests are opt-in and require the `integration` build tag:
 Environment variables:
 
 - `GOPACT_GLM_API_KEY`: China Open Platform API key.
+- `GLM_API_KEY`: shared GLM API key alias, useful for repository secrets.
 - `GOPACT_GLM_BASEURL`: optional China endpoint override.
 - `GOPACT_GLM_INTERNATIONAL_API_KEY`: international Z.AI API key.
 - `GOPACT_GLM_INTERNATIONAL_BASEURL`: optional international endpoint override.

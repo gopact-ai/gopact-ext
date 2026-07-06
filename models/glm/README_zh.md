@@ -54,6 +54,7 @@ response, err := client.Generate(ctx, gopact.NewModelRequest(
 环境变量：
 
 - `GOPACT_GLM_API_KEY`：国内站 API key。
+- `GLM_API_KEY`：通用 GLM API key alias，适合复用仓库 secret。
 - `GOPACT_GLM_BASEURL`：可选国内站 endpoint override。
 - `GOPACT_GLM_INTERNATIONAL_API_KEY`：国际站 API key。
 - `GOPACT_GLM_INTERNATIONAL_BASEURL`：可选国际站 endpoint override。

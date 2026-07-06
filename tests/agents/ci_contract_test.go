@@ -376,9 +376,11 @@ func TestProviderIntegrationWorkflowIsManualAndUsesGLMSecrets(t *testing.T) {
 	for _, want := range []string{
 		"workflow_dispatch:",
 		"glm_model:",
-		"(cd models/glm && go test -tags=integration -count=1 ./...)",
-		"GOPACT_GLM_INTERNATIONAL_API_KEY: ${{ secrets.GOPACT_GLM_INTERNATIONAL_API_KEY }}",
+		"(cd models/glm && go test -tags=integration -count=1 -v ./... -run TestGLMIntegrationInternationalConformance)",
+		"GOPACT_GLM_INTERNATIONAL_API_KEY: ${{ secrets.GOPACT_GLM_INTERNATIONAL_API_KEY || secrets.GLM_API_KEY }}",
 		"GOPACT_GLM_MODEL: ${{ inputs.glm_model || secrets.GOPACT_GLM_MODEL }}",
+		"missing GOPACT_GLM_INTERNATIONAL_API_KEY or GLM_API_KEY secret",
+		"missing glm_model workflow input or GOPACT_GLM_MODEL secret",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("provider integration workflow missing %q", want)
@@ -411,6 +413,7 @@ func TestRepositoryEnvExampleDocumentsProviderCredentials(t *testing.T) {
 		"GOPACT_AGNES_MAX_ATTEMPTS",
 		"GOPACT_ARK_API_KEY",
 		"GOPACT_GLM_API_KEY",
+		"GLM_API_KEY",
 		"GOPACT_GLM_BASEURL",
 		"GOPACT_GLM_INTERNATIONAL_API_KEY",
 		"GOPACT_GLM_INTERNATIONAL_BASEURL",
