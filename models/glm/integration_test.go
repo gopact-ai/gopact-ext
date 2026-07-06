@@ -22,7 +22,7 @@ func TestGLMIntegrationChinaConformance(t *testing.T) {
 	apiKey := firstEnv("GOPACT_GLM_API_KEY", "GLM_API_KEY", "GOPACT_LLM_TOKEN")
 	model := firstEnv("GOPACT_GLM_MODEL", "GOPACT_LLM_MODEL")
 	if apiKey == "" || model == "" {
-		t.Skip("set GOPACT_GLM_API_KEY and GOPACT_GLM_MODEL")
+		t.Skip("set GOPACT_GLM_API_KEY, GLM_API_KEY, or GOPACT_LLM_TOKEN; and set GOPACT_GLM_MODEL or GOPACT_LLM_MODEL")
 	}
 
 	client, err := NewClient(
@@ -47,7 +47,7 @@ func TestGLMIntegrationInternationalConformance(t *testing.T) {
 	apiKey := firstEnv("GOPACT_GLM_INTERNATIONAL_API_KEY", "GLM_API_KEY", "GOPACT_GLM_API_KEY", "GOPACT_LLM_TOKEN")
 	model := firstEnv("GOPACT_GLM_MODEL", "GOPACT_LLM_MODEL")
 	if apiKey == "" || model == "" {
-		t.Skip("set GOPACT_GLM_INTERNATIONAL_API_KEY and GOPACT_GLM_MODEL")
+		t.Skip("set GOPACT_GLM_INTERNATIONAL_API_KEY, GLM_API_KEY, GOPACT_GLM_API_KEY, or GOPACT_LLM_TOKEN; and set GOPACT_GLM_MODEL or GOPACT_LLM_MODEL")
 	}
 
 	client, err := NewInternationalClient(
