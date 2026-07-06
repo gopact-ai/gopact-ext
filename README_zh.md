@@ -33,6 +33,7 @@
 | `models/openai` | OpenAI-shaped Chat Completions / Responses provider adapter。 | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.31` |
 | `models/ark` | Volcengine Ark SDK provider adapter，支持 API key 或 AK/SK。 | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.29` |
 | `models/agnes` | Agnes AI provider adapter，基于 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.32` |
+| `models/glm` | GLM/智谱 AI provider adapter，支持国内站和国际站 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.0` |
 
 Go submodule tag 使用模块路径前缀，例如 `models/openai/v0.5.31`。
 
@@ -103,6 +104,7 @@ cp .env.example .env
 (cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)
 (cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)
 (cd models/agnes && go test -tags=integration -count=1 ./...)
+(cd models/glm && go test -tags=integration -count=1 ./...)
 (cd tests/agents && go test -tags=integration -count=1 ./...)
 ```
 
@@ -122,10 +124,16 @@ GOPACT_AGNES_SK=your-agnes-token
 GOPACT_AGNES_HTTP_TIMEOUT=90s
 GOPACT_AGNES_MAX_ATTEMPTS=2
 GOPACT_ARK_API_KEY=your-ark-api-key
+GOPACT_GLM_API_KEY=your-glm-api-key
+GOPACT_GLM_BASEURL=https://open.bigmodel.cn/api/paas/v4
+GOPACT_GLM_INTERNATIONAL_API_KEY=your-glm-international-api-key
+GOPACT_GLM_INTERNATIONAL_BASEURL=https://api.z.ai/api/coding/paas/v4
+GOPACT_GLM_MODEL=your-glm-model
 GOPACT_OPENAI_API_KEY=your-openai-api-key
 ```
 
 Ark 的两条路径需要区分：`models/ark` 使用 Volcengine Ark SDK，可用 `APIKey` 或 AK/SK；如果某个 Ark endpoint 只是作为 OpenAI-compatible 服务测试，则应使用 `models/openai` 并把 token 放到 `GOPACT_LLM_TOKEN`。
+GLM/智谱的两条路径也需要区分：`models/glm` 的 `NewClient` 面向国内开放平台，`NewInternationalClient` 面向国际 Z.AI endpoint，真实测试只通过 env/secret 注入 key 和 model。
 
 ## 文档索引
 

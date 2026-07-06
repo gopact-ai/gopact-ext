@@ -30,6 +30,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 | `models/openai` | OpenAI-shaped Chat Completions and Responses provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.31` |
 | `models/ark` | Volcengine Ark SDK provider adapter with API-key and AK/SK paths. | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.29` |
 | `models/agnes` | Agnes AI OpenAI-compatible Chat Completions provider adapter. | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.32` |
+| `models/glm` | GLM/Zhipu AI OpenAI-compatible Chat Completions provider adapter for China and international endpoints. | `go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.0` |
 
 Submodule tags include the module path prefix, for example `models/openai/v0.5.31`.
 
@@ -100,6 +101,7 @@ cp .env.example .env
 (cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)
 (cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)
 (cd models/agnes && go test -tags=integration -count=1 ./...)
+(cd models/glm && go test -tags=integration -count=1 ./...)
 (cd tests/agents && go test -tags=integration -count=1 ./...)
 ```
 
@@ -119,10 +121,16 @@ GOPACT_AGNES_SK=your-agnes-token
 GOPACT_AGNES_HTTP_TIMEOUT=90s
 GOPACT_AGNES_MAX_ATTEMPTS=2
 GOPACT_ARK_API_KEY=your-ark-api-key
+GOPACT_GLM_API_KEY=your-glm-api-key
+GOPACT_GLM_BASEURL=https://open.bigmodel.cn/api/paas/v4
+GOPACT_GLM_INTERNATIONAL_API_KEY=your-glm-international-api-key
+GOPACT_GLM_INTERNATIONAL_BASEURL=https://api.z.ai/api/coding/paas/v4
+GOPACT_GLM_MODEL=your-glm-model
 GOPACT_OPENAI_API_KEY=your-openai-api-key
 ```
 
 Use `models/ark` when testing the Volcengine Ark SDK path. Use `models/openai` when an Ark endpoint is being exercised as an OpenAI-compatible service; in that case, the API key belongs in `GOPACT_LLM_TOKEN`.
+Use `models/glm` for GLM/Zhipu AI Chat Completions, selecting `NewClient` for the China Open Platform or `NewInternationalClient` for the international Z.AI endpoint.
 
 ## Documentation
 

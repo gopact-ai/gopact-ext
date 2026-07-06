@@ -16,5 +16,6 @@ cd "$(dirname "$0")/.."
 (cd devagent/workspace && go test -count=1 ./...)
 (cd models/agnes && go test -count=1 ./...)
 (cd models/ark && go test -count=1 ./...)
+(cd models/glm && go test -count=1 ./...)
 (cd models/openai && go test -count=1 ./...)
 (cd tests/agents && go test -count=1 ./...)
