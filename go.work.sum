@@ -9,7 +9,9 @@ github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b h1:VKtxabqXZkF25pY9ekf
 github.com/golang/mock v1.1.1 h1:G5FRp8JnTd7RQH5kemVNlMeyXQAztQ3mOWV95KxsXH8=
 github.com/golang/protobuf v1.5.0 h1:LUVKkCeviFUMKqHa4tXIIij/lbhnMbP7Fn5wKdKkRh4=
 github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.9/go.mod h1:WpJ/lk/Vh8yAlkA+Wyb7sBlQq6AF9YoAcjmTOL1NwBo=
-github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.1/go.mod h1:KQ+S4AXABukDgnbD5qVlwY/tJe3I8ujFwTXWOjv3ahU=
+github.com/gopact-ai/gopact-ext/devagent/filesnapshot v0.1.29/go.mod h1:p/V1HHf/rusZlEcJ3r6C79W+GqzqVwq2a1/bDfsWWd0=
+github.com/gopact-ai/gopact-ext/devagent/gitdiff v0.1.29/go.mod h1:wbPEB24EAeSQiNNHLhkqmHuNr0SptmmR4QyxFHVm7e4=
+github.com/gopact-ai/gopact-ext/devagent/selfbootstrap v0.1.10/go.mod h1:VmDQ8UEYVmZD9Vy4DeWPLeVL52esLcQIpDpGyn5ii2c=
 github.com/gopact-ai/gopact-ext/models/agnes v0.1.0/go.mod h1:A3MbSmVcac+QDigp+IFp7MYr4fNs/TpljrLGuDo+6rk=
 github.com/kr/pty v1.1.1 h1:VkoXIwSboBpnk99O/KFauAEILuNHv5DVFKZMBN/gUgw=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
