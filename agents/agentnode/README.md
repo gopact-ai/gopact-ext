@@ -8,7 +8,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `agentnode` adapts an A2A agent into a typed `graph.NodeFunc`. Use it when a workflow graph should delegate one step to a domain agent while preserving A2A child events in the parent graph event stream.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.12` and run `(cd agents/agentnode && go test -count=1 ./...)` before changing behavior.
+Install it with `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.13` and run `(cd agents/agentnode && go test -count=1 ./...)` before changing behavior.
 
 ```go
 node, err := agentnode.New(

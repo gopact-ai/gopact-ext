@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.33
+go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.34
 ```
 
 ## 用法

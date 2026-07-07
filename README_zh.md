@@ -33,7 +33,7 @@
 | `models/openai` | OpenAI-shaped Chat Completions / Responses provider adapter。 | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.31` |
 | `models/ark` | Volcengine Ark SDK provider adapter，支持 API key 或 AK/SK。 | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.29` |
 | `models/agnes` | Agnes AI provider adapter，基于 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.32` |
-| `models/glm` | GLM/智谱 AI provider adapter，支持国内站和国际站 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.0` |
+| `models/glm` | GLM/智谱 AI provider adapter，支持国内站和国际站 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.1` |
 
 Go submodule tag 使用模块路径前缀，例如 `models/openai/v0.5.31`。
 

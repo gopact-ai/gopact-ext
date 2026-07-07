@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.31
+go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.32
 ```
 
 ## 用法

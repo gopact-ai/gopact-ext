@@ -51,12 +51,12 @@ func (f RouterFunc) Route(ctx context.Context, request Request) (Route, error) {
 
 type Child struct {
 	Name     string
-	Runnable gopact.EventRunnable
+	Runnable gopact.EventStreamer
 }
 
 type Agent struct {
 	router   Router
-	children map[string]gopact.EventRunnable
+	children map[string]gopact.EventStreamer
 }
 
 var _ gopact.StateRunnable[State] = (*Agent)(nil)
@@ -65,7 +65,7 @@ func New(router Router, children ...Child) (*Agent, error) {
 	if router == nil {
 		return nil, ErrRouterRequired
 	}
-	agent := &Agent{router: router, children: make(map[string]gopact.EventRunnable, len(children))}
+	agent := &Agent{router: router, children: make(map[string]gopact.EventStreamer, len(children))}
 	for _, child := range children {
 		name := strings.TrimSpace(child.Name)
 		if name == "" {

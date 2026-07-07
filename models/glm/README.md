@@ -8,7 +8,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `models/glm` adapts GLM/Zhipu AI OpenAI-compatible Chat Completions APIs to the `gopact` model contract. It wraps `models/openai` with provider-specific defaults for the China Open Platform and the international Z.AI Coding Plan endpoint.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.0`.
+Install it with `go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.1`.
 
 ## Endpoints
 
