@@ -10,7 +10,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `selfbootstrap` coordinates a provider-neutral Dev Agent workflow: analyze, plan, policy-authorize a patch proposal, write, test, and review. Each stage is injected by the host, so the module does not call models, execute commands, apply patches, or read a workspace by itself. It records observed policy decision, command, CI gate, diff, file snapshot, review, run export, failure attribution, and verification report evidence.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.9`.
+Install it with `go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.10`.
 
 ```go
 workflow, err := selfbootstrap.New(

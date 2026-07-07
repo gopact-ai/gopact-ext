@@ -52,6 +52,33 @@ func TestAgentRoutesToSelectedChild(t *testing.T) {
 	}
 }
 
+func TestAgentInvokeReturnsTypedStateAndEmitsEvents(t *testing.T) {
+	agent, err := New(
+		RouterFunc(func(context.Context, Request) (Route, error) {
+			return Route{Agent: "coder", Input: "write code"}, nil
+		}),
+		Child{Name: "coder", Runnable: &recordingRunnable{}},
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var events []gopact.Event
+	output, err := agent.Invoke(context.Background(), State{Task: "ship example"}, gopact.WithEvents(gopact.EventSinkFunc(func(_ context.Context, event gopact.Event) error {
+		events = append(events, event)
+		return nil
+	})))
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if output.SelectedAgent != "coder" {
+		t.Fatalf("selected agent = %q, want coder", output.SelectedAgent)
+	}
+	if len(events) == 0 || events[len(events)-1].Type != gopact.EventRunCompleted {
+		t.Fatalf("sink events = %+v, want terminal completion", events)
+	}
+}
+
 func TestAgentFailsWhenChildFails(t *testing.T) {
 	childErr := errors.New("child failed")
 	agent, err := New(

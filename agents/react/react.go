@@ -94,6 +94,8 @@ type Agent struct {
 	verifier          VerificationFunc
 }
 
+var _ gopact.StateRunnable[State] = (*Agent)(nil)
+
 // Option configures an Agent.
 type Option func(*Agent) error
 
@@ -405,7 +407,7 @@ func WithModelOptions(opts ...gopact.ModelRequestOption) Option {
 	}
 }
 
-// Run implements gopact.Runnable.
+// Run implements gopact.EventRunnable.
 func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) iter.Seq2[gopact.Event, error] {
 	return func(yield func(gopact.Event, error) bool) {
 		if ctx == nil {
@@ -1267,6 +1269,28 @@ func inputState(input any) (State, error) {
 	default:
 		return State{}, fmt.Errorf("%w: got %T", ErrInvalidInput, input)
 	}
+}
+
+// Invoke runs the agent through the typed result-first API.
+func (a *Agent) Invoke(ctx context.Context, input State, opts ...gopact.RunOption) (State, error) {
+	var output State
+	cfg := gopact.ResolveRunOptions(opts...)
+	for event, err := range a.Run(ctx, input, opts...) {
+		if cfg.EventSink != nil {
+			if sinkErr := cfg.EventSink.Emit(ctx, event); sinkErr != nil {
+				return output, sinkErr
+			}
+		}
+		if snapshot := event.StepSnapshot; snapshot != nil {
+			if state, ok := snapshot.Output.(State); ok {
+				output = state
+			}
+		}
+		if err != nil {
+			return output, err
+		}
+	}
+	return output, nil
 }
 
 type eventOption func(*gopact.Event)

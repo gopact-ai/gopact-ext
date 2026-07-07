@@ -40,6 +40,35 @@ func TestAgentDirectFinalMatchesGoldenTrajectory(t *testing.T) {
 	}
 }
 
+func TestAgentInvokeReturnsTypedStateAndEmitsEvents(t *testing.T) {
+	model := &scriptedModel{
+		responses: []gopact.Message{
+			{Role: gopact.RoleAssistant, Content: "done"},
+		},
+	}
+	agent, err := New(model, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var events []gopact.Event
+	output, err := agent.Invoke(context.Background(), State{
+		Messages: []gopact.Message{{Role: gopact.RoleUser, Content: "hi"}},
+	}, gopact.WithEvents(gopact.EventSinkFunc(func(_ context.Context, event gopact.Event) error {
+		events = append(events, event)
+		return nil
+	})))
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(output.Messages) == 0 || output.Messages[len(output.Messages)-1].Content != "done" {
+		t.Fatalf("output messages = %+v, want final assistant message", output.Messages)
+	}
+	if len(events) == 0 || events[len(events)-1].Type != gopact.EventRunCompleted {
+		t.Fatalf("sink events = %+v, want terminal completion", events)
+	}
+}
+
 func TestNewModelAgentAdaptsResponseModelAndRegistersTools(t *testing.T) {
 	ctx := context.Background()
 	model := &scriptedResponseModel{

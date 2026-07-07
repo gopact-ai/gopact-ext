@@ -58,6 +58,35 @@ func TestAgentRunsPlanExecuteSummarize(t *testing.T) {
 	gopacttest.RequireGoldenTrajectoryFrames(t, "testdata/basic_run.golden.json", events)
 }
 
+func TestAgentInvokeReturnsTypedStateAndEmitsEvents(t *testing.T) {
+	agent, err := New(
+		PlannerFunc(func(_ context.Context, request PlanRequest) ([]Step, error) {
+			return []Step{{ID: "draft", Instruction: request.Task}}, nil
+		}),
+		ExecutorFunc(func(_ context.Context, step Step) (StepResult, error) {
+			return StepResult{StepID: step.ID, Output: "done"}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var events []gopact.Event
+	output, err := agent.Invoke(context.Background(), State{Task: "ship example"}, gopact.WithEvents(gopact.EventSinkFunc(func(_ context.Context, event gopact.Event) error {
+		events = append(events, event)
+		return nil
+	})))
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if output.Summary != "completed 1 steps" {
+		t.Fatalf("summary = %q, want completed 1 steps", output.Summary)
+	}
+	if len(events) == 0 || events[len(events)-1].Type != gopact.EventRunCompleted {
+		t.Fatalf("sink events = %+v, want terminal completion", events)
+	}
+}
+
 func TestNewModelAgentPlansAndExecutesWithModel(t *testing.T) {
 	model := &scriptedResponseModel{
 		responses: []gopact.ModelResponse{

@@ -13,7 +13,7 @@
 安装：
 
 ```bash
-go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.8
+go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.9
 ```
 
 用法：

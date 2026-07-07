@@ -10,4 +10,4 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `planexec` is a provider-neutral Plan-Execute template. It plans a task into steps, executes them, summarizes the result, and supports replan, approval interrupts, checkpoint resume, and cancellation propagation.
 
-Install it with `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.31`. Use `NewModelAgent` for model-backed planning/execution or `New` when you want to provide custom `Planner`, `Executor`, and `Replanner` implementations.
+Install it with `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.3.0`. Use `NewModelAgent` for model-backed planning/execution or `New` when you want to provide custom `Planner`, `Executor`, and `Replanner` implementations.

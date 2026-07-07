@@ -3,18 +3,18 @@ module github.com/gopact-ai/gopact-ext/tests/agents
 go 1.25.11
 
 require (
-	github.com/gopact-ai/gopact v0.0.55
-	github.com/gopact-ai/gopact-ext/agents/agentnode v0.1.11
-	github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.30
-	github.com/gopact-ai/gopact-ext/agents/humanreview v0.1.8
-	github.com/gopact-ai/gopact-ext/agents/planexec v0.2.31
-	github.com/gopact-ai/gopact-ext/agents/react v0.2.29
-	github.com/gopact-ai/gopact-ext/agents/supervisor v0.1.17
-	github.com/gopact-ai/gopact-ext/models/agnes v0.1.32
+	github.com/gopact-ai/gopact v0.0.56
+	github.com/gopact-ai/gopact-ext/agents/agentnode v0.1.12
+	github.com/gopact-ai/gopact-ext/agents/agenttool v0.1.31
+	github.com/gopact-ai/gopact-ext/agents/humanreview v0.1.9
+	github.com/gopact-ai/gopact-ext/agents/planexec v0.3.0
+	github.com/gopact-ai/gopact-ext/agents/react v0.3.0
+	github.com/gopact-ai/gopact-ext/agents/supervisor v0.2.0
+	github.com/gopact-ai/gopact-ext/models/agnes v0.1.33
 	golang.org/x/mod v0.37.0
 )
 
-require github.com/gopact-ai/gopact-ext/models/openai v0.5.31 // indirect
+require github.com/gopact-ai/gopact-ext/models/openai v0.5.32 // indirect
 
 replace (
 	github.com/gopact-ai/gopact-ext/agents/agentnode => ../../agents/agentnode

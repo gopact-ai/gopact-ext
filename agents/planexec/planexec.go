@@ -105,6 +105,8 @@ type Agent struct {
 	replanner        Replanner
 }
 
+var _ gopact.StateRunnable[State] = (*Agent)(nil)
+
 // Option configures a plan-execute agent.
 type Option func(*Agent) error
 
@@ -428,6 +430,28 @@ func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) it
 			}
 		}
 	}
+}
+
+// Invoke runs the agent through the typed result-first API.
+func (a *Agent) Invoke(ctx context.Context, input State, opts ...gopact.RunOption) (State, error) {
+	var output State
+	cfg := gopact.ResolveRunOptions(opts...)
+	for event, err := range a.Run(ctx, input, opts...) {
+		if cfg.EventSink != nil {
+			if sinkErr := cfg.EventSink.Emit(ctx, event); sinkErr != nil {
+				return output, sinkErr
+			}
+		}
+		if snapshot := event.StepSnapshot; snapshot != nil {
+			if state, ok := snapshot.Output.(State); ok {
+				output = state
+			}
+		}
+		if err != nil {
+			return output, err
+		}
+	}
+	return output, nil
 }
 
 func inputState(input any) (State, error) {
