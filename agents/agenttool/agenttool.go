@@ -1,369 +1,190 @@
-// Package agenttool adapts A2A agents into ordinary gopact tools.
+// Package agenttool adapts one Agent into a Run-aware tool.
 package agenttool
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/gopact-ai/gopact"
-	"github.com/gopact-ai/gopact/a2a"
+	"github.com/gopact-ai/gopact-ext/agents/internal/contract"
+	"github.com/gopact-ai/gopact/agent"
 )
 
-const (
-	metadataAgentName  = "agent_name"
-	metadataAgentURL   = "agent_url"
-	metadataA2ATaskID  = "a2a_task_id"
-	metadataA2AStatus  = "a2a_status"
-	metadataA2AMessage = "a2a_message"
-)
-
-var (
-	// ErrAgentRequired is returned when no child agent is supplied.
-	ErrAgentRequired = errors.New("agenttool: agent is required")
-	// ErrToolNameRequired is returned when neither the agent card nor options provide a tool name.
-	ErrToolNameRequired = errors.New("agenttool: tool name is required")
-	// ErrInputRequired is returned when a tool invocation has no task input.
-	ErrInputRequired = errors.New("agenttool: input is required")
-)
-
-// Option configures an agent-backed tool.
-type Option func(*config)
-
-type config struct {
-	name        string
-	description string
+// Adapter maps the tool and Agent protocol boundaries.
+// Input must be deterministic and side-effect-free because durable resume replays it.
+type Adapter interface {
+	Input(context.Context, gopact.ToolCall) (agent.Request, error)
+	Output(context.Context, agent.Response) (gopact.ToolResult, error)
 }
 
-// WithName overrides the tool name derived from the agent card.
-func WithName(name string) Option {
-	return func(cfg *config) {
-		cfg.name = strings.TrimSpace(name)
-	}
+// AdapterFuncs adapts two functions into an Adapter.
+type AdapterFuncs struct {
+	InputFunc  func(context.Context, gopact.ToolCall) (agent.Request, error)
+	OutputFunc func(context.Context, agent.Response) (gopact.ToolResult, error)
 }
 
-// WithDescription overrides the tool description derived from the agent card.
-func WithDescription(description string) Option {
-	return func(cfg *config) {
-		cfg.description = description
-	}
+func (adapter AdapterFuncs) validate() error {
+	return contract.New("agenttool").
+		Present("input adapter", adapter.InputFunc).
+		Present("output adapter", adapter.OutputFunc).
+		Err()
 }
 
-// New returns a gopact tool that delegates invocations to an A2A agent.
-func New(agent a2a.Agent, opts ...Option) (gopact.ToolFunc, error) {
-	if agent == nil {
-		return gopact.ToolFunc{}, ErrAgentRequired
+// Input maps one tool call into a child Agent request.
+func (adapter AdapterFuncs) Input(ctx context.Context, call gopact.ToolCall) (agent.Request, error) {
+	if adapter.InputFunc == nil {
+		return agent.Request{}, errors.New("agenttool: input adapter is nil")
 	}
-	card := agent.Card()
-	cfg := config{
-		name:        strings.TrimSpace(card.Name),
-		description: card.Description,
+	request, err := adapter.InputFunc(ctx, cloneToolCall(call))
+	return cloneRequest(request), err
+}
+
+// Output maps one child Agent response into a tool result.
+func (adapter AdapterFuncs) Output(ctx context.Context, response agent.Response) (gopact.ToolResult, error) {
+	if adapter.OutputFunc == nil {
+		return gopact.ToolResult{}, errors.New("agenttool: output adapter is nil")
 	}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
+	result, err := adapter.OutputFunc(ctx, cloneResponse(response))
+	return cloneToolResult(result), err
+}
+
+// Tool exposes one child Agent through a typed Workflow boundary.
+type Tool struct {
+	spec    gopact.ToolSpec
+	child   agent.Agent
+	adapter Adapter
+}
+
+var _ agent.InvokableTool = (*Tool)(nil)
+
+// New creates an immutable Agent-backed Tool.
+func New(spec gopact.ToolSpec, child agent.Agent, adapter Adapter) (*Tool, error) {
+	spec = cloneToolSpec(spec)
+	if err := contract.New("agenttool").
+		Required("tool name", spec.Name).
+		OptionalJSON("tool schema", spec.Schema).
+		Present("child", child).
+		Present("adapter", adapter).
+		Err(); err != nil {
+		return nil, err
+	}
+	if validated, ok := adapter.(interface{ validate() error }); ok {
+		if err := validated.validate(); err != nil {
+			return nil, err
 		}
 	}
-	if cfg.name == "" {
-		return gopact.ToolFunc{}, ErrToolNameRequired
+	if err := contract.New("agenttool").Identity("child", child.Identity()).Err(); err != nil {
+		return nil, err
 	}
-
-	spec := gopact.ObjectToolSpec(
-		cfg.name,
-		cfg.description,
-		gopact.RequiredStringField("input", "Task input for the child agent."),
-		gopact.ToolField{
-			Name:   "task_id",
-			Schema: gopact.JSONSchema{"type": "string", "description": "Optional child task id."},
-		},
-		gopact.ToolField{
-			Name:   "metadata",
-			Schema: gopact.JSONSchema{"type": "object", "description": "Optional metadata passed to the child task."},
-		},
-	)
-	return gopact.ToolFunc{
-		SpecValue: spec,
-		InvokeFunc: func(ctx context.Context, raw json.RawMessage) (gopact.ToolResult, error) {
-			return invoke(ctx, agent, card, raw)
-		},
-	}, nil
+	return &Tool{spec: spec, child: child, adapter: adapter}, nil
 }
 
-type toolInput struct {
-	Input    string         `json:"input"`
-	TaskID   string         `json:"task_id,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+// Spec returns an independent model-visible tool contract.
+func (tool *Tool) Spec() gopact.ToolSpec {
+	if tool == nil {
+		return gopact.ToolSpec{}
+	}
+	return cloneToolSpec(tool.spec)
 }
 
-func invoke(ctx context.Context, agent a2a.Agent, card a2a.AgentCard, raw json.RawMessage) (gopact.ToolResult, error) {
-	input, err := decodeInput(raw)
+// Invoke maps one tool call to the child Agent and forwards Workflow child options.
+func (tool *Tool) Invoke(ctx context.Context, call gopact.ToolCall, options ...gopact.RunOption) (gopact.ToolOutcome, error) {
+	if tool == nil {
+		return nil, errors.New("agenttool: tool is nil")
+	}
+	if err := tool.validateCall(call); err != nil {
+		return nil, err
+	}
+	request, err := tool.adapter.Input(ctx, cloneToolCall(call))
 	if err != nil {
-		return gopact.ToolResult{}, err
+		return nil, fmt.Errorf("agenttool: adapt input: %w", err)
 	}
-	if ctx == nil {
-		ctx = context.TODO()
-	}
-	if err := ctx.Err(); err != nil {
-		return gopact.ToolResult{}, err
-	}
-	ids, _ := gopact.RuntimeIDsFromContext(ctx)
-	task := a2a.Task{
-		ID:       input.TaskID,
-		IDs:      ids,
-		Input:    input.Input,
-		Metadata: copyAnyMap(input.Metadata),
-	}
-	if task.ID == "" {
-		task.ID = fallbackTaskID(ids)
-	}
-
-	streamer, ok := agent.(a2a.StreamingAgent)
-	if ok {
-		return invokeStreaming(ctx, streamer, card, task)
-	}
-	return invokeSend(ctx, agent, card, task)
-}
-
-func decodeInput(raw json.RawMessage) (toolInput, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return toolInput{}, ErrInputRequired
-	}
-	if raw[0] == '"' {
-		var input string
-		if err := json.Unmarshal(raw, &input); err != nil {
-			return toolInput{}, fmt.Errorf("agenttool: decode input: %w", err)
-		}
-		if input == "" {
-			return toolInput{}, ErrInputRequired
-		}
-		return toolInput{Input: input}, nil
-	}
-
-	var input toolInput
-	if err := json.Unmarshal(raw, &input); err != nil {
-		return toolInput{}, fmt.Errorf("agenttool: decode input: %w", err)
-	}
-	if input.Input == "" {
-		return toolInput{}, ErrInputRequired
-	}
-	input.TaskID = strings.TrimSpace(input.TaskID)
-	return input, nil
-}
-
-func invokeStreaming(
-	ctx context.Context,
-	agent a2a.StreamingAgent,
-	card a2a.AgentCard,
-	task a2a.Task,
-) (gopact.ToolResult, error) {
-	var out gopact.ToolResult
-	for taskEvent, err := range agent.Stream(ctx, task) {
-		taskEvent = taskEvent.WithDefaults(task)
-		if err != nil && taskEvent.Err == nil {
-			taskEvent.Err = err
-		}
-		mergeTaskEvent(&out, taskEvent, card)
-		if err != nil {
-			return finalizeResult(out, card), err
-		}
-		if taskEvent.Err != nil {
-			return finalizeResult(out, card), taskEvent.Err
-		}
-	}
-	return finalizeResult(out, card), nil
-}
-
-func invokeSend(ctx context.Context, agent a2a.Agent, card a2a.AgentCard, task a2a.Task) (gopact.ToolResult, error) {
-	result, err := agent.Send(ctx, task)
-	out := toolResultFromTaskResult(result, card)
-	event := a2a.TaskEvent{
-		TaskID:    result.TaskID,
-		IDs:       task.IDs,
-		Status:    a2a.TaskStatusCompleted,
-		Result:    &result,
-		Artifacts: result.Artifacts,
-	}
-	if event.TaskID == "" {
-		event.TaskID = task.ID
-	}
+	response, err := tool.child.Invoke(ctx, cloneRequest(request), options...)
 	if err != nil {
-		event.Status = a2a.TaskStatusFailed
-		event.Err = err
+		return nil, fmt.Errorf("agenttool: invoke child: %w", err)
 	}
-	out.Events = append(out.Events, taskEventRuntimeEvent(event.WithDefaults(task), card))
-	return finalizeResult(out, card), err
+	result, err := tool.adapter.Output(ctx, cloneResponse(response))
+	if err != nil {
+		return nil, fmt.Errorf("agenttool: adapt output: %w", err)
+	}
+	return gopact.ToolResultOutcome{CallID: call.ID, Name: call.Name, Result: cloneToolResult(result)}, nil
 }
 
-func mergeTaskEvent(out *gopact.ToolResult, event a2a.TaskEvent, card a2a.AgentCard) {
-	out.Events = append(out.Events, taskEventRuntimeEvent(event, card))
-	out.Artifacts = append(out.Artifacts, copyArtifactRefs(event.Artifacts)...)
-	if event.Message != "" {
-		out.Content = event.Message
+func (tool *Tool) validateCall(call gopact.ToolCall) error {
+	if err := contract.New("agenttool").
+		Required("tool call id", call.ID).
+		Required("tool call name", call.Name).
+		OptionalJSON("tool call arguments", call.Arguments).
+		Err(); err != nil {
+		return err
 	}
-	if event.Result != nil {
-		mergeTaskResult(out, *event.Result, card)
+	if call.Name != tool.spec.Name {
+		return fmt.Errorf("agenttool: call name %q does not match tool %q", call.Name, tool.spec.Name)
 	}
+	return nil
 }
 
-func mergeTaskResult(out *gopact.ToolResult, result a2a.Result, card a2a.AgentCard) {
-	if result.Output != "" {
-		out.Content = result.Output
-	}
-	out.Artifacts = append(out.Artifacts, copyArtifactRefs(result.Artifacts)...)
-	out.Metadata = mergeMetadata(out.Metadata, result.Metadata, card)
+func cloneToolCall(call gopact.ToolCall) gopact.ToolCall {
+	call.Arguments = append([]byte(nil), call.Arguments...)
+	return call
 }
 
-func toolResultFromTaskResult(result a2a.Result, card a2a.AgentCard) gopact.ToolResult {
-	return gopact.ToolResult{
-		Content:   result.Output,
-		Artifacts: copyArtifactRefs(result.Artifacts),
-		Metadata:  mergeMetadata(nil, result.Metadata, card),
-	}
+func cloneToolSpec(spec gopact.ToolSpec) gopact.ToolSpec {
+	spec.Schema = append([]byte(nil), spec.Schema...)
+	spec.Metadata = cloneStringMap(spec.Metadata)
+	return spec
 }
 
-func finalizeResult(result gopact.ToolResult, card a2a.AgentCard) gopact.ToolResult {
-	result.Artifacts = dedupeArtifactRefs(result.Artifacts)
-	result.Metadata = mergeMetadata(result.Metadata, nil, card)
+func cloneToolResult(result gopact.ToolResult) gopact.ToolResult {
+	result.ArtifactRefs = append([]gopact.ArtifactRef(nil), result.ArtifactRefs...)
+	result.EffectRefs = append([]gopact.ArtifactRef(nil), result.EffectRefs...)
 	return result
 }
 
-func taskEventRuntimeEvent(event a2a.TaskEvent, card a2a.AgentCard) gopact.Event {
-	metadata := mergeMetadata(event.Metadata, nil, card)
-	if event.TaskID != "" {
-		metadata[metadataA2ATaskID] = event.TaskID
-	}
-	if event.Status != "" {
-		metadata[metadataA2AStatus] = string(event.Status)
-	}
-	if event.Message != "" {
-		metadata[metadataA2AMessage] = event.Message
-	}
-
-	artifacts := copyArtifactRefs(event.Artifacts)
-	var result *gopact.ToolResult
-	if event.Result != nil {
-		child := *event.Result
-		artifacts = append(artifacts, copyArtifactRefs(child.Artifacts)...)
-		result = &gopact.ToolResult{
-			Content:   child.Output,
-			Artifacts: copyArtifactRefs(child.Artifacts),
-			Metadata:  mergeMetadata(nil, child.Metadata, card),
-		}
-	}
-	artifacts = dedupeArtifactRefs(artifacts)
-
-	var message *gopact.Message
-	if event.Message != "" {
-		msg := gopact.AssistantMessage(event.Message)
-		message = &msg
-	}
-
-	return gopact.Event{
-		Type:      taskEventType(event),
-		IDs:       event.IDs,
-		Message:   message,
-		Result:    result,
-		Artifacts: artifacts,
-		Metadata:  metadata,
-		Err:       event.Err,
-	}.WithRuntimeDefaults(event.IDs)
+func cloneRequest(request agent.Request) agent.Request {
+	request.Messages = cloneMessages(request.Messages)
+	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
+	request.Metadata = cloneStringMap(request.Metadata)
+	return request
 }
 
-func taskEventType(event a2a.TaskEvent) gopact.EventType {
-	switch event.Status {
-	case a2a.TaskStatusCompleted:
-		return gopact.EventA2ATaskCompleted
-	case a2a.TaskStatusFailed:
-		return gopact.EventA2ATaskFailed
-	case a2a.TaskStatusCanceled:
-		return gopact.EventA2ATaskCanceled
-	case a2a.TaskStatusSubmitted, a2a.TaskStatusRunning:
-		return gopact.EventA2ATaskStatusUpdated
-	}
-	if event.Err != nil {
-		return gopact.EventA2ATaskFailed
-	}
-	if event.Result != nil {
-		return gopact.EventA2ATaskCompleted
-	}
-	if len(event.Artifacts) > 0 {
-		return gopact.EventA2AArtifactUpdated
-	}
-	if event.Message != "" {
-		return gopact.EventA2AMessageReceived
-	}
-	return gopact.EventA2ATaskStatusUpdated
+func cloneResponse(response agent.Response) agent.Response {
+	response.Message = cloneMessage(response.Message)
+	response.Artifacts = append([]gopact.ArtifactRef(nil), response.Artifacts...)
+	response.Metadata = cloneStringMap(response.Metadata)
+	return response
 }
 
-func mergeMetadata(dst map[string]any, src map[string]any, card a2a.AgentCard) map[string]any {
-	out := copyAnyMap(dst)
-	if out == nil {
-		out = make(map[string]any)
-	}
-	for key, value := range src {
-		out[key] = value
-	}
-	if card.Name != "" {
-		out[metadataAgentName] = card.Name
-	}
-	if card.URL != "" {
-		out[metadataAgentURL] = card.URL
-	}
-	return out
-}
-
-func copyAnyMap(in map[string]any) map[string]any {
-	if len(in) == 0 {
+func cloneMessages(messages []gopact.Message) []gopact.Message {
+	if messages == nil {
 		return nil
 	}
-	out := make(map[string]any, len(in))
-	for key, value := range in {
-		out[key] = value
+	cloned := make([]gopact.Message, len(messages))
+	for index, message := range messages {
+		cloned[index] = cloneMessage(message)
 	}
-	return out
+	return cloned
 }
 
-func copyArtifactRefs(in []gopact.ArtifactRef) []gopact.ArtifactRef {
-	if len(in) == 0 {
+func cloneMessage(message gopact.Message) gopact.Message {
+	message.Parts = append([]gopact.MessagePart(nil), message.Parts...)
+	for index := range message.Parts {
+		if message.Parts[index].Ref != nil {
+			ref := *message.Parts[index].Ref
+			message.Parts[index].Ref = &ref
+		}
+	}
+	return message
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
 		return nil
 	}
-	out := make([]gopact.ArtifactRef, len(in))
-	copy(out, in)
-	for i := range out {
-		out[i].Metadata = copyAnyMap(out[i].Metadata)
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
 	}
-	return out
-}
-
-func dedupeArtifactRefs(in []gopact.ArtifactRef) []gopact.ArtifactRef {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]gopact.ArtifactRef, 0, len(in))
-	seen := make(map[string]struct{}, len(in))
-	for _, ref := range in {
-		key := ref.ID
-		if key == "" {
-			key = ref.URI
-		}
-		if key != "" {
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-		}
-		out = append(out, ref)
-	}
-	return out
-}
-
-func fallbackTaskID(ids gopact.RuntimeIDs) string {
-	if ids.CallID != "" {
-		return ids.CallID
-	}
-	return ids.RunID
+	return cloned
 }

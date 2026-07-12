@@ -1,466 +1,499 @@
-// Package planexec provides a minimal plan-execute agent template.
+// Package planexec provides plan, execute, replan, and report orchestration.
 package planexec
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
-	"strings"
 
 	"github.com/gopact-ai/gopact"
-	"github.com/gopact-ai/gopact/graph"
+	"github.com/gopact-ai/gopact-ext/agents/internal/contract"
+	"github.com/gopact-ai/gopact/agent"
+	"github.com/gopact-ai/gopact/workflow"
 )
+
+const defaultMaxTransitions = 32
+
+// StepStatus is the typed status of one plan step.
+type StepStatus string
+
+const (
+	StepPending   StepStatus = "pending"
+	StepCompleted StepStatus = "completed"
+)
+
+// Step is one executable plan item.
+type Step struct {
+	ID          string     `json:"id"`
+	Description string     `json:"description"`
+	AgentName   string     `json:"agent_name"`
+	Status      StepStatus `json:"status"`
+}
+
+// Plan is a versioned ordered execution plan.
+type Plan struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+	Steps   []Step `json:"steps"`
+}
+
+// StepResult is the result of one completed step.
+type StepResult struct {
+	Step     Step           `json:"step"`
+	Response agent.Response `json:"response"`
+}
+
+// PlanInput is passed to a Planner.
+type PlanInput struct {
+	Request  agent.Request
+	Previous *Plan
+	Results  []StepResult
+}
+
+// ReplanInput is passed to a Replanner after a step completes.
+type ReplanInput struct {
+	Request agent.Request
+	Plan    Plan
+	Results []StepResult
+}
+
+// ReplanDecision controls the next plan transition.
+type ReplanDecision struct {
+	Done   bool
+	Plan   *Plan
+	Reason string
+}
+
+// ReportInput is passed to the final Reporter.
+type ReportInput struct {
+	Request agent.Request
+	Plan    Plan
+	Results []StepResult
+}
+
+// Planner creates the initial typed plan.
+type Planner interface {
+	Plan(context.Context, PlanInput) (Plan, error)
+}
+
+// PlannerFunc adapts a planner function.
+type PlannerFunc func(context.Context, PlanInput) (Plan, error)
+
+func (planner PlannerFunc) Plan(ctx context.Context, input PlanInput) (Plan, error) {
+	if planner == nil {
+		return Plan{}, errors.New("planexec: planner is nil")
+	}
+	return planner(ctx, clonePlanInput(input))
+}
+
+// Replanner evaluates progress and may replace the remaining plan.
+type Replanner interface {
+	Replan(context.Context, ReplanInput) (ReplanDecision, error)
+}
+
+// ReplannerFunc adapts a replanner function.
+type ReplannerFunc func(context.Context, ReplanInput) (ReplanDecision, error)
+
+func (replanner ReplannerFunc) Replan(ctx context.Context, input ReplanInput) (ReplanDecision, error) {
+	if replanner == nil {
+		return ReplanDecision{}, errors.New("planexec: replanner is nil")
+	}
+	return replanner(ctx, cloneReplanInput(input))
+}
+
+// Reporter produces the final business response.
+type Reporter interface {
+	Report(context.Context, ReportInput) (agent.Response, error)
+}
+
+// ReporterFunc adapts a reporter function.
+type ReporterFunc func(context.Context, ReportInput) (agent.Response, error)
+
+func (reporter ReporterFunc) Report(ctx context.Context, input ReportInput) (agent.Response, error) {
+	if reporter == nil {
+		return agent.Response{}, errors.New("planexec: reporter is nil")
+	}
+	return reporter(ctx, cloneReportInput(input))
+}
+
+// Option configures an Agent during construction.
+type Option interface{ apply(*config) }
+type optionFunc func(*config)
+
+func (option optionFunc) apply(config *config) { option(config) }
+
+type config struct {
+	directory      *agent.Directory
+	planner        Planner
+	replanner      Replanner
+	reporter       Reporter
+	maxTransitions int
+	validation     *contract.Validator
+}
+
+func WithDirectory(directory *agent.Directory) Option {
+	return optionFunc(func(config *config) { config.directory = directory })
+}
+
+func WithPlanner(planner Planner) Option {
+	return optionFunc(func(config *config) { config.planner = planner })
+}
+
+func WithReplanner(replanner Replanner) Option {
+	return optionFunc(func(config *config) { config.replanner = replanner })
+}
+
+func WithReporter(reporter Reporter) Option {
+	return optionFunc(func(config *config) { config.reporter = reporter })
+}
+
+func WithMaxTransitions(limit int) Option {
+	return optionFunc(func(config *config) {
+		config.maxTransitions = limit
+		config.validation.Positive("max transitions", limit)
+	})
+}
+
+// State is the Agent-domain plan execution context.
+type State struct {
+	Request       agent.Request
+	Plan          Plan
+	Next          int
+	Transitions   int
+	Results       []StepResult
+	ReadyToReport bool
+}
+
+type control struct{ Report bool }
+type stepInvocation struct {
+	Step    Step
+	Request agent.Request
+}
+type replanResult struct{ Decision ReplanDecision }
+
+// Agent executes a typed plan through one Workflow.
+type Agent struct{ workflow *agent.WorkflowAgent }
+
+var _ agent.Agent = (*Agent)(nil)
 
 var (
-	ErrPlannerRequired   = errors.New("planexec: planner is required")
-	ErrExecutorRequired  = errors.New("planexec: executor is required")
-	ErrReplannerRequired = errors.New("planexec: replanner is required")
-	ErrInvalidInput      = errors.New("planexec: invalid input")
-	// ErrModelRequired reports a missing model for NewModelAgent.
-	ErrModelRequired = errors.New("planexec: model is required")
-	// ErrModelPlanEmpty reports a model plan response without executable steps.
-	ErrModelPlanEmpty = errors.New("planexec: model returned no plan steps")
-	// ErrApprovalPolicyRequired reports a missing approval policy.
-	ErrApprovalPolicyRequired = errors.New("planexec: approval policy is required")
-	// ErrCheckpointRequired reports a missing checkpoint store.
-	ErrCheckpointRequired = errors.New("planexec: checkpoint store is required")
+	ErrPlanExhausted   = errors.New("planexec: plan exhausted without completion")
+	ErrTransitionLimit = errors.New("transition limit reached")
 )
 
-type State struct {
-	Task    string
-	Steps   []Step
-	Results []StepResult
-	Trace   []string
-	Summary string
-}
-
-type Step struct {
-	ID          string
-	Instruction string
-}
-
-type StepResult struct {
-	StepID string
-	Output string
-}
-
-type PlanRequest struct {
-	Task string
-}
-
-type ReplanRequest struct {
-	Task       string
-	Steps      []Step
-	Results    []StepResult
-	FailedStep Step
-	Err        error
-}
-
-type Planner interface {
-	Plan(context.Context, PlanRequest) ([]Step, error)
-}
-
-type PlannerFunc func(context.Context, PlanRequest) ([]Step, error)
-
-func (f PlannerFunc) Plan(ctx context.Context, request PlanRequest) ([]Step, error) {
-	if f == nil {
-		return nil, ErrPlannerRequired
+// New creates a plan-execute Agent from functional options.
+func New(identity agent.Identity, options ...Option) (*Agent, error) {
+	configuration := config{
+		maxTransitions: defaultMaxTransitions, validation: contract.New("planexec").Identity("agent", identity),
 	}
-	return f(ctx, request)
-}
-
-type Executor interface {
-	Execute(context.Context, Step) (StepResult, error)
-}
-
-type ExecutorFunc func(context.Context, Step) (StepResult, error)
-
-func (f ExecutorFunc) Execute(ctx context.Context, step Step) (StepResult, error) {
-	if f == nil {
-		return StepResult{}, ErrExecutorRequired
-	}
-	return f(ctx, step)
-}
-
-type Replanner interface {
-	Replan(context.Context, ReplanRequest) ([]Step, error)
-}
-
-type ReplannerFunc func(context.Context, ReplanRequest) ([]Step, error)
-
-func (f ReplannerFunc) Replan(ctx context.Context, request ReplanRequest) ([]Step, error) {
-	if f == nil {
-		return nil, ErrReplannerRequired
-	}
-	return f(ctx, request)
-}
-
-type Agent struct {
-	runnable         *graph.Runnable[State]
-	approval         gopact.Policy
-	checkpointer     graph.Checkpointer[State]
-	checkpointLoader graph.CheckpointLoader[State]
-	modelOptions     []gopact.ModelRequestOption
-	replanner        Replanner
-}
-
-var _ gopact.StateRunnable[State] = (*Agent)(nil)
-
-// Option configures a plan-execute agent.
-type Option func(*Agent) error
-
-// WithApprovalPolicy requires approval before executing planned steps.
-func WithApprovalPolicy(policy gopact.Policy) Option {
-	return func(agent *Agent) error {
-		if policy == nil {
-			return ErrApprovalPolicyRequired
-		}
-		agent.approval = policy
-		return nil
-	}
-}
-
-// WithCheckpointStore writes checkpoints and resumes from the latest checkpoint for the run ThreadID.
-func WithCheckpointStore(store graph.CheckpointStore[State]) Option {
-	return func(agent *Agent) error {
-		if store == nil {
-			return ErrCheckpointRequired
-		}
-		agent.checkpointer = store
-		agent.checkpointLoader = store
-		return nil
-	}
-}
-
-// WithModelOptions applies request options to every model-backed planner and executor call.
-func WithModelOptions(opts ...gopact.ModelRequestOption) Option {
-	return func(agent *Agent) error {
-		for _, opt := range opts {
-			if opt != nil {
-				agent.modelOptions = append(agent.modelOptions, opt)
-			}
-		}
-		return nil
-	}
-}
-
-// WithReplanner retries execution once with a replacement plan after an execution failure.
-func WithReplanner(replanner Replanner) Option {
-	return func(agent *Agent) error {
-		if replanner == nil {
-			return ErrReplannerRequired
-		}
-		agent.replanner = replanner
-		return nil
-	}
-}
-
-func New(planner Planner, executor Executor, opts ...Option) (*Agent, error) {
-	if planner == nil {
-		return nil, ErrPlannerRequired
-	}
-	if executor == nil {
-		return nil, ErrExecutorRequired
-	}
-	agent := &Agent{}
-	for _, opt := range opts {
-		if opt == nil {
-			continue
-		}
-		if err := opt(agent); err != nil {
-			return nil, err
+	for _, option := range options {
+		if option != nil {
+			option.apply(&configuration)
 		}
 	}
-
-	g := graph.New[State]()
-	g.AddNode("plan", func(ctx context.Context, state State) (State, error) {
-		steps, err := planner.Plan(ctx, PlanRequest{Task: state.Task})
-		if err != nil {
-			return state, err
-		}
-		state.Steps = append([]Step(nil), steps...)
-		state.Trace = append(state.Trace, "plan")
-		return state, nil
-	})
-	if agent.approval != nil {
-		g.AddNode("approval", func(ctx context.Context, state State) (State, error) {
-			ids, _ := gopact.RuntimeIDsFromContext(ctx)
-			req := gopact.PolicyRequest{
-				IDs:      ids,
-				Boundary: gopact.PolicyBoundaryNode,
-				Action:   gopact.PolicyActionExec,
-				Input:    state,
-				Metadata: map[string]any{
-					"template": "planexec",
-					"node":     "execute",
-				},
-			}
-			decision, err := agent.approval.Decide(ctx, req)
-			if err != nil {
-				return state, fmt.Errorf("planexec: approval policy: %w", err)
-			}
-			switch decision.Action {
-			case gopact.PolicyAllow:
-				state.Trace = append(state.Trace, "approval")
-				return state, nil
-			case gopact.PolicyReview:
-				return state, gopact.Interrupt(gopact.InterruptRecord{
-					ID:         "planexec:approval",
-					Type:       gopact.InterruptApproval,
-					Reason:     decision.Reason,
-					RequiredBy: "planexec.execute",
-					ResumeSchema: gopact.JSONSchema{
-						"type":                 "object",
-						"additionalProperties": false,
-						"required":             []any{"approved"},
-						"properties": map[string]any{
-							"approved": map[string]any{"type": "boolean", "const": true},
-						},
-					},
-					Metadata: map[string]any{
-						"template":              "planexec",
-						"policy_boundary":       req.Boundary,
-						"policy_request_action": req.Action,
-					},
-				})
-			default:
-				return state, &gopact.PolicyDeniedError{Decision: decision, Request: req}
-			}
-		})
-	}
-	g.AddNode("execute", func(ctx context.Context, state State) (State, error) {
-		replanned := false
-		for {
-			state.Results = state.Results[:0]
-			var failedStep Step
-			var failedErr error
-			for _, step := range state.Steps {
-				result, err := executor.Execute(ctx, step)
-				if err != nil {
-					failedStep = step
-					failedErr = err
-					break
-				}
-				state.Results = append(state.Results, result)
-			}
-			if failedErr == nil {
-				state.Trace = append(state.Trace, "execute")
-				return state, nil
-			}
-			if agent.replanner == nil || replanned {
-				return state, failedErr
-			}
-			steps, err := agent.replanner.Replan(ctx, ReplanRequest{
-				Task:       state.Task,
-				Steps:      append([]Step(nil), state.Steps...),
-				Results:    append([]StepResult(nil), state.Results...),
-				FailedStep: failedStep,
-				Err:        failedErr,
-			})
-			if err != nil {
-				return state, err
-			}
-			state.Steps = append([]Step(nil), steps...)
-			state.Trace = append(state.Trace, "replan")
-			replanned = true
-		}
-	})
-	g.AddNode("summarize", func(_ context.Context, state State) (State, error) {
-		state.Summary = fmt.Sprintf("completed %d steps", len(state.Results))
-		state.Trace = append(state.Trace, "summarize")
-		return state, nil
-	})
-	g.AddEdge(graph.Start, "plan")
-	if agent.approval != nil {
-		g.AddEdge("plan", "approval")
-		g.AddEdge("approval", "execute")
-	} else {
-		g.AddEdge("plan", "execute")
-	}
-	g.AddEdge("execute", "summarize")
-	g.AddEdge("summarize", graph.End)
-
-	runnable, err := g.Compile()
-	if err != nil {
+	if err := configuration.validation.
+		Present("directory", configuration.directory).
+		Present("planner", configuration.planner).
+		Present("replanner", configuration.replanner).
+		Present("reporter", configuration.reporter).
+		Err(); err != nil {
 		return nil, err
 	}
-	agent.runnable = runnable
-	return agent, nil
-}
-
-// NewModelAgent creates a plan-execute agent backed by one response model.
-func NewModelAgent(model gopact.ResponseModel, opts ...Option) (*Agent, error) {
-	if model == nil {
-		return nil, ErrModelRequired
-	}
-	agent := &Agent{}
-	for _, opt := range opts {
-		if opt == nil {
-			continue
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
+	plannerNode := wf.Node("plan", func(ctx context.Context, request agent.Request) (Plan, error) {
+		plan, err := configuration.planner.Plan(ctx, PlanInput{Request: cloneRequest(request)})
+		if err != nil {
+			return Plan{}, fmt.Errorf("planexec: create plan: %w", err)
 		}
-		if err := opt(agent); err != nil {
-			return nil, err
+		return plan, nil
+	})
+	accept := func(ctx context.Context, plan Plan) (control, error) {
+		current, err := state.Get(ctx)
+		if err != nil {
+			return control{}, err
 		}
-	}
-	client := modelBackedAgent{model: model, opts: append([]gopact.ModelRequestOption(nil), agent.modelOptions...)}
-	return New(client, client, opts...)
-}
-
-type modelBackedAgent struct {
-	model gopact.ResponseModel
-	opts  []gopact.ModelRequestOption
-}
-
-func (a modelBackedAgent) Plan(ctx context.Context, request PlanRequest) ([]Step, error) {
-	text, err := a.generate(ctx,
-		gopact.SystemMessage("Split the task into executable steps. Return one step per line. Prefix each line with STEP:."),
-		gopact.UserMessage(request.Task),
-	)
-	if err != nil {
-		return nil, err
-	}
-	steps := modelPlanSteps(text)
-	if len(steps) == 0 {
-		return nil, ErrModelPlanEmpty
-	}
-	return steps, nil
-}
-
-func (a modelBackedAgent) Execute(ctx context.Context, step Step) (StepResult, error) {
-	text, err := a.generate(ctx,
-		gopact.SystemMessage("Execute the plan step. Return concise plain text."),
-		gopact.UserMessage(step.Instruction),
-	)
-	if err != nil {
-		return StepResult{}, err
-	}
-	return StepResult{StepID: step.ID, Output: firstModelLine(text)}, nil
-}
-
-func (a modelBackedAgent) generate(ctx context.Context, messages ...gopact.Message) (string, error) {
-	opts := append([]gopact.ModelRequestOption{gopact.WithMessages(messages...)}, a.opts...)
-	request := gopact.NewModelRequest(opts...)
-	if ids, ok := gopact.RuntimeIDsFromContext(ctx); ok && !ids.IsZero() {
-		request.IDs = request.IDs.WithDefaults(ids)
-	}
-	response, err := a.model.Generate(ctx, request)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(response.Message.Text()), nil
-}
-
-func modelPlanSteps(text string) []Step {
-	var steps []Step
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
-		if line == "" {
-			continue
+		accepted, err := acceptPlan(configuration.directory, plan, current.Plan.Version)
+		if err != nil {
+			return control{}, err
 		}
-		upper := strings.ToUpper(line)
-		switch {
-		case strings.HasPrefix(upper, "STEP:"):
-			line = strings.TrimSpace(line[len("STEP:"):])
-		case strings.HasPrefix(upper, "STEP "):
-			line = strings.TrimSpace(strings.TrimLeft(line[len("STEP "):], "0123456789:.) \t"))
-		default:
-			line = strings.TrimSpace(strings.TrimLeft(line, "0123456789:.) \t"))
+		current.Plan = accepted
+		current.Next = 0
+		if err := state.Set(ctx, current); err != nil {
+			return control{}, err
 		}
-		if line == "" {
-			continue
+		return control{}, nil
+	}
+	acceptInitial := wf.Node("accept-plan", accept)
+	acceptReplacement := wf.Node("accept-replan", accept)
+	dispatch := wf.Node("dispatch-step", func(ctx context.Context, _ control) (stepInvocation, error) {
+		current, err := state.Get(ctx)
+		if err != nil {
+			return stepInvocation{}, err
 		}
-		steps = append(steps, Step{
-			ID:          fmt.Sprintf("step-%d", len(steps)+1),
-			Instruction: line,
+		if current.Next >= len(current.Plan.Steps) {
+			return stepInvocation{}, ErrPlanExhausted
+		}
+		return stepInvocation{Step: current.Plan.Steps[current.Next], Request: cloneRequest(current.Request)}, nil
+	})
+	stepNode := wf.AddInvokable("execute-step", stepDispatcher{directory: configuration.directory})
+	record := wf.Node("record-step", func(ctx context.Context, result StepResult) (ReplanInput, error) {
+		current, err := state.Get(ctx)
+		if err != nil {
+			return ReplanInput{}, err
+		}
+		if current.Next >= len(current.Plan.Steps) || current.Plan.Steps[current.Next].ID != result.Step.ID {
+			return ReplanInput{}, errors.New("planexec: completed step does not match plan cursor")
+		}
+		current.Plan.Steps[current.Next] = result.Step
+		current.Results = append(current.Results, cloneStepResult(result))
+		current.Next++
+		if err := state.Set(ctx, current); err != nil {
+			return ReplanInput{}, err
+		}
+		return replanInput(current), nil
+	})
+	replan := wf.Node("replan", func(ctx context.Context, input ReplanInput) (replanResult, error) {
+		current, err := state.Get(ctx)
+		if err != nil {
+			return replanResult{}, err
+		}
+		if current.Transitions >= configuration.maxTransitions {
+			return replanResult{}, fmt.Errorf("planexec: %w", ErrTransitionLimit)
+		}
+		decision, err := configuration.replanner.Replan(ctx, input)
+		if err != nil {
+			return replanResult{}, fmt.Errorf("planexec: replan: %w", err)
+		}
+		if decision.Done && decision.Plan != nil {
+			return replanResult{}, errors.New("planexec: replan cannot be done and replace plan")
+		}
+		current.Transitions++
+		current.ReadyToReport = decision.Done
+		if !decision.Done && decision.Plan == nil && current.Next >= len(current.Plan.Steps) {
+			return replanResult{}, ErrPlanExhausted
+		}
+		if err := state.Set(ctx, current); err != nil {
+			return replanResult{}, err
+		}
+		return replanResult{Decision: cloneReplanDecision(decision)}, nil
+	})
+	next := wf.Merge("continue", func(ctx context.Context, _ workflow.Inputs) (control, error) {
+		current, err := state.Get(ctx)
+		if err != nil {
+			return control{}, err
+		}
+		if !current.ReadyToReport && current.Next >= len(current.Plan.Steps) {
+			return control{}, ErrPlanExhausted
+		}
+		return control{Report: current.ReadyToReport}, nil
+	})
+	report := wf.Node("report", func(ctx context.Context, _ control) (agent.Response, error) {
+		current, err := state.Get(ctx)
+		if err != nil {
+			return agent.Response{}, err
+		}
+		response, err := configuration.reporter.Report(ctx, ReportInput{
+			Request: cloneRequest(current.Request), Plan: clonePlan(current.Plan), Results: cloneStepResults(current.Results),
 		})
-	}
-	return steps
-}
-
-func firstModelLine(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			return line
-		}
-	}
-	return strings.TrimSpace(text)
-}
-
-func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) iter.Seq2[gopact.Event, error] {
-	return func(yield func(gopact.Event, error) bool) {
-		if ctx == nil {
-			ctx = context.TODO()
-		}
-		state, err := inputState(input)
 		if err != nil {
-			yield(gopact.Event{Type: gopact.EventRunFailed, Err: err}, err)
-			return
+			return agent.Response{}, fmt.Errorf("planexec: report: %w", err)
 		}
-		if a == nil || a.runnable == nil {
-			err := errors.New("planexec: agent is nil")
-			yield(gopact.Event{Type: gopact.EventRunFailed, Err: err}, err)
-			return
+		return cloneResponse(response), nil
+	})
+	replan.Route(func(_ context.Context, result replanResult) (workflow.Dispatch, error) {
+		if result.Decision.Plan != nil {
+			return replan.Once(acceptReplacement, clonePlan(*result.Decision.Plan)), nil
 		}
-
-		runCfg := gopact.ResolveRunOptions(opts...)
-		invokeOpts := []graph.InvokeOption{}
-		if !runCfg.IDs.IsZero() {
-			ctx = gopact.ContextWithRuntimeIDs(ctx, runCfg.IDs)
-			invokeOpts = append(invokeOpts, graph.WithRuntimeIDs(runCfg.IDs))
+		return replan.To(next), nil
+	})
+	next.Route(func(_ context.Context, current control) (workflow.Dispatch, error) {
+		if current.Report {
+			return next.Once(report, control{}), nil
 		}
-		if runCfg.StepExport != nil {
-			invokeOpts = append(invokeOpts, graph.WithStepExport(*runCfg.StepExport))
-		}
-		if runCfg.ResumeRequest != nil {
-			invokeOpts = append(invokeOpts, graph.WithResumeRequest(*runCfg.ResumeRequest))
-		}
-		if runCfg.JSONSchemaValidator != nil {
-			invokeOpts = append(invokeOpts, graph.WithJSONSchemaValidator(runCfg.JSONSchemaValidator))
-		}
-		if a.checkpointer != nil {
-			invokeOpts = append(invokeOpts, graph.WithCheckpointer(a.checkpointer))
-		}
-		if a.checkpointLoader != nil {
-			invokeOpts = append(invokeOpts, graph.WithCheckpointLoader(a.checkpointLoader))
-		}
-		for event, err := range a.runnable.Run(ctx, state, invokeOpts...) {
-			if !yield(event, err) {
-				return
-			}
-		}
+		return next.Once(dispatch, control{}), nil
+	})
+	wf.Entry(plannerNode)
+	wf.Edge(plannerNode, acceptInitial)
+	wf.Edge(acceptInitial, next)
+	wf.Edge(acceptReplacement, next)
+	wf.Edge(next, dispatch)
+	wf.Edge(next, report)
+	wf.Edge(dispatch, stepNode)
+	wf.Edge(stepNode, record)
+	wf.Edge(record, replan)
+	wf.Edge(replan, acceptReplacement)
+	wf.Edge(replan, next)
+	wf.Exit(report)
+	facade, err := agent.NewWorkflowAgent(identity, wf)
+	if err != nil {
+		return nil, fmt.Errorf("planexec: build workflow: %w", err)
 	}
+	return &Agent{workflow: facade}, nil
 }
 
-// Invoke runs the agent through the typed result-first API.
-func (a *Agent) Invoke(ctx context.Context, input State, opts ...gopact.RunOption) (State, error) {
-	var output State
-	cfg := gopact.ResolveRunOptions(opts...)
-	for event, err := range a.Run(ctx, input, opts...) {
-		if cfg.EventSink != nil {
-			if sinkErr := cfg.EventSink.Emit(ctx, event); sinkErr != nil {
-				return output, sinkErr
-			}
-		}
-		if snapshot := event.StepSnapshot; snapshot != nil {
-			if state, ok := snapshot.Output.(State); ok {
-				output = state
-			}
-		}
-		if err != nil {
-			return output, err
-		}
+func (target *Agent) Identity() agent.Identity {
+	if target == nil || target.workflow == nil {
+		return agent.Identity{}
 	}
-	return output, nil
+	return target.workflow.Identity()
 }
 
-func inputState(input any) (State, error) {
-	switch value := input.(type) {
-	case State:
-		return value, nil
-	case string:
-		return State{Task: value}, nil
-	default:
-		return State{}, fmt.Errorf("%w: got %T", ErrInvalidInput, input)
+func (target *Agent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
+	if target == nil || target.workflow == nil {
+		return agent.Response{}, errors.New("planexec: agent is nil")
 	}
+	return target.workflow.Invoke(ctx, cloneRequest(request), options...)
+}
+
+type stepDispatcher struct{ directory *agent.Directory }
+
+func (dispatcher stepDispatcher) Invoke(ctx context.Context, input stepInvocation, options ...gopact.RunOption) (StepResult, error) {
+	child, ok := dispatcher.directory.Lookup(input.Step.AgentName)
+	if !ok || contract.IsNil(child) {
+		return StepResult{}, fmt.Errorf("planexec: step %q child %q is not in the directory", input.Step.ID, input.Step.AgentName)
+	}
+	response, err := child.Invoke(ctx, cloneRequest(input.Request), options...)
+	if err != nil {
+		return StepResult{}, fmt.Errorf("planexec: execute step %q: %w", input.Step.ID, err)
+	}
+	step := input.Step
+	step.Status = StepCompleted
+	return StepResult{Step: step, Response: cloneResponse(response)}, nil
+}
+
+func (plan Plan) validate() error {
+	validator := contract.New("planexec").
+		Required("plan id", plan.ID).
+		Positive("plan version", plan.Version).
+		NonEmpty("plan steps", len(plan.Steps))
+	for index, step := range plan.Steps {
+		validator.
+			Required(fmt.Sprintf("step %d id", index), step.ID).
+			Required(fmt.Sprintf("step %d description", index), step.Description).
+			Required(fmt.Sprintf("step %d agent", index), step.AgentName).
+			Check(step.Status == "" || step.Status == StepPending, "step %d status %q is owned by the runtime", index, step.Status).
+			Unique("step", step.ID)
+	}
+	return validator.Err()
+}
+
+func acceptPlan(directory *agent.Directory, plan Plan, previous int) (Plan, error) {
+	plan = clonePlan(plan)
+	structureErr := plan.validate()
+	validator := contract.New("planexec").
+		Check(previous == 0 || plan.Version > previous, "plan version %d must be greater than %d", plan.Version, previous)
+	for index, step := range plan.Steps {
+		child, exists := directory.Lookup(step.AgentName)
+		validator.Check(exists && !contract.IsNil(child), "step %d child %q is not in the directory", index, step.AgentName)
+		plan.Steps[index].Status = StepPending
+	}
+	if err := errors.Join(structureErr, validator.Err()); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+func replanInput(state State) ReplanInput {
+	return ReplanInput{Request: cloneRequest(state.Request), Plan: clonePlan(state.Plan), Results: cloneStepResults(state.Results)}
+}
+
+func clonePlanInput(input PlanInput) PlanInput {
+	input.Request = cloneRequest(input.Request)
+	if input.Previous != nil {
+		previous := clonePlan(*input.Previous)
+		input.Previous = &previous
+	}
+	input.Results = cloneStepResults(input.Results)
+	return input
+}
+
+func cloneReplanInput(input ReplanInput) ReplanInput {
+	input.Request = cloneRequest(input.Request)
+	input.Plan = clonePlan(input.Plan)
+	input.Results = cloneStepResults(input.Results)
+	return input
+}
+
+func cloneReportInput(input ReportInput) ReportInput {
+	input.Request = cloneRequest(input.Request)
+	input.Plan = clonePlan(input.Plan)
+	input.Results = cloneStepResults(input.Results)
+	return input
+}
+
+func cloneReplanDecision(decision ReplanDecision) ReplanDecision {
+	if decision.Plan != nil {
+		plan := clonePlan(*decision.Plan)
+		decision.Plan = &plan
+	}
+	return decision
+}
+
+func clonePlan(plan Plan) Plan {
+	plan.Steps = append([]Step(nil), plan.Steps...)
+	return plan
+}
+
+func cloneStepResult(result StepResult) StepResult {
+	result.Response = cloneResponse(result.Response)
+	return result
+}
+
+func cloneStepResults(results []StepResult) []StepResult {
+	if results == nil {
+		return nil
+	}
+	cloned := make([]StepResult, len(results))
+	for index, result := range results {
+		cloned[index] = cloneStepResult(result)
+	}
+	return cloned
+}
+
+func cloneRequest(request agent.Request) agent.Request {
+	request.Messages = cloneMessages(request.Messages)
+	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
+	request.Metadata = cloneStringMap(request.Metadata)
+	return request
+}
+
+func cloneResponse(response agent.Response) agent.Response {
+	response.Message = cloneMessage(response.Message)
+	response.Artifacts = append([]gopact.ArtifactRef(nil), response.Artifacts...)
+	response.Metadata = cloneStringMap(response.Metadata)
+	return response
+}
+
+func cloneMessages(messages []gopact.Message) []gopact.Message {
+	if messages == nil {
+		return nil
+	}
+	cloned := make([]gopact.Message, len(messages))
+	for index, message := range messages {
+		cloned[index] = cloneMessage(message)
+	}
+	return cloned
+}
+
+func cloneMessage(message gopact.Message) gopact.Message {
+	message.Parts = append([]gopact.MessagePart(nil), message.Parts...)
+	for index := range message.Parts {
+		if message.Parts[index].Ref != nil {
+			ref := *message.Parts[index].Ref
+			message.Parts[index].Ref = &ref
+		}
+	}
+	return message
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }

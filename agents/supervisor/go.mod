@@ -1,5 +1,12 @@
 module github.com/gopact-ai/gopact-ext/agents/supervisor
 
-go 1.25.11
+go 1.27
 
-require github.com/gopact-ai/gopact v0.0.57
+require (
+	github.com/gopact-ai/gopact v0.0.0
+	github.com/gopact-ai/gopact-ext/agents/internal v0.0.0
+)
+
+replace github.com/gopact-ai/gopact => ../../../gopact
+
+replace github.com/gopact-ai/gopact-ext/agents/internal => ../internal

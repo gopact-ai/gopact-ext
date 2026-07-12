@@ -4,460 +4,304 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/gopact"
-	"github.com/gopact-ai/gopact/checkpoint"
+	"github.com/gopact-ai/gopact/agent"
 	"github.com/gopact-ai/gopact/gopacttest"
+	"github.com/gopact-ai/gopact/workflow"
 )
 
-func TestAgentRunsPlanExecuteSummarize(t *testing.T) {
-	agent, err := New(
-		PlannerFunc(func(_ context.Context, request PlanRequest) ([]Step, error) {
-			if request.Task != "ship example" {
-				t.Fatalf("task = %q, want ship example", request.Task)
-			}
-			return []Step{
-				{ID: "draft", Instruction: "draft example"},
-				{ID: "review", Instruction: "review example"},
-			}, nil
-		}),
-		ExecutorFunc(func(_ context.Context, step Step) (StepResult, error) {
-			return StepResult{StepID: step.ID, Output: "done " + step.ID}, nil
-		}),
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
+func TestNewRequiresPipelineOptions(t *testing.T) {
+	_, err := New(testIdentity())
+	if err == nil {
+		t.Fatal("New() error = nil")
 	}
-
-	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), State{Task: "ship example"}))
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	gopacttest.RequireEventTypes(t, events,
-		gopact.EventRunStarted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventRunCompleted,
-	)
-
-	output, ok := events[6].StepSnapshot.Output.(State)
-	if !ok {
-		t.Fatalf("summary output type = %T, want State", events[6].StepSnapshot.Output)
-	}
-	if !reflect.DeepEqual(output.Trace, []string{"plan", "execute", "summarize"}) {
-		t.Fatalf("trace = %v, want plan execute summarize", output.Trace)
-	}
-	if output.Summary != "completed 2 steps" {
-		t.Fatalf("summary = %q, want completed 2 steps", output.Summary)
-	}
-	gopacttest.RequireGoldenTrajectoryFrames(t, "testdata/basic_run.golden.json", events)
-}
-
-func TestAgentInvokeReturnsTypedStateAndEmitsEvents(t *testing.T) {
-	agent, err := New(
-		PlannerFunc(func(_ context.Context, request PlanRequest) ([]Step, error) {
-			return []Step{{ID: "draft", Instruction: request.Task}}, nil
-		}),
-		ExecutorFunc(func(_ context.Context, step Step) (StepResult, error) {
-			return StepResult{StepID: step.ID, Output: "done"}, nil
-		}),
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	var events []gopact.Event
-	output, err := agent.Invoke(context.Background(), State{Task: "ship example"}, gopact.WithEvents(gopact.EventSinkFunc(func(_ context.Context, event gopact.Event) error {
-		events = append(events, event)
-		return nil
-	})))
-	if err != nil {
-		t.Fatalf("Invoke() error = %v", err)
-	}
-	if output.Summary != "completed 1 steps" {
-		t.Fatalf("summary = %q, want completed 1 steps", output.Summary)
-	}
-	if len(events) == 0 || events[len(events)-1].Type != gopact.EventRunCompleted {
-		t.Fatalf("sink events = %+v, want terminal completion", events)
-	}
-}
-
-func TestNewModelAgentPlansAndExecutesWithModel(t *testing.T) {
-	model := &scriptedResponseModel{
-		responses: []gopact.ModelResponse{
-			{Message: gopact.Message{Role: gopact.RoleAssistant, Content: "STEP: draft example\nSTEP: review example"}},
-			{Message: gopact.Message{Role: gopact.RoleAssistant, Content: "done draft"}},
-			{Message: gopact.Message{Role: gopact.RoleAssistant, Content: "done review"}},
-		},
-	}
-	agent, err := NewModelAgent(model)
-	if err != nil {
-		t.Fatalf("NewModelAgent() error = %v", err)
-	}
-
-	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example"))
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	output, ok := events[6].StepSnapshot.Output.(State)
-	if !ok {
-		t.Fatalf("summary output type = %T, want State", events[6].StepSnapshot.Output)
-	}
-	if len(output.Steps) != 2 || output.Steps[0].Instruction != "draft example" || output.Steps[1].Instruction != "review example" {
-		t.Fatalf("steps = %+v, want parsed model plan", output.Steps)
-	}
-	if len(output.Results) != 2 || output.Results[0].Output != "done draft" || output.Results[1].Output != "done review" {
-		t.Fatalf("results = %+v, want model-backed execution results", output.Results)
-	}
-	if len(model.requests) != 3 {
-		t.Fatalf("model requests = %d, want planner + two executor calls", len(model.requests))
-	}
-}
-
-func TestNewModelAgentAcceptsTemplateOptions(t *testing.T) {
-	store := checkpoint.NewMemory[State]()
-	model := &scriptedResponseModel{
-		responses: []gopact.ModelResponse{
-			{Message: gopact.AssistantMessage("STEP: draft example")},
-			{Message: gopact.AssistantMessage("done draft")},
-		},
-	}
-	agent, err := NewModelAgent(
-		model,
-		WithModelOptions(gopact.WithMaxOutputTokens(256), gopact.WithTemperature(0.3)),
-		WithApprovalPolicy(gopact.PolicyFunc(func(context.Context, gopact.PolicyRequest) (gopact.PolicyDecision, error) {
-			return gopact.PolicyDecision{Action: gopact.PolicyAllow, Reason: "approved"}, nil
-		})),
-		WithCheckpointStore(store),
-	)
-	if err != nil {
-		t.Fatalf("NewModelAgent() error = %v", err)
-	}
-
-	ids := gopact.RuntimeIDs{RunID: "run-planexec-model-options", ThreadID: "thread-planexec-model-options"}
-	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example", gopact.WithRuntimeIDs(ids)))
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	gopacttest.RequireEventTypes(t, events,
-		gopact.EventRunStarted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventRunCompleted,
-	)
-	if len(model.requests) != 2 {
-		t.Fatalf("model requests = %d, want planner and executor", len(model.requests))
-	}
-	for i, request := range model.requests {
-		if request.Budget.MaxOutputTokens != 256 {
-			t.Fatalf("request %d max output tokens = %d, want 256", i, request.Budget.MaxOutputTokens)
-		}
-		if request.Temperature == nil || *request.Temperature != 0.3 {
-			t.Fatalf("request %d temperature = %v, want 0.3", i, request.Temperature)
+	for _, name := range []string{"directory", "planner", "replanner", "reporter"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("New() error = %v, want %q", err, name)
 		}
 	}
-	latest, ok, err := store.Latest(context.Background(), ids.ThreadID)
-	if err != nil || !ok {
-		t.Fatalf("Latest() = ok:%v err:%v, want checkpoint", ok, err)
-	}
-	if latest.Node != "summarize" || latest.Phase != gopact.StepCompleted {
-		t.Fatalf("latest checkpoint = %+v, want completed summarize", latest)
-	}
 }
 
-func TestAgentReplansOnceAfterExecutionFailure(t *testing.T) {
-	failFirstDraft := true
-	var replanRequest ReplanRequest
-	agent, err := New(
-		PlannerFunc(func(context.Context, PlanRequest) ([]Step, error) {
-			return []Step{
-				{ID: "draft", Instruction: "draft example"},
-				{ID: "review", Instruction: "review example"},
-			}, nil
-		}),
-		ExecutorFunc(func(_ context.Context, step Step) (StepResult, error) {
-			if step.ID == "draft" && failFirstDraft {
-				failFirstDraft = false
-				return StepResult{}, errors.New("draft failed")
+func TestPlanExecRunsReplacementPlanThroughWorkflowFacts(t *testing.T) {
+	var childCalls, plannerCalls, replannerCalls int
+	directory := testDirectory(t, testChild("worker", func(_ context.Context, request agent.Request) (agent.Response, error) {
+		childCalls++
+		return agent.Response{Message: gopact.UserMessage("done:" + request.Messages[0].Parts[0].Text)}, nil
+	}))
+	target, err := New(
+		testIdentity(),
+		WithDirectory(directory),
+		WithPlanner(PlannerFunc(func(_ context.Context, input PlanInput) (Plan, error) {
+			plannerCalls++
+			return testPlan("p1", 1, "s1"), nil
+		})),
+		WithReplanner(ReplannerFunc(func(_ context.Context, input ReplanInput) (ReplanDecision, error) {
+			replannerCalls++
+			if len(input.Results) == 1 {
+				plan := testPlan("p2", 2, "s2")
+				return ReplanDecision{Plan: &plan}, nil
 			}
-			return StepResult{StepID: step.ID, Output: "done " + step.ID}, nil
-		}),
-		WithReplanner(ReplannerFunc(func(_ context.Context, request ReplanRequest) ([]Step, error) {
-			replanRequest = request
-			return []Step{
-				{ID: "draft-retry", Instruction: "retry draft example"},
-				{ID: "review", Instruction: "review example"},
-			}, nil
+			return ReplanDecision{Done: true}, nil
+		})),
+		WithReporter(ReporterFunc(func(_ context.Context, input ReportInput) (agent.Response, error) {
+			return input.Results[len(input.Results)-1].Response, nil
 		})),
 	)
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatal(err)
 	}
-
-	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example"))
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	output, ok := events[6].StepSnapshot.Output.(State)
-	if !ok {
-		t.Fatalf("summary output type = %T, want State", events[6].StepSnapshot.Output)
-	}
-	if !reflect.DeepEqual(output.Trace, []string{"plan", "replan", "execute", "summarize"}) {
-		t.Fatalf("trace = %v, want replan flow", output.Trace)
-	}
-	if got, want := resultIDs(output.Results), []string{"draft-retry", "review"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("result ids = %v, want %v", got, want)
-	}
-	if replanRequest.Task != "ship example" ||
-		replanRequest.FailedStep.ID != "draft" ||
-		replanRequest.Err == nil ||
-		len(replanRequest.Results) != 0 {
-		t.Fatalf("replan request = %+v, want failed draft without partial results", replanRequest)
-	}
-}
-
-func TestAgentApprovalPolicyInterruptsAndResumesFromStepExport(t *testing.T) {
-	executions := 0
-	policyCalls := 0
-	agent, err := New(
-		PlannerFunc(func(context.Context, PlanRequest) ([]Step, error) {
-			return []Step{{ID: "draft", Instruction: "draft example"}}, nil
-		}),
-		ExecutorFunc(func(_ context.Context, step Step) (StepResult, error) {
-			executions++
-			return StepResult{StepID: step.ID, Output: "done " + step.ID}, nil
-		}),
-		WithApprovalPolicy(gopact.PolicyFunc(func(_ context.Context, req gopact.PolicyRequest) (gopact.PolicyDecision, error) {
-			policyCalls++
-			if req.Boundary != gopact.PolicyBoundaryNode || req.Action != gopact.PolicyActionExec {
-				t.Fatalf("policy request = %+v, want node exec", req)
+	var nodes []string
+	response, err := target.Invoke(
+		context.Background(),
+		agent.Request{Messages: []gopact.Message{gopact.UserMessage("input")}},
+		gopact.WithRunID("planexec-workflow"),
+		gopact.WithStrictEventHandler(func(_ context.Context, event gopact.Event) error {
+			if event.RunID == "planexec-workflow" && event.Type == workflow.EventNodeCompleted {
+				nodes = append(nodes, event.NodeID)
 			}
-			return gopact.PolicyDecision{Action: gopact.PolicyReview, Reason: "needs approval"}, nil
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Message.Parts[0].Text != "done:input" || childCalls != 2 || plannerCalls != 1 || replannerCalls != 2 {
+		t.Fatalf("response/calls = %+v/%d/%d/%d", response, childCalls, plannerCalls, replannerCalls)
+	}
+	want := []string{
+		"plan", "accept-plan", "continue", "dispatch-step", "execute-step", "record-step", "replan",
+		"accept-replan", "continue", "dispatch-step", "execute-step", "record-step", "replan", "continue", "report",
+	}
+	if !reflect.DeepEqual(nodes, want) {
+		t.Fatalf("completed nodes = %v, want %v", nodes, want)
+	}
+}
+
+func TestPlanExecRejectsInvalidPlansBeforeStepExecution(t *testing.T) {
+	tests := []struct {
+		name string
+		plan Plan
+		want string
+	}{
+		{name: "planner status", plan: Plan{ID: "p", Version: 1, Steps: []Step{{ID: "s", Description: "work", AgentName: "worker", Status: StepCompleted}}}, want: "status"},
+		{name: "unknown child", plan: Plan{ID: "p", Version: 1, Steps: []Step{{ID: "s", Description: "work", AgentName: "missing"}}}, want: "missing"},
+		{name: "duplicate step", plan: Plan{ID: "p", Version: 1, Steps: []Step{{ID: "s", Description: "one", AgentName: "worker"}, {ID: "s", Description: "two", AgentName: "worker"}}}, want: "duplicate"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			childCalls := 0
+			target := newTestAgent(t, testDirectory(t, countedChild("worker", &childCalls)), PlannerFunc(
+				func(context.Context, PlanInput) (Plan, error) { return tt.plan, nil },
+			), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
+				return ReplanDecision{Done: true}, nil
+			}))
+			_, err := target.Invoke(context.Background(), agent.Request{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) || childCalls != 0 {
+				t.Fatalf("Invoke() error/calls = %v/%d, want %q before execution", err, childCalls, tt.want)
+			}
+		})
+	}
+}
+
+func TestPlanExecRejectsNonMonotonicReplacement(t *testing.T) {
+	target := newTestAgent(t, testDirectory(t, countedChild("worker", new(int))), PlannerFunc(
+		func(context.Context, PlanInput) (Plan, error) { return testPlan("p1", 1, "s1"), nil },
+	), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
+		plan := testPlan("p2", 1, "s2")
+		return ReplanDecision{Plan: &plan}, nil
+	}))
+	_, err := target.Invoke(context.Background(), agent.Request{})
+	if err == nil || !strings.Contains(err.Error(), "version") {
+		t.Fatalf("Invoke() error = %v, want non-monotonic version rejection", err)
+	}
+}
+
+func TestPlanExecResumesInterruptedStepWithoutReplanningOrReplay(t *testing.T) {
+	var childRuns, plannerCalls, replannerCalls int
+	childIdentity := agent.Identity{Name: "worker", Description: "requires approval", Version: "v1"}
+	childWorkflow := workflow.New[agent.Request, agent.Response](childIdentity.Name, workflow.WithTopologyVersion(childIdentity.Version))
+	work := childWorkflow.Node("work", func(context.Context, agent.Request) (agent.Response, error) {
+		childRuns++
+		return agent.Response{Message: gopact.UserMessage("approved")}, nil
+	})
+	work.Guard(workflow.BeforeRun("approval", workflow.GuardFunc[agent.Request, agent.Response](
+		func(context.Context, workflow.GuardContext[agent.Request, agent.Response]) (workflow.GuardDecision[agent.Request, agent.Response], error) {
+			return workflow.GuardInterrupt[agent.Request, agent.Response]{Request: workflow.InterruptRequest{ID: "step-approval"}}, nil
+		},
+	)))
+	childWorkflow.Entry(work)
+	childWorkflow.Exit(work)
+	child, err := agent.NewWorkflowAgent(childIdentity, childWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := newTestAgent(t, testDirectory(t, child), PlannerFunc(func(context.Context, PlanInput) (Plan, error) {
+		plannerCalls++
+		return testPlan("p1", 1, "s1"), nil
+	}), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
+		replannerCalls++
+		return ReplanDecision{Done: true}, nil
+	}))
+	_, err = target.Invoke(context.Background(), agent.Request{}, gopact.WithRunID("parent"))
+	var interrupted workflow.InterruptError
+	if !errors.As(err, &interrupted) {
+		t.Fatalf("Invoke() error = %v, want Workflow InterruptError", err)
+	}
+	response, err := target.Invoke(context.Background(), agent.Request{}, workflow.WithResume(workflow.ResumeRequest{
+		RunID: "parent", CheckpointID: interrupted.CheckpointID,
+		Resolutions: []workflow.InterruptResolution{{InterruptID: "step-approval", PayloadRef: "resolution://approved"}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Message.Parts[0].Text != "approved" || childRuns != 1 || plannerCalls != 1 || replannerCalls != 1 {
+		t.Fatalf("response/calls = %+v/%d/%d/%d, want same child continuation", response, childRuns, plannerCalls, replannerCalls)
+	}
+}
+
+func TestPlanExecResumeDoesNotRepeatCommittedNodes(t *testing.T) {
+	for _, nodeID := range []string{"accept-plan", "record-step"} {
+		t.Run(nodeID, func(t *testing.T) {
+			var childCalls, plannerCalls int
+			target := newTestAgent(t, testDirectory(t, countedChild("worker", &childCalls)), PlannerFunc(
+				func(context.Context, PlanInput) (Plan, error) {
+					plannerCalls++
+					return testPlan("p1", 1, "s1"), nil
+				},
+			), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
+				return ReplanDecision{Done: true}, nil
+			}))
+			sinkErr := errors.New("node sink failed")
+			failed := false
+			runID := "planexec-" + nodeID
+			_, err := target.Invoke(context.Background(), agent.Request{}, gopact.WithRunID(runID), gopact.WithStrictEventHandler(
+				func(_ context.Context, event gopact.Event) error {
+					if event.RunID == runID && event.Type == workflow.EventNodeCompleted && event.NodeID == nodeID && !failed {
+						failed = true
+						return sinkErr
+					}
+					return nil
+				},
+			))
+			if !errors.Is(err, sinkErr) {
+				t.Fatalf("Invoke() error = %v, want sink failure", err)
+			}
+			if _, err := target.Invoke(context.Background(), agent.Request{}, workflow.WithResume(workflow.ResumeRequest{RunID: runID})); err != nil {
+				t.Fatal(err)
+			}
+			if plannerCalls != 1 || childCalls != 1 {
+				t.Fatalf("planner/child calls = %d/%d, want no replay", plannerCalls, childCalls)
+			}
+		})
+	}
+}
+
+func TestPlanExecEnforcesTransitionLimit(t *testing.T) {
+	target, err := New(
+		testIdentity(), WithDirectory(testDirectory(t, countedChild("worker", new(int)))),
+		WithPlanner(PlannerFunc(func(context.Context, PlanInput) (Plan, error) { return testPlan("p1", 1, "s1"), nil })),
+		WithReplanner(ReplannerFunc(func(_ context.Context, input ReplanInput) (ReplanDecision, error) {
+			plan := testPlan("next", input.Plan.Version+1, "next-step")
+			return ReplanDecision{Plan: &plan}, nil
 		})),
+		WithReporter(testReporter()), WithMaxTransitions(1),
 	)
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatal(err)
 	}
-
-	ids := gopact.RuntimeIDs{RunID: "run-planexec-approval", ThreadID: "thread-planexec-approval"}
-	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example", gopact.WithRuntimeIDs(ids)))
-	if !errors.Is(err, gopact.ErrInterrupted) {
-		t.Fatalf("Run() error = %v, want ErrInterrupted", err)
-	}
-	if executions != 0 {
-		t.Fatalf("executions before approval = %d, want 0", executions)
-	}
-	gopacttest.RequireEventTypes(t, events,
-		gopact.EventRunStarted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventInterrupted,
-		gopact.EventRunInterrupted,
-	)
-	interrupted := events[4].StepSnapshot
-	if interrupted == nil || interrupted.Phase != gopact.StepInterrupted || interrupted.Pending == nil {
-		t.Fatalf("interrupted step = %+v, want pending approval", interrupted)
-	}
-	if interrupted.Pending.Type != gopact.InterruptApproval {
-		t.Fatalf("pending interrupt type = %q, want approval", interrupted.Pending.Type)
-	}
-
-	resumedEvents, err := gopacttest.CollectEvents(agent.Run(context.Background(), State{},
-		gopact.WithRuntimeIDs(ids),
-		gopact.WithStepExport(gopact.StepExport{Version: 1, Step: *interrupted}),
-		gopact.WithResumeRequest(gopact.ResumeRequest{
-			StepID:      interrupted.ID,
-			InterruptID: interrupted.Pending.ID,
-			Payload:     map[string]any{"approved": true},
-		}),
-	))
-	if err != nil {
-		t.Fatalf("resumed Run() error = %v", err)
-	}
-	gopacttest.RequireEventTypes(t, resumedEvents,
-		gopact.EventRunStarted,
-		gopact.EventStepImported,
-		gopact.EventResumeReceived,
-		gopact.EventNodeResumed,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventRunCompleted,
-	)
-	if executions != 1 {
-		t.Fatalf("executions after approval = %d, want 1", executions)
-	}
-	if policyCalls != 1 {
-		t.Fatalf("policy calls = %d, want initial review only", policyCalls)
-	}
-	output, ok := resumedEvents[6].StepSnapshot.Output.(State)
-	if !ok || output.Summary != "completed 1 steps" {
-		t.Fatalf("resumed output = %#v, want completed summary", resumedEvents[6].StepSnapshot.Output)
+	if _, err := target.Invoke(context.Background(), agent.Request{}); !errors.Is(err, ErrTransitionLimit) {
+		t.Fatalf("Invoke() error = %v, want transition limit", err)
 	}
 }
 
-func TestAgentCheckpointStoreResumesApprovalInterrupt(t *testing.T) {
-	store := checkpoint.NewMemory[State]()
-	plans := 0
-	executions := 0
-	agent, err := New(
-		PlannerFunc(func(context.Context, PlanRequest) ([]Step, error) {
-			plans++
-			return []Step{{ID: "draft", Instruction: "draft example"}}, nil
-		}),
-		ExecutorFunc(func(_ context.Context, step Step) (StepResult, error) {
-			executions++
-			return StepResult{StepID: step.ID, Output: "done " + step.ID}, nil
-		}),
-		WithApprovalPolicy(gopact.PolicyFunc(func(context.Context, gopact.PolicyRequest) (gopact.PolicyDecision, error) {
-			return gopact.PolicyDecision{Action: gopact.PolicyReview, Reason: "needs approval"}, nil
-		})),
-		WithCheckpointStore(store),
+func TestPlanExecAgentConformance(t *testing.T) {
+	child := testChild("worker", func(context.Context, agent.Request) (agent.Response, error) {
+		return agent.Response{Message: gopact.UserMessage("done")}, nil
+	})
+	target := newTestAgent(t, testDirectory(t, child), PlannerFunc(
+		func(context.Context, PlanInput) (Plan, error) { return testPlan("p1", 1, "s1"), nil },
+	), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
+		return ReplanDecision{Done: true}, nil
+	}))
+	gopacttest.RequireAgentConformance(t, gopacttest.AgentConformanceCase{
+		Agent: target, Request: agent.Request{},
+		Validate: func(response agent.Response) error {
+			if len(response.Message.Parts) == 0 {
+				return errors.New("empty response")
+			}
+			return nil
+		},
+	})
+}
+
+type testAgentChild struct {
+	identity agent.Identity
+	invoke   func(context.Context, agent.Request) (agent.Response, error)
+}
+
+func testChild(name string, invoke func(context.Context, agent.Request) (agent.Response, error)) agent.Agent {
+	return &testAgentChild{identity: agent.Identity{Name: name, Description: name + " child", Version: "v1"}, invoke: invoke}
+}
+
+func countedChild(name string, calls *int) agent.Agent {
+	return testChild(name, func(_ context.Context, request agent.Request) (agent.Response, error) {
+		*calls++
+		text := "done"
+		if len(request.Messages) > 0 {
+			text += ":" + request.Messages[0].Parts[0].Text
+		}
+		return agent.Response{Message: gopact.UserMessage(text)}, nil
+	})
+}
+
+func (child *testAgentChild) Identity() agent.Identity { return child.identity }
+
+func (child *testAgentChild) Invoke(ctx context.Context, request agent.Request, _ ...gopact.RunOption) (agent.Response, error) {
+	return child.invoke(ctx, request)
+}
+
+func testDirectory(t *testing.T, children ...agent.Agent) *agent.Directory {
+	t.Helper()
+	catalog := agent.NewCatalog()
+	for _, child := range children {
+		if err := catalog.Add(child); err != nil {
+			t.Fatal(err)
+		}
+	}
+	directory, err := catalog.Compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return directory
+}
+
+func newTestAgent(t *testing.T, directory *agent.Directory, planner Planner, replanner Replanner) *Agent {
+	t.Helper()
+	target, err := New(
+		testIdentity(), WithDirectory(directory), WithPlanner(planner), WithReplanner(replanner), WithReporter(testReporter()),
 	)
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatal(err)
 	}
-
-	ids := gopact.RuntimeIDs{RunID: "run-planexec-checkpoint", ThreadID: "thread-planexec-checkpoint"}
-	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example", gopact.WithRuntimeIDs(ids)))
-	if !errors.Is(err, gopact.ErrInterrupted) {
-		t.Fatalf("Run() error = %v, want ErrInterrupted", err)
-	}
-	if plans != 1 || executions != 0 {
-		t.Fatalf("before resume plans/executions = %d/%d, want 1/0", plans, executions)
-	}
-	latest, ok, err := store.Latest(context.Background(), ids.ThreadID)
-	if err != nil || !ok {
-		t.Fatalf("Latest() = ok:%v err:%v, want interrupted checkpoint", ok, err)
-	}
-	if latest.Phase != gopact.StepInterrupted || latest.Pending == nil {
-		t.Fatalf("latest checkpoint = %+v, want interrupted approval", latest)
-	}
-	if events[4].StepSnapshot == nil || events[4].StepSnapshot.Pending == nil || events[4].StepSnapshot.Pending.ID != latest.Pending.ID {
-		t.Fatalf("interrupted event = %+v, want checkpoint pending id", events[4])
-	}
-
-	resumed, err := gopacttest.CollectEvents(agent.Run(context.Background(), State{},
-		gopact.WithRuntimeIDs(ids),
-		gopact.WithResumeRequest(gopact.ResumeRequest{
-			CheckpointID: latest.ID,
-			InterruptID:  latest.Pending.ID,
-			Payload:      map[string]any{"approved": true},
-		}),
-	))
-	if err != nil {
-		t.Fatalf("resumed Run() error = %v", err)
-	}
-	gopacttest.RequireEventTypes(t, resumed,
-		gopact.EventRunStarted,
-		gopact.EventCheckpointLoaded,
-		gopact.EventResumeReceived,
-		gopact.EventNodeResumed,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventRunCompleted,
-	)
-	if plans != 1 || executions != 1 {
-		t.Fatalf("after resume plans/executions = %d/%d, want 1/1", plans, executions)
-	}
+	return target
 }
 
-func TestAgentCancelStopsBeforeSummary(t *testing.T) {
-	executions := 0
-	agent, err := New(
-		PlannerFunc(func(context.Context, PlanRequest) ([]Step, error) {
-			return []Step{{ID: "draft", Instruction: "draft example"}}, nil
-		}),
-		ExecutorFunc(func(context.Context, Step) (StepResult, error) {
-			executions++
-			return StepResult{}, context.Canceled
-		}),
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	events, err := gopacttest.CollectEvents(agent.Run(context.Background(), "ship example"))
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run() error = %v, want context canceled", err)
-	}
-	gopacttest.RequireEventTypes(t, events,
-		gopact.EventRunStarted,
-		gopact.EventNodeStarted,
-		gopact.EventNodeCompleted,
-		gopact.EventNodeStarted,
-		gopact.EventRunCanceled,
-	)
-	if executions != 1 {
-		t.Fatalf("executions = %d, want 1", executions)
-	}
-	canceled := events[4].StepSnapshot
-	if canceled == nil || canceled.Node != "execute" || canceled.Phase != gopact.StepCanceled {
-		t.Fatalf("canceled step = %+v, want execute step_canceled", canceled)
-	}
-	output, ok := canceled.Output.(State)
-	if !ok {
-		t.Fatalf("canceled output type = %T, want State", canceled.Output)
-	}
-	if output.Summary != "" || !reflect.DeepEqual(output.Trace, []string{"plan"}) {
-		t.Fatalf("canceled output = %+v, want no summary after plan", output)
-	}
+func testReporter() Reporter {
+	return ReporterFunc(func(_ context.Context, input ReportInput) (agent.Response, error) {
+		if len(input.Results) == 0 {
+			return agent.Response{Message: gopact.UserMessage("done")}, nil
+		}
+		return input.Results[len(input.Results)-1].Response, nil
+	})
 }
 
-func TestNewRequiresPlannerAndExecutor(t *testing.T) {
-	if _, err := New(nil, ExecutorFunc(func(context.Context, Step) (StepResult, error) {
-		return StepResult{}, nil
-	})); err == nil {
-		t.Fatal("New() planner error = nil")
-	}
-	if _, err := New(PlannerFunc(func(context.Context, PlanRequest) ([]Step, error) {
-		return nil, nil
-	}), nil); err == nil {
-		t.Fatal("New() executor error = nil")
-	}
+func testPlan(id string, version int, stepID string) Plan {
+	return Plan{ID: id, Version: version, Steps: []Step{{ID: stepID, Description: "work", AgentName: "worker"}}}
 }
 
-type scriptedResponseModel struct {
-	responses []gopact.ModelResponse
-	errors    []error
-	requests  []gopact.ModelRequest
-}
-
-func resultIDs(results []StepResult) []string {
-	ids := make([]string, 0, len(results))
-	for _, result := range results {
-		ids = append(ids, result.StepID)
-	}
-	return ids
-}
-
-func (m *scriptedResponseModel) Generate(ctx context.Context, request gopact.ModelRequest) (gopact.ModelResponse, error) {
-	if err := ctx.Err(); err != nil {
-		return gopact.ModelResponse{}, err
-	}
-	m.requests = append(m.requests, request)
-	if len(m.errors) > 0 {
-		err := m.errors[0]
-		m.errors = m.errors[1:]
-		return gopact.ModelResponse{}, err
-	}
-	if len(m.responses) == 0 {
-		return gopact.ModelResponse{Message: gopact.Message{Role: gopact.RoleAssistant, Content: "done"}}, nil
-	}
-	response := m.responses[0]
-	m.responses = m.responses[1:]
-	return response, nil
+func testIdentity() agent.Identity {
+	return agent.Identity{Name: "planexec", Description: "plans and executes", Version: "v1"}
 }

@@ -3,136 +3,142 @@
 package glm
 
 import (
-	"bufio"
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/gopact"
-	"github.com/gopact-ai/gopact-ext/models/openai"
-	"github.com/gopact-ai/gopact/gopacttest/providerconformance"
 )
 
-func TestGLMIntegrationChinaConformance(t *testing.T) {
-	loadDotEnv(t)
-
-	apiKey := firstEnv("GOPACT_GLM_API_KEY", "GLM_API_KEY", "GOPACT_LLM_TOKEN")
-	model := firstEnv("GOPACT_GLM_MODEL", "GOPACT_LLM_MODEL")
-	if apiKey == "" || model == "" {
-		t.Skip("set GOPACT_GLM_API_KEY, GLM_API_KEY, or GOPACT_LLM_TOKEN; and set GOPACT_GLM_MODEL or GOPACT_LLM_MODEL")
-	}
-
-	client, err := NewClient(
-		envOrDefault("GOPACT_GLM_BASEURL", DefaultBaseURL),
-		apiKey,
-		gopact.WithModel(model),
-		gopact.WithMaxOutputTokens(512),
-		gopact.WithTemperature(0.2),
-		gopact.EnableStreaming(),
-		DisableThinking(),
-	)
+func TestIntegrationInvoke(t *testing.T) {
+	model := newIntegrationModel(t)
+	req := newIntegrationRequest(model, "Reply with exactly: pong")
+	resp, err := model.Invoke(context.Background(), req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Invoke() error = %v", err)
 	}
-
-	requireProviderConformance(t, client, model)
-}
-
-func TestGLMIntegrationInternationalConformance(t *testing.T) {
-	loadDotEnv(t)
-
-	apiKey := firstEnv("GOPACT_GLM_INTERNATIONAL_API_KEY", "GLM_API_KEY", "GOPACT_GLM_API_KEY", "GOPACT_LLM_TOKEN")
-	model := firstEnv("GOPACT_GLM_MODEL", "GOPACT_LLM_MODEL")
-	if apiKey == "" || model == "" {
-		t.Skip("set GOPACT_GLM_INTERNATIONAL_API_KEY, GLM_API_KEY, GOPACT_GLM_API_KEY, or GOPACT_LLM_TOKEN; and set GOPACT_GLM_MODEL or GOPACT_LLM_MODEL")
-	}
-
-	client, err := NewInternationalClient(
-		envOrDefault("GOPACT_GLM_INTERNATIONAL_BASEURL", DefaultInternationalBaseURL),
-		apiKey,
-		gopact.WithModel(model),
-		gopact.WithMaxOutputTokens(512),
-		gopact.WithTemperature(0.2),
-		gopact.EnableStreaming(),
-		DisableThinking(),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	requireProviderConformance(t, client, model)
-}
-
-func requireProviderConformance(t *testing.T, provider *openai.Client, model string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	for _, result := range providerconformance.CheckProviderConformance(ctx, providerconformance.ProviderConformanceHarness{
-		Provider: provider,
-		Request: gopact.NewModelRequest(
-			gopact.WithModel(model),
-			gopact.WithMessages(gopact.UserMessage("Reply with exactly one short sentence.")),
-			gopact.WithMaxOutputTokens(512),
-			gopact.WithTemperature(0.2),
-			DisableThinking(),
-		),
-	}) {
-		if result.Err != nil {
-			t.Fatalf("provider conformance %s failed: %v", result.Case, result.Err)
-		}
+	if text := responseText(resp); text == "" {
+		t.Fatalf("response = %+v, want non-empty text", resp)
 	}
 }
 
-func loadDotEnv(t *testing.T) {
-	t.Helper()
-	path := filepath.Join("..", "..", ".env")
-	file, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
+func TestIntegrationCapabilities(t *testing.T) {
+	model := newIntegrationModel(t)
+	tests := []struct {
+		name  string
+		setup func() gopact.ModelRequest
+		check func(*testing.T, gopact.ModelResponse)
+	}{
+		{
+			name: "non-ascii",
+			setup: func() gopact.ModelRequest {
+				return newIntegrationRequest(model, "只回复: 你好")
+			},
+			check: func(t *testing.T, resp gopact.ModelResponse) {
+				if !strings.Contains(responseText(resp), "你好") {
+					t.Fatalf("text = %q, want Chinese marker", responseText(resp))
+				}
+			},
+		},
+		{
+			name: "multi-turn",
+			setup: func() gopact.ModelRequest {
+				req := model.NewRequest(
+					gopact.UserMessage("Remember this marker: memorytoken."),
+					gopact.UserMessage("Reply with only the marker."),
+				)
+				applyIntegrationDefaults(&req)
+				return req
+			},
+			check: func(t *testing.T, resp gopact.ModelResponse) {
+				if !strings.Contains(responseText(resp), "memorytoken") {
+					t.Fatalf("text = %q, want remembered marker", responseText(resp))
+				}
+			},
+		},
+		{
+			name: "stop",
+			setup: func() gopact.ModelRequest {
+				req := newIntegrationRequest(model, "Reply exactly: alpha STOP beta")
+				req.Stop = []string{"STOP"}
+				return req
+			},
+			check: func(t *testing.T, resp gopact.ModelResponse) {
+				if strings.Contains(responseText(resp), "STOP") {
+					t.Fatalf("text = %q, want stop sequence removed", responseText(resp))
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := model.Invoke(context.Background(), tt.setup())
+			if err != nil {
+				t.Fatalf("Invoke() error = %v", err)
+			}
+			tt.check(t, resp)
+		})
+	}
+}
+
+func TestIntegrationStream(t *testing.T) {
+	model := newIntegrationModel(t)
+	var last string
+	for attempt := 1; attempt <= 3; attempt++ {
+		last = integrationStreamText(t, model)
+		if strings.Contains(last, "streampong") {
 			return
 		}
-		t.Fatalf("open .env: %v", err)
+		time.Sleep(time.Second)
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		if key != "" && os.Getenv(key) == "" {
-			t.Setenv(key, value)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("read .env: %v", err)
-	}
+	t.Fatalf("stream text = %q, want streampong", last)
 }
 
-func firstEnv(keys ...string) string {
-	for _, key := range keys {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return value
+func integrationStreamText(t *testing.T, model *Model) string {
+	t.Helper()
+	var text strings.Builder
+	for chunk, err := range model.InvokeStream(context.Background(), newIntegrationRequest(model, "Reply with exactly: streampong")) {
+		if err != nil {
+			t.Fatalf("InvokeStream() error = %v", err)
 		}
+		text.WriteString(chunk.Text)
 	}
-	return ""
+	return text.String()
 }
 
-func envOrDefault(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
+func newIntegrationModel(t *testing.T) *Model {
+	t.Helper()
+	key := os.Getenv("GLM_API_KEY")
+	if key == "" {
+		t.Skip("GLM_API_KEY is not set")
 	}
-	return fallback
+	model, err := New(key)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	return model
+}
+
+func newIntegrationRequest(model *Model, prompt string) gopact.ModelRequest {
+	req := model.NewRequest(gopact.UserMessage(prompt))
+	applyIntegrationDefaults(&req)
+	return req
+}
+
+func applyIntegrationDefaults(req *gopact.ModelRequest) {
+	if modelName := os.Getenv("GLM_MODEL"); modelName != "" {
+		req.Model = modelName
+	}
+	temperature := 0.0
+	req.Temperature = &temperature
+	req.MaxOutputTokens = 1024
+}
+
+func responseText(resp gopact.ModelResponse) string {
+	if len(resp.Message.Parts) == 0 {
+		return ""
+	}
+	return resp.Message.Parts[0].Text
 }

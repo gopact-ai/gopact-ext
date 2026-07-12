@@ -1,50 +1,39 @@
-# agenttool
+# Agent Tool
 
 <!-- gopact:doc-language: zh -->
 
-[英文文档](./README.md)
+[English](./README.md)
 
-## 中文
+`agenttool` 把一个 child `agent.Agent` 适配为模型可见的 `agent.InvokableTool`，不会创建第二套 runtime。
 
-`agenttool` 将 A2A agent 包装成普通 `gopact.ToolFunc`。它适合父 agent 需要把某个垂域 agent 当作工具调用的场景，例如 ReAct agent 委托 Plan-Execute agent 完成规划。
+## 常见场景
 
-## 安装
+当模型必须通过 tool 边界调用已有 child Agent，且需要显式映射 tool 请求与响应时使用。
 
-```bash
-go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.32
-```
+## 执行模型
 
-## 用法
+`Invoke` 把 `ToolCall` 映射为 `agent.Request`，将 Workflow child options 传给 Agent，再把 `agent.Response` 映射为 `ToolResult`。Child lineage、中断、checkpoint 和 resume 由 Workflow 负责管理。`Adapter.Input` 必须确定且可安全重放；外部副作用应放在 child Agent 中。
 
-```go
-child, err := a2a.NewRunnableAgent(a2a.AgentCard{
-	Name:        "planner",
-	Description: "Plan a task and return execution evidence.",
-}, plannerAgent)
-if err != nil {
-	return err
-}
+## 示例
 
-tool, err := agenttool.New(
-	child,
-	agenttool.WithName("delegate_plan"),
-	agenttool.WithDescription("Delegate planning to the planner agent."),
-)
-if err != nil {
-	return err
-}
-```
-
-默认 tool schema 支持：
-
-- `input`：必填，传给子 agent 的任务输入。
-- `task_id`：可选，指定子 A2A task id。
-- `metadata`：可选，透传给子 task 的元数据。
-
-如果子 agent 支持 streaming，`agenttool` 会把 A2A message、artifact、completion 和 failure evidence 合并到 `gopact.ToolResult.Events`，父 agent 可以继续记录或验证这些事件。
-
-## 验证
+[example_test.go](./example_test.go) 把一个 child Agent 适配为 tool，并执行一次委派任务。
 
 ```bash
-(cd agents/agenttool && go test -count=1 ./...)
+go test -run ExampleNew -count=1 -v
 ```
+
+示例会挂载自己的本地 event handler。使用 `-v` 时，终端会显示写入 stderr 的有界 Workflow 过程事件和测试 PASS 状态。稳定业务结果写入 stdout，由 Go example harness 捕获并与 `// Output:` 校验，不会直接显示在终端。
+
+## 优点
+
+- 确定地完成协议映射，不引入第二套 runtime 或事件流。
+- Child 执行保留正常的 Workflow lineage 与 resume 行为。
+
+## 限制
+
+- Adapter 输入必须确定且可安全重放。
+- Adapter 不提供监督、规划或业务副作用能力。
+
+## 何时选择其他 Agent
+
+当模型不需要把 child 视作 tool 时，直接使用 Workflow child composition。
