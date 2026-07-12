@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/gopact/agent"
 )
 
+// ExampleNew demonstrates the plan, discovery, fetch, evidence, and synthesis research pipeline.
 func ExampleNew() {
 	target, err := deepresearch.New(
 		agent.Identity{Name: "researcher", Description: "builds cited reports", Version: "v1"},

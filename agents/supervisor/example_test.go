@@ -22,6 +22,7 @@ func (target localAgent) Invoke(context.Context, agent.Request, ...gopact.RunOpt
 	return agent.Response{Message: gopact.UserMessage(target.result)}, nil
 }
 
+// ExampleNew demonstrates delegating work and returning the child response.
 func ExampleNew() {
 	catalog := agent.NewCatalog()
 	if err := catalog.Add(localAgent{

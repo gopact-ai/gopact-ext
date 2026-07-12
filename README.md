@@ -1,23 +1,46 @@
-# gopact-ext
+# 🧩 gopact-ext
 
 <!-- gopact:doc-language: en -->
+
+Chinese documentation: [README_zh.md](README_zh.md)
 
 Official extensions for the redesigned `gopact` core.
 
 > **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade. Until Go 1.27 is officially released, it requires a development toolchain and should be treated as a preview, not a stable release.
 
-This repository provides OpenAI-compatible providers, Workflow-native Agents, and SQLite persistence:
+## Extension catalog
 
-- `models/fake`: deterministic model adapter for tests and examples.
-- `models/openai`: reusable OpenAI-compatible HTTP model adapter.
-- `models/agnes`: Agnes OpenAI-compatible model adapter.
-- `models/glm`: GLM/Zhipu OpenAI-compatible model adapter.
-- `agents/react`: the model-intent and tool-feedback loop.
-- `agents/sequential`, `agents/parallel`, and `agents/loop`: deterministic composition agents.
-- `agents/agenttool`: Workflow child Agent-to-tool adapter.
-- `agents/router`, `agents/planexec`, and `agents/supervisor`: routing, plan-execute-replan, and multi-agent supervision.
-- `agents/deep` and `agents/deepresearch`: long-horizon and research-specific agents.
-- `stores/sqlite`: SQLite implementation of Workflow checkpoint, history, control, and runlog contracts.
+### Model adapters
+
+| Package | Use it for |
+| --- | --- |
+| [`models/openai`](./models/openai) | OpenAI-compatible chat and streaming APIs |
+| [`models/agnes`](./models/agnes) | Agnes through its OpenAI-compatible API |
+| [`models/glm`](./models/glm) | GLM/Zhipu through its OpenAI-compatible API |
+| [`models/fake`](./models/fake) | Deterministic offline tests and examples |
+
+### Agent compositions
+
+| Package | Use it for |
+| --- | --- |
+| [`agents/agenttool`](./agents/agenttool) | Expose a child Agent as a typed tool |
+| [`agents/react`](./agents/react) | Run a model-tool-model reasoning loop |
+| [`agents/sequential`](./agents/sequential) | Pass work through ordered child Agents |
+| [`agents/parallel`](./agents/parallel) | Fan out independent work and reduce the results |
+| [`agents/loop`](./agents/loop) | Repeat one Agent until a stop condition |
+| [`agents/router`](./agents/router) | Select one child Agent for each request |
+| [`agents/planexec`](./agents/planexec) | Plan, execute, replan, and report |
+| [`agents/supervisor`](./agents/supervisor) | Coordinate delegated child-Agent work |
+| [`agents/deep`](./agents/deep) | Execute explicit long-horizon task plans |
+| [`agents/deepresearch`](./agents/deepresearch) | Discover, verify, and synthesize cited evidence |
+
+### Stores
+
+| Package | Use it for |
+| --- | --- |
+| [`stores/sqlite`](./stores/sqlite) | Durable local checkpoints, history, control, and run logs |
+
+For complete runnable applications, see [gopact-examples](https://github.com/gopact-ai/gopact-examples).
 
 Every official Agent expresses its algorithmic state machine as one Workflow. Workflow exclusively owns checkpoint, interrupt/resume, child lineage, node facts, and control history; the Agent layer retains model, tool, planning, routing, and research behavior.
 

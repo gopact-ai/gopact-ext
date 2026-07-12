@@ -25,6 +25,7 @@ func (target exampleAgent) Invoke(context.Context, agent.Request, ...gopact.RunO
 	return agent.Response{Message: gopact.UserMessage(target.result)}, nil
 }
 
+// ExampleNew demonstrates concurrent child execution followed by deterministic reduction.
 func ExampleNew() {
 	catalog := agent.NewCatalog()
 	for _, child := range []exampleAgent{

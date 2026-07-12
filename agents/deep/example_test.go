@@ -21,6 +21,7 @@ func (exampleChild) Invoke(context.Context, agent.Request, ...gopact.RunOption) 
 	return agent.Response{Message: gopact.UserMessage("report ready")}, nil
 }
 
+// ExampleNew demonstrates planning one task and delegating it to a catalog Agent.
 func ExampleNew() {
 	catalog := agent.NewCatalog()
 	if err := catalog.Add(exampleChild{}); err != nil {

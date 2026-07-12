@@ -1,4 +1,4 @@
-# Loop Agent
+# 🤖 Loop Agent
 
 <!-- gopact:doc-language: en -->
 

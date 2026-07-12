@@ -1,4 +1,4 @@
-# Supervisor Agent
+# 🤖 Supervisor Agent
 
 <!-- gopact:doc-language: en -->
 
