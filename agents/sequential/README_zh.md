@@ -1,4 +1,4 @@
-# Sequential Agent
+# 🤖 Sequential Agent
 
 <!-- gopact:doc-language: zh -->
 

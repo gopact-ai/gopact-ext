@@ -1,4 +1,4 @@
-# Deep Research Agent
+# 🤖 Deep Research Agent
 
 <!-- gopact:doc-language: en -->
 

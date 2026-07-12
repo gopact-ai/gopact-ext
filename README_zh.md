@@ -1,23 +1,46 @@
-# gopact-ext
+# 🧩 gopact-ext
 
 <!-- gopact:doc-language: zh -->
+
+[English documentation](README.md)
 
 `gopact` 新设计下的官方扩展仓库。
 
 > **仅支持 Go 1.27+。** 本项目围绕泛型方法构建，也借此庆祝我们眼中 Go 近十年来最具影响力的语言演进之一。Go 1.27 正式发布前，本项目需要开发版工具链，应视为预览而非稳定版本。
 
-当前提供 OpenAI-compatible provider、Workflow-native Agent 和 SQLite 持久化 adapter：
+## 扩展目录
 
-- `models/fake`：用于测试和示例的确定性 model adapter；
-- `models/openai`：可复用的 OpenAI-compatible HTTP model adapter；
-- `models/agnes`：Agnes OpenAI-compatible model adapter；
-- `models/glm`：GLM/Zhipu OpenAI-compatible model adapter；
-- `agents/react`：通用 model intent/tool feedback loop；
-- `agents/sequential`、`agents/parallel`、`agents/loop`：确定性组合 Agent；
-- `agents/agenttool`：Workflow child Agent-to-tool adapter；
-- `agents/router`、`agents/planexec`、`agents/supervisor`：路由、计划执行重规划和多 Agent 监督；
-- `agents/deep`、`agents/deepresearch`：长任务和研究领域 Agent；
-- `stores/sqlite`：Workflow checkpoint、history、control 与 runlog 的 SQLite 实现。
+### 模型 Adapter
+
+| 包 | 适用场景 |
+| --- | --- |
+| [`models/openai`](./models/openai) | OpenAI-compatible 对话与流式 API |
+| [`models/agnes`](./models/agnes) | 通过 OpenAI-compatible API 使用 Agnes |
+| [`models/glm`](./models/glm) | 通过 OpenAI-compatible API 使用 GLM/Zhipu |
+| [`models/fake`](./models/fake) | 确定性的离线测试与示例 |
+
+### Agent 组合
+
+| 包 | 适用场景 |
+| --- | --- |
+| [`agents/agenttool`](./agents/agenttool) | 把 child Agent 暴露为 typed tool |
+| [`agents/react`](./agents/react) | 运行 model-tool-model 推理循环 |
+| [`agents/sequential`](./agents/sequential) | 让任务按顺序流经多个 child Agent |
+| [`agents/parallel`](./agents/parallel) | 并行分发独立任务并汇总结果 |
+| [`agents/loop`](./agents/loop) | 重复执行一个 Agent，直到满足停止条件 |
+| [`agents/router`](./agents/router) | 为每个请求选择一个 child Agent |
+| [`agents/planexec`](./agents/planexec) | 计划、执行、重规划并生成报告 |
+| [`agents/supervisor`](./agents/supervisor) | 协调委派给 child Agent 的工作 |
+| [`agents/deep`](./agents/deep) | 执行显式的长任务计划 |
+| [`agents/deepresearch`](./agents/deepresearch) | 发现、验证并汇总带引用的证据 |
+
+### Store
+
+| 包 | 适用场景 |
+| --- | --- |
+| [`stores/sqlite`](./stores/sqlite) | 本地持久化 checkpoint、history、control 与 runlog |
+
+完整的可运行应用见 [gopact-examples](https://github.com/gopact-ai/gopact-examples)。
 
 所有官方 Agent 都由一个 Workflow 表达算法状态机。checkpoint、interrupt/resume、child lineage、节点事实和控制历史只由 Workflow runtime 所有；Agent 层保留模型、工具、计划、路由和研究等领域能力。
 

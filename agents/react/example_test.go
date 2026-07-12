@@ -54,6 +54,7 @@ func (tool *exampleLookupTool) ExecuteTool(_ context.Context, call gopact.ToolCa
 	}, nil
 }
 
+// TestExampleAgentCanBeReusedConcurrently verifies that one configured ReAct Agent can safely serve independent runs.
 func TestExampleAgentCanBeReusedConcurrently(t *testing.T) {
 	tool := &exampleLookupTool{}
 	target, err := react.New(
@@ -99,6 +100,7 @@ func TestExampleAgentCanBeReusedConcurrently(t *testing.T) {
 	}
 }
 
+// ExampleNew demonstrates a ReAct model-tool-model round trip with workflow event logging.
 func ExampleNew() {
 	model := &exampleModel{}
 	tool := &exampleLookupTool{}

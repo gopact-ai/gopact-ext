@@ -1,4 +1,4 @@
-# Parallel Agent
+# 🤖 Parallel Agent
 
 <!-- gopact:doc-language: en -->
 

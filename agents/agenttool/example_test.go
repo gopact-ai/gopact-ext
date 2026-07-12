@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/gopact/workflow"
 )
 
+// ExampleNew demonstrates adapting a child Agent into a typed workflow tool.
 func ExampleNew() {
 	identity := agent.Identity{Name: "delegate", Description: "completes delegated work", Version: "v1"}
 	wf := workflow.New[agent.Request, agent.Response](identity.Name)

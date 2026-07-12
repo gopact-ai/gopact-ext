@@ -27,6 +27,7 @@ func (target exampleAgent) Invoke(_ context.Context, request agent.Request, _ ..
 	return agent.Response{Message: gopact.UserMessage("approved: " + text)}, nil
 }
 
+// ExampleNew demonstrates passing one Agent response into the next Agent.
 func ExampleNew() {
 	catalog := agent.NewCatalog()
 	if err := catalog.Add(exampleAgent{name: "writer"}); err != nil {

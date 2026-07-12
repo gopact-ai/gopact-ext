@@ -22,6 +22,7 @@ func (exampleAgent) Invoke(_ context.Context, request agent.Request, _ ...gopact
 	return agent.Response{Message: gopact.UserMessage(text + "!")}, nil
 }
 
+// ExampleNew demonstrates repeating one Agent until a stop condition is reached.
 func ExampleNew() {
 	target, err := loop.New(
 		agent.Identity{Name: "iteration", Description: "improves a draft three times", Version: "v1"},

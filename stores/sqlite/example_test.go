@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/gopact/workflow"
 )
 
+// ExampleStore demonstrates persisting workflow checkpoints and run logs in SQLite.
 func ExampleStore() {
 	store, err := sqlite.Open(":memory:")
 	if err != nil {
