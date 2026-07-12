@@ -1,58 +1,39 @@
-# react
+# ReAct Agent
 
 <!-- gopact:doc-language: zh -->
 
-[英文文档](./README.md)
+[English](./README.md)
 
-## 中文
+`react` 是 Workflow-backed Agent：一个模型在有界循环中选择 tools、消费 observations、修复响应并结束。
 
-`react` 是 ReAct 风格的 model/tool loop agent template。它适合“模型选择工具、执行工具、根据结果继续推理或完成回答”的交互式任务，并保持 provider-neutral。
+## 常见场景
 
-## 安装
+当模型必须拥有下一步动作决策权，且已完成的 model turns 或 tool batches 在中断后不能重放时使用。
 
-```bash
-go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.29
-```
+## 执行模型
 
-## 用法
+可观测执行图从 `prepare → model` 开始。Final 分支为 `model → finish`；repair 分支为 `model → continue → prepare`；tools 分支为 `model → continue → dispatch-tools → tool → observe-tools → continue`。之后如果仍有下一批调用，`continue` 会回到 `dispatch-tools`，否则回到 `prepare` 开始下一次 model turn。Typed Workflow state 保存 turn、messages、pending observations、tool calls、artifacts 和 metadata。`prepare` 只消费一次 pending observations，并使用已配置的 tool specs 构造模型实际可见的请求。同一 batch 的 direct tools 并发执行，但 observations 保持模型调用顺序；invokable tools 是串行屏障。`WithLimits` 限制 turns、tool call 总数和并行 direct tools 数量。
 
-```go
-uppercase := gopact.ToolFunc{
-	SpecValue: gopact.ObjectToolSpec(
-		"uppercase",
-		"Uppercase text.",
-		gopact.RequiredStringField("text", "Text to uppercase."),
-	),
-	InvokeFunc: func(ctx context.Context, raw json.RawMessage) (gopact.ToolResult, error) {
-		return gopact.TextToolResult("GOPACT"), nil
-	},
-}
+## 示例
 
-agent, err := react.NewModelAgent(
-	model,
-	react.WithTools(ctx, uppercase),
-	react.WithMaxIterations(4),
-	react.WithModelOptions(
-		gopact.WithMaxOutputTokens(1024),
-		gopact.WithTemperature(0.2),
-	),
-)
-if err != nil {
-	return err
-}
-
-events, err := gopacttest.CollectEvents(agent.Run(ctx, "uppercase gopact"))
-```
-
-## 能力边界
-
-- `NewModelAgent` 接受 `gopact.ResponseModel`，如果 provider 支持 streaming，会通过 core adapter 使用 streaming。
-- `WithTools` 注册 visible local tools；tool policy、middleware 和 registry 仍由 core `tools` 包提供。
-- `WithMemory` 支持同步记忆写入，也支持 deferred memory effects，便于宿主进程异步处理。
-- checkpoint、artifact verifier、final verifier 都是可插拔能力，模板不内置持久化后端。
-
-## 验证
+[example_test.go](./example_test.go) 执行一次模型请求的 lookup，把 observation 返回给模型，再生成最终答案。
 
 ```bash
-(cd agents/react && go test -count=1 ./...)
+go test -run ExampleNew -count=1 -v
 ```
+
+示例会挂载自己的本地 event handler。使用 `-v` 时，终端会显示写入 stderr 的有界 Workflow 过程事件和测试 PASS 状态。稳定业务结果写入 stdout，由 Go example harness 捕获并与 `// Output:` 校验，不会直接显示在终端。
+
+## 优点
+
+- 模型与 tool 可以自然反馈，tool outcome 支持恢复。
+- Tool batch 有界，observations 保持模型调用顺序。
+
+## 限制
+
+- Context projection 与 model-tool loop 算法固定。
+- 决策由模型控制，因此确定性低于代码控制的编排。
+
+## 何时选择其他 Agent
+
+更适合确定性编排时，使用 `loop`、`router`、`sequential` 或其他代码控制的 Workflow。

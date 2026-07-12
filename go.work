@@ -1,20 +1,22 @@
-go 1.25.11
+go 1.27
 
 use (
-	./agents/agentnode
+	../gopact
 	./agents/agenttool
-	./agents/humanreview
+	./agents/deep
+	./agents/deepresearch
+	./agents/internal
+	./agents/loop
+	./agents/parallel
 	./agents/planexec
 	./agents/react
-	./agents/scheduler
+	./agents/router
+	./agents/sequential
 	./agents/supervisor
-	./devagent/filesnapshot
-	./devagent/gitdiff
-	./devagent/selfbootstrap
-	./devagent/workspace
 	./models/agnes
-	./models/ark
+	./models/fake
 	./models/glm
 	./models/openai
-	./tests/agents
+	./stores/sqlite
+	./tests/workflow
 )

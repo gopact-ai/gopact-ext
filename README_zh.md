@@ -2,145 +2,31 @@
 
 <!-- gopact:doc-language: zh -->
 
-[英文文档](./README.md)
+`gopact` 新设计下的官方扩展仓库。
 
-## 中文
+> **仅支持 Go 1.27+。** 本项目围绕泛型方法构建，也借此庆祝我们眼中 Go 近十年来最具影响力的语言演进之一。Go 1.27 正式发布前，本项目需要开发版工具链，应视为预览而非稳定版本。
 
-`gopact-ext` 是 `github.com/gopact-ai/gopact` 的官方扩展仓库。它采用一个 Git 仓库、多个 Go submodule 的结构，把 provider、agent template 和 dev-agent helper 放在同一个治理面下，同时让用户只安装自己需要的模块。
+当前提供 OpenAI-compatible provider、Workflow-native Agent 和 SQLite 持久化 adapter：
 
-这个仓库的定位很明确：
+- `models/fake`：用于测试和示例的确定性 model adapter；
+- `models/openai`：可复用的 OpenAI-compatible HTTP model adapter；
+- `models/agnes`：Agnes OpenAI-compatible model adapter；
+- `models/glm`：GLM/Zhipu OpenAI-compatible model adapter；
+- `agents/react`：通用 model intent/tool feedback loop；
+- `agents/sequential`、`agents/parallel`、`agents/loop`：确定性组合 Agent；
+- `agents/agenttool`：Workflow child Agent-to-tool adapter；
+- `agents/router`、`agents/planexec`、`agents/supervisor`：路由、计划执行重规划和多 Agent 监督；
+- `agents/deep`、`agents/deepresearch`：长任务和研究领域 Agent；
+- `stores/sqlite`：Workflow checkpoint、history、control 与 runlog 的 SQLite 实现。
 
-- `models/*` 负责把真实模型服务适配到 core 的 `gopact.ModelRequest`、`Generate`、`Stream`、tool calling、structured output 和错误分类契约。
-- `agents/*` 负责沉淀常用 agent 范式，例如 ReAct、Plan-Execute，以及把 A2A agent 暴露为 tool。
-- `devagent/*` 负责把代码、文件、diff 等工程证据转换成可验证的测试输入。
-- `tests/agents` 负责跨模块模板组合测试；CI 默认只跑 mock，真实 provider 测试必须显式启用。
+所有官方 Agent 都由一个 Workflow 表达算法状态机。checkpoint、interrupt/resume、child lineage、节点事实和控制历史只由 Workflow runtime 所有；Agent 层保留模型、工具、计划、路由和研究等领域能力。
 
-## 模块
+## Breaking 迁移
 
-| 模块 | 用途 | 安装 |
-| --- | --- | --- |
-| `agents/agentnode` | 将 A2A agent 包装成 typed graph node，并保留嵌套 child-event evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/agentnode@v0.1.11` |
-| `agents/agenttool` | 将 A2A agent 包装成普通 `gopact.ToolFunc`。 | `go get github.com/gopact-ai/gopact-ext/agents/agenttool@v0.1.30` |
-| `agents/humanreview` | 为 graph workflow 提供 provider-neutral 的人工审批 gate，支持 interrupt/resume。 | `go get github.com/gopact-ai/gopact-ext/agents/humanreview@v0.1.8` |
-| `agents/planexec` | Plan-Execute agent template，支持 replan、approval、checkpoint、cancel。 | `go get github.com/gopact-ai/gopact-ext/agents/planexec@v0.2.31` |
-| `agents/react` | ReAct model/tool loop template，支持 memory、checkpoint、resume、verification。 | `go get github.com/gopact-ai/gopact-ext/agents/react@v0.2.29` |
-| `agents/scheduler` | 支持 leased background jobs、retry、stop、dead-letter、drain 和 schedule evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/scheduler@v0.1.8` |
-| `agents/supervisor` | 将任务路由到指定子 runnable，并保留 event evidence。 | `go get github.com/gopact-ai/gopact-ext/agents/supervisor@v0.1.17` |
-| `devagent/filesnapshot` | 采集文件 hash、大小、mode、mtime，用于工程证据固化。 | `go get github.com/gopact-ai/gopact-ext/devagent/filesnapshot@v0.1.28` |
-| `devagent/gitdiff` | 采集 worktree 或 staged git diff，用于开发 agent 验证。 | `go get github.com/gopact-ai/gopact-ext/devagent/gitdiff@v0.1.28` |
-| `devagent/selfbootstrap` | 编排 analyze、plan patch proposal policy、write、test、review 证据，产出 self-bootstrap run export 和 verification report。 | `go get github.com/gopact-ai/gopact-ext/devagent/selfbootstrap@v0.1.9` |
-| `devagent/workspace` | 将本地仓库适配为 self-bootstrap 的 policy-approved plan patch apply、diff、file snapshot、command 和 CI gate evidence。 | `go get github.com/gopact-ai/gopact-ext/devagent/workspace@v0.1.10` |
-| `models/openai` | OpenAI-shaped Chat Completions / Responses provider adapter。 | `go get github.com/gopact-ai/gopact-ext/models/openai@v0.5.31` |
-| `models/ark` | Volcengine Ark SDK provider adapter，支持 API key 或 AK/SK。 | `go get github.com/gopact-ai/gopact-ext/models/ark@v0.2.29` |
-| `models/agnes` | Agnes AI provider adapter，基于 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/agnes@v0.1.32` |
-| `models/glm` | GLM/智谱 AI provider adapter，支持国内站和国际站 OpenAI-compatible Chat Completions。 | `go get github.com/gopact-ai/gopact-ext/models/glm@v0.1.0` |
+本次重建使用各模块的下一个 pre-v1 minor 统一发布，不复用旧 patch 版本。主要入口变化：
 
-Go submodule tag 使用模块路径前缀，例如 `models/openai/v0.5.31`。
-
-## 快速开始
-
-OpenAI-compatible 服务通过 `models/openai` 接入。API path 由 provider 模块内部决定：`WithChatCompletionsAPI()` 使用 `/chat/completions`，`WithResponsesAPI()` 使用 `/responses`，调用方只传 base URL、token、model 和请求参数。
-
-```go
-client, err := openai.NewClient(
-	openai.ProviderOpenAI,
-	"https://api.openai.com/v1",
-	os.Getenv("GOPACT_LLM_TOKEN"),
-	openai.WithResponsesAPI(),
-	gopact.WithModel(os.Getenv("GOPACT_LLM_MODEL")),
-	gopact.EnableStreaming(),
-	gopact.EnableToolCalling(),
-)
-if err != nil {
-	return err
-}
-
-response, err := client.Generate(ctx, gopact.NewModelRequest(
-	gopact.WithMessages(gopact.UserMessage("Reply with one sentence.")),
-	gopact.WithMaxOutputTokens(512),
-	gopact.WithTemperature(0.2),
-))
-```
-
-Agent template 使用 core 的模型契约，不绑定具体 provider：
-
-```go
-agent, err := react.NewModelAgent(
-	client,
-	react.WithMaxIterations(4),
-	react.WithModelOptions(gopact.WithMaxOutputTokens(1024)),
-)
-if err != nil {
-	return err
-}
-
-events, err := gopacttest.CollectEvents(agent.Run(ctx, "summarize the release status"))
-```
-
-## 本地验证
-
-CI 是 mock-only，不能依赖真实 provider、`.env` 或外部网络。提交 PR 前至少执行以下命令；这些命令也是 CI 契约的一部分。
-
-```bash
-git diff --check
-./scripts/self-bootstrap-mock-suite.sh
-for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go mod tidy); done
-git diff --exit-code
-for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -count=1 ./...); done
-for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -race -count=1 ./...); done
-for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go vet ./...); done
-for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && golangci-lint run ./...); done
-for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && go test -coverprofile=coverage.out ./...); done
-for mod in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do (cd "$mod" && govulncheck ./...); done
-```
-
-## 真实 provider 测试
-
-真实服务测试通过 `integration` build tag 手动执行，仓库根目录支持 `.env`，但 `.env` 必须保持本地文件。
-
-```bash
-cp .env.example .env
-./scripts/local-agnes-integration.sh
-(cd models/openai && GOWORK=off go test -tags=integration -count=1 ./...)
-(cd models/ark && GOWORK=off go test -tags=integration -count=1 ./...)
-(cd models/agnes && go test -tags=integration -count=1 ./...)
-(cd models/glm && go test -tags=integration -count=1 ./...)
-(cd tests/agents && go test -tags=integration -count=1 ./...)
-```
-
-通用 OpenAI-shaped provider 环境变量：
-
-```bash
-GOPACT_LLM_BASEURL=https://apihub.agnes-ai.com/v1
-GOPACT_LLM_TOKEN=your-token
-GOPACT_LLM_MODEL=agnes-2.0-flash
-```
-
-provider-specific override：
-
-```bash
-GOPACT_AGNES_API_KEY=your-agnes-token
-GOPACT_AGNES_SK=your-agnes-token
-GOPACT_AGNES_HTTP_TIMEOUT=90s
-GOPACT_AGNES_MAX_ATTEMPTS=2
-GOPACT_ARK_API_KEY=your-ark-api-key
-GOPACT_GLM_API_KEY=your-glm-api-key
-GLM_API_KEY=your-glm-api-key
-GOPACT_GLM_BASEURL=https://open.bigmodel.cn/api/paas/v4
-GOPACT_GLM_INTERNATIONAL_API_KEY=your-glm-international-api-key
-GOPACT_GLM_INTERNATIONAL_BASEURL=https://api.z.ai/api/coding/paas/v4
-GOPACT_GLM_MODEL=your-glm-model
-GOPACT_OPENAI_API_KEY=your-openai-api-key
-```
-
-Ark 的两条路径需要区分：`models/ark` 使用 Volcengine Ark SDK，可用 `APIKey` 或 AK/SK；如果某个 Ark endpoint 只是作为 OpenAI-compatible 服务测试，则应使用 `models/openai` 并把 token 放到 `GOPACT_LLM_TOKEN`。
-GLM/智谱的两条路径也需要区分：`models/glm` 的 `NewClient` 面向国内开放平台，`NewInternationalClient` 面向国际 Z.AI endpoint，真实测试只通过 env/secret 注入 key 和 model。
-
-## 文档索引
-
-- [doc/README.md](./doc/README.md)：文档地图与推荐阅读顺序。
-- [doc/FEATURES.md](./doc/FEATURES.md)：可执行能力覆盖矩阵。
-- [doc/CONTRIBUTING.md](./doc/CONTRIBUTING.md)：贡献流程、本地验证和 PR 要求。
-- [doc/SECURITY.md](./doc/SECURITY.md)：安全策略与漏洞报告方式。
-- [doc/CHANGELOG.md](./doc/CHANGELOG.md)：变更记录。
-- [doc/maintainers/repository-governance.md](./doc/maintainers/repository-governance.md)：PR-only、CI 门禁、admin auto-merge 和公开前检查。
+| 旧入口 | 新入口 |
+|---|---|
+| `react.New(ChatModel, *tools.Registry, ...)` / `NewModelAgent` | `react.New(agent.Identity, gopact.Model, ...Option)`；tool 通过 `WithTools(...agent.Tool)` 注入 |
+| `agenttool.New(a2a.Agent, ...Option)` | `agenttool.New(gopact.ToolSpec, agent.Agent, agenttool.Adapter)`；child 作为 typed Workflow invokable 执行 |
+| 旧 graph/template 版 `planexec`、`supervisor` | 传入 immutable `agent.Directory` 与各自 Planner/Replanner/Decider；Workflow 保存状态与执行事实 |

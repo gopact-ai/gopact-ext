@@ -1,226 +1,323 @@
-// Package supervisor provides a minimal child-agent routing template.
+// Package supervisor provides hierarchical multi-agent delegation.
 package supervisor
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
-	"strings"
 
 	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/gopact-ext/agents/internal/contract"
+	"github.com/gopact-ai/gopact/agent"
+	"github.com/gopact-ai/gopact/workflow"
 )
 
-var (
-	ErrRouterRequired     = errors.New("supervisor: router is required")
-	ErrChildRequired      = errors.New("supervisor: child runnable is required")
-	ErrChildNameRequired  = errors.New("supervisor: child name is required")
-	ErrRouteAgentRequired = errors.New("supervisor: routed agent is required")
-	ErrRouteAgentUnknown  = errors.New("supervisor: routed agent is unknown")
-	ErrInvalidInput       = errors.New("supervisor: invalid input")
+const defaultMaxRounds = 32
+
+// DecisionKind is the supervisor's closed decision set.
+type DecisionKind string
+
+const (
+	DecisionDelegate DecisionKind = "delegate"
+	DecisionFinal    DecisionKind = "final"
 )
 
+// Decision is one supervisor transition.
+type Decision struct {
+	Kind     DecisionKind    `json:"kind"`
+	Child    string          `json:"child,omitempty"`
+	Request  agent.Request   `json:"request,omitempty"`
+	Response *agent.Response `json:"response,omitempty"`
+	Reason   string          `json:"reason,omitempty"`
+}
+
+// DelegationResult records one child result for later evaluation.
+type DelegationResult struct {
+	Child    string         `json:"child"`
+	Request  agent.Request  `json:"request"`
+	Response agent.Response `json:"response"`
+}
+
+// DecisionInput is passed to the Decider.
+type DecisionInput struct {
+	Request agent.Request
+	Round   int
+	Results []DelegationResult
+}
+
+// Decider chooses delegation or finalization.
+type Decider interface {
+	Decide(context.Context, DecisionInput) (Decision, error)
+}
+
+// DeciderFunc adapts a function into a Decider.
+type DeciderFunc func(context.Context, DecisionInput) (Decision, error)
+
+func (decider DeciderFunc) Decide(ctx context.Context, input DecisionInput) (Decision, error) {
+	if decider == nil {
+		return Decision{}, errors.New("supervisor: decider is nil")
+	}
+	decision, err := decider(ctx, cloneDecisionInput(input))
+	return cloneDecision(decision), err
+}
+
+// Option configures an Agent during construction.
+type Option interface{ apply(*config) }
+type optionFunc func(*config)
+
+func (option optionFunc) apply(config *config) { option(config) }
+
+type config struct {
+	maxRounds  int
+	validation *contract.Validator
+}
+
+// WithMaxRounds bounds the number of child delegations.
+func WithMaxRounds(limit int) Option {
+	return optionFunc(func(config *config) {
+		config.maxRounds = limit
+		config.validation.Positive("max rounds", limit)
+	})
+}
+
+// State is the Agent-domain delegation context.
 type State struct {
-	Task          string
-	SelectedAgent string
-	Trace         []string
+	Request agent.Request
+	Round   int
+	Results []DelegationResult
 }
 
-type Request struct {
-	Task  string
-	Input any
+type signal struct{}
+type delegation struct {
+	Child   string
+	Request agent.Request
 }
 
-type Route struct {
-	Agent string
-	Input any
-}
+// Agent delegates through one Workflow until the Decider returns a final response.
+type Agent struct{ workflow *agent.WorkflowAgent }
 
-type Router interface {
-	Route(context.Context, Request) (Route, error)
-}
+var _ agent.Agent = (*Agent)(nil)
 
-type RouterFunc func(context.Context, Request) (Route, error)
+// ErrRoundLimit reports a delegation beyond the configured round limit.
+var ErrRoundLimit = errors.New("supervisor: round limit reached")
 
-func (f RouterFunc) Route(ctx context.Context, request Request) (Route, error) {
-	if f == nil {
-		return Route{}, ErrRouterRequired
+// New creates a supervisor over an immutable child Directory.
+func New(identity agent.Identity, directory *agent.Directory, decider Decider, options ...Option) (*Agent, error) {
+	if err := contract.New("supervisor").
+		Identity("agent", identity).
+		Present("directory", directory).
+		Present("decider", decider).
+		Err(); err != nil {
+		return nil, err
 	}
-	return f(ctx, request)
-}
-
-type Child struct {
-	Name     string
-	Runnable gopact.Runnable
-}
-
-type Agent struct {
-	router   Router
-	children map[string]gopact.Runnable
-}
-
-func New(router Router, children ...Child) (*Agent, error) {
-	if router == nil {
-		return nil, ErrRouterRequired
+	configuration := config{maxRounds: defaultMaxRounds, validation: contract.New("supervisor")}
+	for _, option := range options {
+		if option != nil {
+			option.apply(&configuration)
+		}
 	}
-	agent := &Agent{router: router, children: make(map[string]gopact.Runnable, len(children))}
-	for _, child := range children {
-		name := strings.TrimSpace(child.Name)
-		if name == "" {
-			return nil, ErrChildNameRequired
-		}
-		if child.Runnable == nil {
-			return nil, ErrChildRequired
-		}
-		agent.children[name] = child.Runnable
+	if err := configuration.validation.Err(); err != nil {
+		return nil, err
 	}
-	return agent, nil
-}
-
-func (a *Agent) Run(ctx context.Context, input any, opts ...gopact.RunOption) iter.Seq2[gopact.Event, error] {
-	return func(yield func(gopact.Event, error) bool) {
-		if ctx == nil {
-			ctx = context.TODO()
-		}
-		cfg := gopact.ResolveRunOptions(opts...)
-		contextIDs, _ := gopact.RuntimeIDsFromContext(ctx)
-		ids := cfg.IDs.WithDefaults(contextIDs)
-		ctx = gopact.ContextWithRuntimeIDs(ctx, ids)
-
-		state, err := inputState(input)
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
+	start := wf.Node("start", func(_ context.Context, _ agent.Request) (signal, error) {
+		return signal{}, nil
+	})
+	decide := wf.Merge("decide", func(ctx context.Context, _ workflow.Inputs) (Decision, error) {
+		current, err := state.Get(ctx)
 		if err != nil {
-			yield(runFailed(ids, "", err), err)
-			return
+			return Decision{}, err
 		}
-		if a == nil || a.router == nil {
-			yield(runFailed(ids, "", ErrRouterRequired), ErrRouterRequired)
-			return
-		}
-		if !yield(gopact.Event{Type: gopact.EventRunStarted, IDs: ids}.WithRuntimeDefaults(ids), nil) {
-			return
-		}
-		if !yield(routeStarted(ids, state), nil) {
-			return
-		}
-
-		route, err := a.router.Route(ctx, Request{Task: state.Task, Input: input})
+		decision, err := decider.Decide(ctx, DecisionInput{
+			Request: cloneRequest(current.Request), Round: current.Round + 1,
+			Results: cloneDelegationResults(current.Results),
+		})
 		if err != nil {
-			yield(runFailed(ids, "", err), err)
-			return
+			return Decision{}, fmt.Errorf("supervisor: decide: %w", err)
 		}
-		route.Agent = strings.TrimSpace(route.Agent)
-		if route.Agent == "" {
-			yield(runFailed(ids, "", ErrRouteAgentRequired), ErrRouteAgentRequired)
-			return
+		if err := validateDecision(directory, current.Round, configuration.maxRounds, decision); err != nil {
+			return Decision{}, err
 		}
-		child, ok := a.children[route.Agent]
-		if !ok {
-			err := fmt.Errorf("%w: %s", ErrRouteAgentUnknown, route.Agent)
-			yield(runFailed(ids, route.Agent, err), err)
-			return
+		return cloneDecision(decision), nil
+	})
+	delegate := wf.AddInvokable("delegate", delegationDispatcher{directory: directory})
+	record := wf.Node("record", func(ctx context.Context, result DelegationResult) (signal, error) {
+		current, err := state.Get(ctx)
+		if err != nil {
+			return signal{}, err
 		}
-
-		state.SelectedAgent = route.Agent
-		state.Trace = append(state.Trace, "route:"+route.Agent)
-		if !yield(routeCompleted(ids, state), nil) {
-			return
+		current.Results = append(current.Results, cloneDelegationResult(result))
+		current.Round++
+		if err := state.Set(ctx, current); err != nil {
+			return signal{}, err
 		}
-
-		childIDs := ids
-		childIDs.AgentID = route.Agent
-		childOpts := append([]gopact.RunOption(nil), opts...)
-		childOpts = append(childOpts, gopact.WithRuntimeIDs(childIDs))
-		childInput := route.Input
-		if childInput == nil {
-			childInput = input
+		return signal{}, nil
+	})
+	finish := wf.Node("finish", func(_ context.Context, response agent.Response) (agent.Response, error) {
+		return cloneResponse(response), nil
+	})
+	decide.Route(func(_ context.Context, decision Decision) (workflow.Dispatch, error) {
+		if decision.Kind == DecisionDelegate {
+			return decide.Once(delegate, delegation{Child: decision.Child, Request: cloneRequest(decision.Request)}), nil
 		}
-		for event, childErr := range child.Run(gopact.ContextWithRuntimeIDs(ctx, childIDs), childInput, childOpts...) {
-			event = event.WithRuntimeDefaults(childIDs)
-			if childErr != nil && event.Err == nil {
-				event.Err = childErr
-			}
-			if !yield(event, nil) {
-				return
-			}
-			if childErr != nil {
-				yield(runFailed(ids, route.Agent, childErr), childErr)
-				return
-			}
-		}
-		yield(gopact.Event{
-			Type:     gopact.EventRunCompleted,
-			IDs:      ids,
-			Metadata: map[string]any{"selected_agent": route.Agent},
-		}.WithRuntimeDefaults(ids), nil)
+		return decide.Once(finish, cloneResponse(*decision.Response)), nil
+	})
+	wf.Entry(start)
+	wf.Edge(start, decide)
+	wf.Edge(decide, delegate)
+	wf.Edge(decide, finish)
+	wf.Edge(delegate, record)
+	wf.Edge(record, decide)
+	wf.Exit(finish)
+	facade, err := agent.NewWorkflowAgent(identity, wf)
+	if err != nil {
+		return nil, fmt.Errorf("supervisor: build workflow: %w", err)
 	}
+	return &Agent{workflow: facade}, nil
 }
 
-func inputState(input any) (State, error) {
-	switch value := input.(type) {
-	case State:
-		if strings.TrimSpace(value.Task) == "" {
-			return State{}, ErrInvalidInput
-		}
-		return value, nil
-	case string:
-		if strings.TrimSpace(value) == "" {
-			return State{}, ErrInvalidInput
-		}
-		return State{Task: value}, nil
+// Identity returns the immutable Agent identity.
+func (target *Agent) Identity() agent.Identity {
+	if target == nil || target.workflow == nil {
+		return agent.Identity{}
+	}
+	return target.workflow.Identity()
+}
+
+// Invoke delegates until the supervisor returns a final decision.
+func (target *Agent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
+	if target == nil || target.workflow == nil {
+		return agent.Response{}, errors.New("supervisor: agent is nil")
+	}
+	return target.workflow.Invoke(ctx, cloneRequest(request), options...)
+}
+
+type delegationDispatcher struct{ directory *agent.Directory }
+
+func (dispatcher delegationDispatcher) Invoke(ctx context.Context, input delegation, options ...gopact.RunOption) (DelegationResult, error) {
+	child, ok := dispatcher.directory.Lookup(input.Child)
+	if !ok || contract.IsNil(child) {
+		return DelegationResult{}, fmt.Errorf("supervisor: child %q is not in the directory", input.Child)
+	}
+	response, err := child.Invoke(ctx, cloneRequest(input.Request), options...)
+	if err != nil {
+		return DelegationResult{}, fmt.Errorf("supervisor: delegate %q: %w", input.Child, err)
+	}
+	return DelegationResult{
+		Child: input.Child, Request: cloneRequest(input.Request), Response: cloneResponse(response),
+	}, nil
+}
+
+func validateDecision(directory *agent.Directory, round, maxRounds int, decision Decision) error {
+	if err := decision.validate(); err != nil {
+		return err
+	}
+	if decision.Kind != DecisionDelegate {
+		return nil
+	}
+	if round >= maxRounds {
+		return ErrRoundLimit
+	}
+	child, ok := directory.Lookup(decision.Child)
+	if !ok || contract.IsNil(child) {
+		return fmt.Errorf("supervisor: child %q is not in the directory", decision.Child)
+	}
+	return nil
+}
+
+func (decision Decision) validate() error {
+	validator := contract.New("supervisor")
+	switch decision.Kind {
+	case DecisionDelegate:
+		validator.
+			Required("delegate child", decision.Child).
+			Check(decision.Response == nil, "delegate decision cannot carry response")
+	case DecisionFinal:
+		validator.
+			Present("final response", decision.Response).
+			Check(decision.Child == "", "final decision cannot carry child")
 	default:
-		return State{}, fmt.Errorf("%w: got %T", ErrInvalidInput, input)
+		validator.Check(false, "unknown decision kind %q", decision.Kind)
 	}
+	return validator.Err()
 }
 
-func routeStarted(ids gopact.RuntimeIDs, state State) gopact.Event {
-	return gopact.Event{
-		Type: gopact.EventNodeStarted,
-		IDs:  ids,
-		Node: "route",
-		Step: 1,
-		StepSnapshot: &gopact.StepSnapshot{
-			ID:    "supervisor:route",
-			Step:  1,
-			Node:  "route",
-			Phase: gopact.StepRunning,
-			IDs:   ids,
-			Input: state,
-		},
-		Metadata: map[string]any{"template": "supervisor"},
-	}.WithRuntimeDefaults(ids)
-}
-
-func routeCompleted(ids gopact.RuntimeIDs, state State) gopact.Event {
-	return gopact.Event{
-		Type: gopact.EventNodeCompleted,
-		IDs:  ids,
-		Node: "route",
-		Step: 1,
-		StepSnapshot: &gopact.StepSnapshot{
-			ID:       "supervisor:route",
-			Step:     1,
-			Node:     "route",
-			Phase:    gopact.StepCompleted,
-			IDs:      ids,
-			Output:   state,
-			Metadata: map[string]any{"selected_agent": state.SelectedAgent},
-		},
-		Metadata: map[string]any{
-			"template":       "supervisor",
-			"selected_agent": state.SelectedAgent,
-		},
-	}.WithRuntimeDefaults(ids)
-}
-
-func runFailed(ids gopact.RuntimeIDs, selectedAgent string, err error) gopact.Event {
-	metadata := map[string]any{"template": "supervisor"}
-	if selectedAgent != "" {
-		metadata["selected_agent"] = selectedAgent
+func cloneDecision(decision Decision) Decision {
+	decision.Request = cloneRequest(decision.Request)
+	if decision.Response != nil {
+		response := cloneResponse(*decision.Response)
+		decision.Response = &response
 	}
-	return gopact.Event{
-		Type:     gopact.EventRunFailed,
-		IDs:      ids,
-		Err:      err,
-		Metadata: metadata,
-	}.WithRuntimeDefaults(ids)
+	return decision
+}
+
+func cloneDecisionInput(input DecisionInput) DecisionInput {
+	input.Request = cloneRequest(input.Request)
+	input.Results = cloneDelegationResults(input.Results)
+	return input
+}
+
+func cloneDelegationResult(result DelegationResult) DelegationResult {
+	result.Request = cloneRequest(result.Request)
+	result.Response = cloneResponse(result.Response)
+	return result
+}
+
+func cloneDelegationResults(results []DelegationResult) []DelegationResult {
+	if results == nil {
+		return nil
+	}
+	cloned := make([]DelegationResult, len(results))
+	for index, result := range results {
+		cloned[index] = cloneDelegationResult(result)
+	}
+	return cloned
+}
+
+func cloneRequest(request agent.Request) agent.Request {
+	request.Messages = cloneMessages(request.Messages)
+	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
+	request.Metadata = cloneStringMap(request.Metadata)
+	return request
+}
+
+func cloneResponse(response agent.Response) agent.Response {
+	response.Message = cloneMessage(response.Message)
+	response.Artifacts = append([]gopact.ArtifactRef(nil), response.Artifacts...)
+	response.Metadata = cloneStringMap(response.Metadata)
+	return response
+}
+
+func cloneMessages(messages []gopact.Message) []gopact.Message {
+	if messages == nil {
+		return nil
+	}
+	cloned := make([]gopact.Message, len(messages))
+	for index, message := range messages {
+		cloned[index] = cloneMessage(message)
+	}
+	return cloned
+}
+
+func cloneMessage(message gopact.Message) gopact.Message {
+	message.Parts = append([]gopact.MessagePart(nil), message.Parts...)
+	for index := range message.Parts {
+		if message.Parts[index].Ref != nil {
+			ref := *message.Parts[index].Ref
+			message.Parts[index].Ref = &ref
+		}
+	}
+	return message
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }

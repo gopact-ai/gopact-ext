@@ -2,262 +2,236 @@ package agenttool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"iter"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/gopact"
-	"github.com/gopact-ai/gopact/a2a"
+	"github.com/gopact-ai/gopact/agent"
+	"github.com/gopact-ai/gopact/workflow"
 )
 
-func TestNewStreamsAgentAndReturnsToolResultWithEvidence(t *testing.T) {
-	artifact := gopact.ArtifactRef{ID: "plan-1", Name: "plan.md", URI: "memory://plan-1"}
-	wantIDs := gopact.RuntimeIDs{
-		RunID:    "run-1",
-		ThreadID: "thread-1",
-		CallID:   "parent-call-1",
-		TraceID:  "trace-1",
-	}
-	var gotTask a2a.Task
-	var gotContextIDs gopact.RuntimeIDs
-
-	agent := &streamAgent{
-		card: a2a.AgentCard{
-			Name:        "planner",
-			Description: "Drafts plans.",
-			URL:         "memory://planner",
-		},
-		streamFunc: func(ctx context.Context, task a2a.Task) iter.Seq2[a2a.TaskEvent, error] {
-			gotTask = task
-			gotContextIDs, _ = gopact.RuntimeIDsFromContext(ctx)
-			return func(yield func(a2a.TaskEvent, error) bool) {
-				if !yield(a2a.TaskEvent{TaskID: task.ID, IDs: task.IDs, Message: "draft ready"}, nil) {
-					return
+func TestToolMapsCallAndForwardsWorkflowOptions(t *testing.T) {
+	var childRequest agent.Request
+	var childRunID string
+	child := testAgent("delegate", func(_ context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
+		childRequest = request
+		childRunID = gopact.ResolveRunOptions(options...).RunID
+		return agent.Response{
+			Message: gopact.UserMessage("child-result"), Artifacts: []gopact.ArtifactRef{{URI: "artifact://child"}},
+		}, nil
+	})
+	target, err := New(
+		gopact.ToolSpec{Name: "delegate", Schema: json.RawMessage(`{"type":"object"}`)},
+		child,
+		AdapterFuncs{
+			InputFunc: func(_ context.Context, call gopact.ToolCall) (agent.Request, error) {
+				var arguments struct {
+					Task string `json:"task"`
 				}
-				if !yield(a2a.TaskEvent{TaskID: task.ID, IDs: task.IDs, Artifacts: []gopact.ArtifactRef{artifact}}, nil) {
-					return
+				if err := json.Unmarshal(call.Arguments, &arguments); err != nil {
+					return agent.Request{}, err
 				}
-				yield(a2a.TaskEvent{
-					TaskID: task.ID,
-					IDs:    task.IDs,
-					Status: a2a.TaskStatusCompleted,
-					Result: &a2a.Result{
-						TaskID:    task.ID,
-						Output:    "done",
-						Artifacts: []gopact.ArtifactRef{artifact},
-						Metadata:  map[string]any{"phase": "final"},
-					},
-				}, nil)
-			}
+				return agent.Request{Messages: []gopact.Message{gopact.UserMessage(arguments.Task)}}, nil
+			},
+			OutputFunc: func(_ context.Context, response agent.Response) (gopact.ToolResult, error) {
+				return gopact.ToolResult{
+					DataRef: "data://result", ArtifactRefs: response.Artifacts, Preview: response.Message.Parts[0].Text,
+				}, nil
+			},
 		},
-	}
-
-	tool, err := New(agent)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	spec, err := tool.Spec(context.Background())
-	if err != nil {
-		t.Fatalf("Spec() error = %v", err)
-	}
-	if spec.Name != "planner" || spec.Description != "Drafts plans." {
-		t.Fatalf("spec = %+v, want card-derived tool spec", spec)
-	}
-	requireSpecProperty(t, spec, "metadata", "object")
-
-	result, err := tool.Invoke(
-		gopact.ContextWithRuntimeIDs(context.Background(), wantIDs),
-		[]byte(`{"input":"ship it","task_id":"task-1","metadata":{"tenant":"acme"}}`),
 	)
 	if err != nil {
-		t.Fatalf("Invoke() error = %v", err)
+		t.Fatal(err)
 	}
-	if gotTask.ID != "task-1" || gotTask.Input != "ship it" || gotTask.IDs != wantIDs {
-		t.Fatalf("task = %+v, want input, task id, and runtime ids", gotTask)
+	call := gopact.ToolCall{ID: "call-1", Name: "delegate", Arguments: json.RawMessage(`{"task":"review"}`)}
+	outcome, err := target.Invoke(context.Background(), call, gopact.WithRunID("child-run"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if gotTask.Metadata["tenant"] != "acme" {
-		t.Fatalf("task metadata = %+v, want tenant metadata", gotTask.Metadata)
+	result, ok := outcome.(gopact.ToolResultOutcome)
+	if !ok || result.Result.Preview != "child-result" || result.Result.DataRef != "data://result" ||
+		len(result.Result.ArtifactRefs) != 1 || childRunID != "child-run" {
+		t.Fatalf("outcome/run id = %+v/%q, want mapped result and forwarded options", outcome, childRunID)
 	}
-	if gotContextIDs != wantIDs {
-		t.Fatalf("context ids = %+v, want %+v", gotContextIDs, wantIDs)
-	}
-	if result.Content != "done" {
-		t.Fatalf("content = %q, want done", result.Content)
-	}
-	if len(result.Artifacts) != 1 || result.Artifacts[0].ID != artifact.ID {
-		t.Fatalf("artifacts = %+v, want deduped child artifact", result.Artifacts)
-	}
-	requireEventTypes(t, result.Events,
-		gopact.EventA2AMessageReceived,
-		gopact.EventA2AArtifactUpdated,
-		gopact.EventA2ATaskCompleted,
-	)
-	if result.Events[0].Message == nil || result.Events[0].Message.Text() != "draft ready" {
-		t.Fatalf("message event = %+v, want assistant message", result.Events[0])
-	}
-	if result.Events[2].Result == nil || result.Events[2].Result.Content != "done" {
-		t.Fatalf("completed event = %+v, want tool result content", result.Events[2])
-	}
-	if result.Events[2].Metadata["agent_name"] != "planner" ||
-		result.Events[2].Metadata["agent_url"] != "memory://planner" ||
-		result.Events[2].Metadata["a2a_task_id"] != "task-1" ||
-		result.Events[2].Metadata["a2a_status"] != string(a2a.TaskStatusCompleted) {
-		t.Fatalf("completed metadata = %+v, want A2A child evidence", result.Events[2].Metadata)
+	if childRequest.Messages[0].Parts[0].Text != "review" {
+		t.Fatalf("child request = %+v, want mapped arguments", childRequest)
 	}
 }
 
-func TestNewFallsBackToSendForNonStreamingAgent(t *testing.T) {
-	artifact := gopact.ArtifactRef{ID: "review-1", URI: "memory://review-1"}
-	agent := &sendAgent{
-		card: a2a.AgentCard{Name: "reviewer", Description: "Reviews work."},
-		sendFunc: func(ctx context.Context, task a2a.Task) (a2a.Result, error) {
-			if task.Input != "check this" {
-				t.Fatalf("task input = %q, want check this", task.Input)
-			}
-			return a2a.Result{
-				TaskID:    task.ID,
-				Output:    "approved",
-				Artifacts: []gopact.ArtifactRef{artifact},
-				Metadata:  map[string]any{"score": "pass"},
-			}, nil
+func TestToolResumesInterruptedWorkflowChild(t *testing.T) {
+	var childRuns int
+	identity := agent.Identity{Name: "delegate", Description: "requires approval", Version: "v1"}
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	work := wf.Node("work", func(context.Context, agent.Request) (agent.Response, error) {
+		childRuns++
+		return agent.Response{Message: gopact.UserMessage("approved")}, nil
+	})
+	work.Guard(workflow.BeforeRun("approval", workflow.GuardFunc[agent.Request, agent.Response](
+		func(context.Context, workflow.GuardContext[agent.Request, agent.Response]) (workflow.GuardDecision[agent.Request, agent.Response], error) {
+			return workflow.GuardInterrupt[agent.Request, agent.Response]{Request: workflow.InterruptRequest{ID: "approval"}}, nil
+		},
+	)))
+	wf.Entry(work)
+	wf.Exit(work)
+	child, err := agent.NewWorkflowAgent(identity, wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := New(gopact.ToolSpec{Name: "delegate"}, child, identityAdapter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := gopact.ToolCall{ID: "call-1", Name: "delegate"}
+	_, err = target.Invoke(context.Background(), call, gopact.WithRunID("tool-child"))
+	var interrupted workflow.InterruptError
+	if !errors.As(err, &interrupted) {
+		t.Fatalf("Invoke() error = %v, want Workflow InterruptError", err)
+	}
+	outcome, err := target.Invoke(context.Background(), call, workflow.WithResume(workflow.ResumeRequest{
+		RunID: interrupted.RunID, CheckpointID: interrupted.CheckpointID,
+		Resolutions: []workflow.InterruptResolution{{InterruptID: "approval", PayloadRef: "resolution://approved"}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := outcome.(gopact.ToolResultOutcome)
+	if !ok || result.Result.Preview != "approved" || childRuns != 1 {
+		t.Fatalf("outcome/runs = %+v/%d, want resumed child result once", outcome, childRuns)
+	}
+}
+
+func TestToolPropagatesAdapterAndChildFailures(t *testing.T) {
+	boom := errors.New("boom")
+	tests := []struct {
+		name    string
+		child   agent.Agent
+		adapter Adapter
+	}{
+		{
+			name: "input adapter", child: testAgent("delegate", nil),
+			adapter: AdapterFuncs{
+				InputFunc:  func(context.Context, gopact.ToolCall) (agent.Request, error) { return agent.Request{}, boom },
+				OutputFunc: func(context.Context, agent.Response) (gopact.ToolResult, error) { return gopact.ToolResult{}, nil },
+			},
+		},
+		{
+			name: "child",
+			child: testAgent("delegate", func(context.Context, agent.Request, ...gopact.RunOption) (agent.Response, error) {
+				return agent.Response{}, boom
+			}),
+			adapter: identityAdapter(),
+		},
+		{
+			name: "output adapter", child: testAgent("delegate", nil),
+			adapter: AdapterFuncs{
+				InputFunc:  identityAdapter().InputFunc,
+				OutputFunc: func(context.Context, agent.Response) (gopact.ToolResult, error) { return gopact.ToolResult{}, boom },
+			},
 		},
 	}
-
-	tool, err := New(agent, WithName("quality_review"))
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	spec, err := tool.Spec(context.Background())
-	if err != nil {
-		t.Fatalf("Spec() error = %v", err)
-	}
-	if spec.Name != "quality_review" || spec.Description != "Reviews work." {
-		t.Fatalf("spec = %+v, want overridden name and card description", spec)
-	}
-
-	result, err := tool.Invoke(context.Background(), []byte(`"check this"`))
-	if err != nil {
-		t.Fatalf("Invoke() error = %v", err)
-	}
-	if result.Content != "approved" {
-		t.Fatalf("content = %q, want approved", result.Content)
-	}
-	if len(result.Artifacts) != 1 || result.Artifacts[0].ID != artifact.ID {
-		t.Fatalf("artifacts = %+v, want send artifact", result.Artifacts)
-	}
-	requireEventTypes(t, result.Events, gopact.EventA2ATaskCompleted)
-	if result.Metadata["agent_name"] != "reviewer" || result.Metadata["score"] != "pass" {
-		t.Fatalf("metadata = %+v, want merged child result metadata", result.Metadata)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, err := New(gopact.ToolSpec{Name: "delegate"}, tt.child, tt.adapter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = target.Invoke(context.Background(), gopact.ToolCall{ID: "call-1", Name: "delegate"})
+			if !errors.Is(err, boom) {
+				t.Fatalf("Invoke() error = %v, want underlying failure", err)
+			}
+		})
 	}
 }
 
-func TestNewPropagatesStreamingFailureWithEvidence(t *testing.T) {
-	wantErr := errors.New("child failed")
-	agent := &streamAgent{
-		card: a2a.AgentCard{Name: "breaker"},
-		streamFunc: func(ctx context.Context, task a2a.Task) iter.Seq2[a2a.TaskEvent, error] {
-			return func(yield func(a2a.TaskEvent, error) bool) {
-				yield(a2a.TaskEvent{
-					TaskID: task.ID,
-					IDs:    task.IDs,
-					Status: a2a.TaskStatusFailed,
-					Err:    wantErr,
-				}, wantErr)
+func TestNewRejectsInvalidToolConfiguration(t *testing.T) {
+	child := testAgent("delegate", nil)
+	tests := []struct {
+		name    string
+		spec    gopact.ToolSpec
+		child   agent.Agent
+		adapter Adapter
+	}{
+		{name: "empty name", child: child, adapter: identityAdapter()},
+		{name: "invalid schema", spec: gopact.ToolSpec{Name: "delegate", Schema: []byte(`{"type":`)}, child: child, adapter: identityAdapter()},
+		{name: "nil child", spec: gopact.ToolSpec{Name: "delegate"}, adapter: identityAdapter()},
+		{name: "nil adapter", spec: gopact.ToolSpec{Name: "delegate"}, child: child},
+		{name: "missing output", spec: gopact.ToolSpec{Name: "delegate"}, child: child, adapter: AdapterFuncs{InputFunc: identityAdapter().InputFunc}},
+		{name: "missing input", spec: gopact.ToolSpec{Name: "delegate"}, child: child, adapter: AdapterFuncs{OutputFunc: identityAdapter().OutputFunc}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := New(tt.spec, tt.child, tt.adapter); err == nil {
+				t.Fatal("New() error = nil")
 			}
+		})
+	}
+}
+
+func TestToolHasImmutableSpecAndValidatesCallBeforeAdapter(t *testing.T) {
+	var adapterCalls int
+	adapter := identityAdapter()
+	adapter.InputFunc = func(context.Context, gopact.ToolCall) (agent.Request, error) {
+		adapterCalls++
+		return agent.Request{}, nil
+	}
+	spec := gopact.ToolSpec{
+		Name: "delegate", Schema: json.RawMessage(`{"type":"object"}`), Metadata: map[string]string{"owner": "original"},
+	}
+	target, err := New(spec, testAgent("delegate", nil), adapter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Schema[0] = '['
+	spec.Metadata["owner"] = "mutated"
+	first := target.Spec()
+	first.Schema[0] = '['
+	first.Metadata["owner"] = "caller"
+	second := target.Spec()
+	if string(second.Schema) != `{"type":"object"}` || second.Metadata["owner"] != "original" {
+		t.Fatalf("Spec() = %+v, want immutable snapshot", second)
+	}
+	_, err = target.Invoke(context.Background(), gopact.ToolCall{
+		ID: "call-1", Name: "delegate", Arguments: []byte(`{"task":`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid JSON") || adapterCalls != 0 {
+		t.Fatalf("Invoke() error/adapter calls = %v/%d, want validation before adapter", err, adapterCalls)
+	}
+	if _, ok := any(target).(agent.InvokableTool); !ok {
+		t.Fatal("Agent-backed Tool does not implement InvokableTool")
+	}
+}
+
+type testChild struct {
+	identity agent.Identity
+	invoke   func(context.Context, agent.Request, ...gopact.RunOption) (agent.Response, error)
+}
+
+func testAgent(name string, invoke func(context.Context, agent.Request, ...gopact.RunOption) (agent.Response, error)) *testChild {
+	if invoke == nil {
+		invoke = func(context.Context, agent.Request, ...gopact.RunOption) (agent.Response, error) {
+			return agent.Response{Message: gopact.UserMessage("done")}, nil
+		}
+	}
+	return &testChild{
+		identity: agent.Identity{Name: name, Description: name + " agent", Version: "v1"}, invoke: invoke,
+	}
+}
+
+func (child *testChild) Identity() agent.Identity { return child.identity }
+
+func (child *testChild) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
+	return child.invoke(ctx, request, options...)
+}
+
+func identityAdapter() AdapterFuncs {
+	return AdapterFuncs{
+		InputFunc: func(context.Context, gopact.ToolCall) (agent.Request, error) {
+			return agent.Request{Messages: []gopact.Message{gopact.UserMessage("work")}}, nil
+		},
+		OutputFunc: func(_ context.Context, response agent.Response) (gopact.ToolResult, error) {
+			return gopact.ToolResult{Preview: response.Message.Parts[0].Text}, nil
 		},
 	}
-	tool, err := New(agent)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	result, err := tool.Invoke(context.Background(), []byte(`{"input":"fail"}`))
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("Invoke() error = %v, want %v", err, wantErr)
-	}
-	requireEventTypes(t, result.Events, gopact.EventA2ATaskFailed)
-	if result.Events[0].Err == nil || result.Events[0].Metadata["a2a_status"] != string(a2a.TaskStatusFailed) {
-		t.Fatalf("failed event = %+v, want failed evidence", result.Events[0])
-	}
-}
-
-func TestNewRejectsNilAgent(t *testing.T) {
-	_, err := New(nil)
-	if !errors.Is(err, ErrAgentRequired) {
-		t.Fatalf("New(nil) error = %v, want %v", err, ErrAgentRequired)
-	}
-}
-
-func requireSpecProperty(t *testing.T, spec gopact.ToolSpec, name string, wantType string) {
-	t.Helper()
-
-	properties, ok := spec.InputSchema["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("spec input schema properties = %T, want map", spec.InputSchema["properties"])
-	}
-	property, ok := properties[name].(gopact.JSONSchema)
-	if !ok {
-		t.Fatalf("spec input schema missing %q property: %+v", name, properties)
-	}
-	if property["type"] != wantType {
-		t.Fatalf("spec property %q type = %v, want %s", name, property["type"], wantType)
-	}
-}
-
-func requireEventTypes(t *testing.T, events []gopact.Event, want ...gopact.EventType) {
-	t.Helper()
-	if len(events) != len(want) {
-		t.Fatalf("events = %d, want %d: %+v", len(events), len(want), events)
-	}
-	for i := range want {
-		if events[i].Type != want[i] {
-			t.Fatalf("event[%d] type = %s, want %s", i, events[i].Type, want[i])
-		}
-	}
-}
-
-type sendAgent struct {
-	card     a2a.AgentCard
-	sendFunc func(ctx context.Context, task a2a.Task) (a2a.Result, error)
-}
-
-func (a *sendAgent) Card() a2a.AgentCard {
-	return a.card
-}
-
-func (a *sendAgent) Send(ctx context.Context, task a2a.Task) (a2a.Result, error) {
-	if a.sendFunc == nil {
-		return a2a.Result{}, errors.New("unexpected Send call")
-	}
-	return a.sendFunc(ctx, task)
-}
-
-func (a *sendAgent) Cancel(_ context.Context, _ string) error {
-	return nil
-}
-
-type streamAgent struct {
-	card       a2a.AgentCard
-	streamFunc func(ctx context.Context, task a2a.Task) iter.Seq2[a2a.TaskEvent, error]
-}
-
-func (a *streamAgent) Card() a2a.AgentCard {
-	return a.card
-}
-
-func (a *streamAgent) Send(context.Context, a2a.Task) (a2a.Result, error) {
-	return a2a.Result{}, errors.New("unexpected Send call")
-}
-
-func (a *streamAgent) Cancel(_ context.Context, _ string) error {
-	return nil
-}
-
-func (a *streamAgent) Stream(ctx context.Context, task a2a.Task) iter.Seq2[a2a.TaskEvent, error] {
-	if a.streamFunc == nil {
-		return func(yield func(a2a.TaskEvent, error) bool) {
-			yield(a2a.TaskEvent{}, errors.New("missing stream function"))
-		}
-	}
-	return a.streamFunc(ctx, task)
 }
