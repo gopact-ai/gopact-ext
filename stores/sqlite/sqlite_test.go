@@ -139,6 +139,125 @@ func TestStoreRenewLease(t *testing.T) {
 	})
 }
 
+func TestStoreRenewLeaseRejectsExpiredCurrentLease(t *testing.T) {
+	store := openTestStore(t)
+	record := leaseCheckpoint("renew-expired")
+	record.LeaseExpiresAt = time.Now().Add(-time.Hour)
+	if err := store.Create(t.Context(), record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	err := store.RenewLease(t.Context(), workflow.CheckpointLease{
+		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence,
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if !errors.Is(err, workflow.ErrCheckpointLeaseLost) {
+		t.Fatalf("RenewLease() error = %v, want ErrCheckpointLeaseLost", err)
+	}
+	loaded, err := store.Load(t.Context(), record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !loaded.LeaseExpiresAt.Equal(record.LeaseExpiresAt) {
+		t.Fatalf("lease expiry = %v, want unchanged %v", loaded.LeaseExpiresAt, record.LeaseExpiresAt)
+	}
+}
+
+func TestStoreRenewLeaseRejectsPastExpiry(t *testing.T) {
+	store := openTestStore(t)
+	record := leaseCheckpoint("renew-past")
+	record.LeaseExpiresAt = time.Now().Add(time.Hour)
+	if err := store.Create(t.Context(), record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	err := store.RenewLease(t.Context(), workflow.CheckpointLease{
+		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence,
+		ExpiresAt: time.Now().Add(-time.Minute),
+	})
+	if !errors.Is(err, workflow.ErrInvalidCheckpoint) {
+		t.Fatalf("RenewLease() error = %v, want ErrInvalidCheckpoint", err)
+	}
+	loaded, err := store.Load(t.Context(), record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !loaded.LeaseExpiresAt.Equal(record.LeaseExpiresAt) {
+		t.Fatalf("lease expiry = %v, want unchanged %v", loaded.LeaseExpiresAt, record.LeaseExpiresAt)
+	}
+}
+
+func TestStoreRenewLeaseDoesNotShortenExpiry(t *testing.T) {
+	store := openTestStore(t)
+	record := leaseCheckpoint("renew-shorter")
+	record.LeaseExpiresAt = time.Now().Add(2 * time.Hour)
+	if err := store.Create(t.Context(), record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := store.RenewLease(t.Context(), workflow.CheckpointLease{
+		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence,
+		ExpiresAt: record.LeaseExpiresAt.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("RenewLease() error = %v", err)
+	}
+	loaded, err := store.Load(t.Context(), record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !loaded.LeaseExpiresAt.Equal(record.LeaseExpiresAt) {
+		t.Fatalf("lease expiry = %v, want monotonic %v", loaded.LeaseExpiresAt, record.LeaseExpiresAt)
+	}
+}
+
+func TestSQLiteExpiredRenewCannotBeatPendingClaim(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "renew-claim.db")
+	renewer := openTestStoreAt(t, path)
+	claimant := openTestStoreAt(t, path)
+	record := leaseCheckpoint("renew-claim")
+	record.LeaseExpiresAt = time.Now().Add(-time.Hour)
+	if err := renewer.Create(ctx, record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	blocker, err := claimant.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin claim blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback() }()
+	claimed := record
+	claimed.OwnerID = "owner-2"
+	claimed.ClaimSequence++
+	claimed.LeaseExpiresAt = time.Now().Add(time.Hour)
+	claimStarted := make(chan struct{})
+	claimResult := make(chan error, 1)
+	go func() {
+		close(claimStarted)
+		claimResult <- claimant.Claim(ctx, claimed, claimed.Version)
+	}()
+	<-claimStarted
+	renewErr := renewer.RenewLease(ctx, workflow.CheckpointLease{
+		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence,
+		ExpiresAt: time.Now().Add(2 * time.Hour),
+	})
+	if err := blocker.Rollback(); err != nil {
+		t.Fatalf("rollback claim blocker: %v", err)
+	}
+	claimErr := <-claimResult
+	if !errors.Is(renewErr, workflow.ErrCheckpointLeaseLost) {
+		t.Fatalf("RenewLease() error = %v, want ErrCheckpointLeaseLost", renewErr)
+	}
+	if claimErr != nil {
+		t.Fatalf("Claim() error = %v", claimErr)
+	}
+	loaded, err := renewer.Load(ctx, record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.OwnerID != claimed.OwnerID || loaded.ClaimSequence != claimed.ClaimSequence ||
+		!loaded.LeaseExpiresAt.Equal(claimed.LeaseExpiresAt) {
+		t.Fatalf("Load() = %+v, want claimed lease %+v", loaded, claimed)
+	}
+}
+
 func TestSQLiteSavePreservesLeaseRenewedAfterLoad(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -226,7 +345,7 @@ func TestSQLiteSaveRejectsChangedLeaseIdentity(t *testing.T) {
 	}
 }
 
-func TestSQLiteClaimRejectsLeaseRenewedAfterLoad(t *testing.T) {
+func TestSQLiteExpiredRenewalDoesNotBlockClaim(t *testing.T) {
 	ctx := context.Background()
 	past := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
@@ -245,23 +364,23 @@ func TestSQLiteClaimRejectsLeaseRenewedAfterLoad(t *testing.T) {
 	}
 	if err := storeA.RenewLease(ctx, workflow.CheckpointLease{
 		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: future,
-	}); err != nil {
-		t.Fatalf("RenewLease() error = %v", err)
+	}); !errors.Is(err, workflow.ErrCheckpointLeaseLost) {
+		t.Fatalf("RenewLease() error = %v, want ErrCheckpointLeaseLost", err)
 	}
 	stale.OwnerID = "owner-b"
 	stale.ClaimSequence++
 	stale.LeaseExpiresAt = future
-	if err := storeB.Claim(ctx, stale, stale.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
-		t.Fatalf("Claim() error = %v, want ErrCheckpointConflict", err)
+	if err := storeB.Claim(ctx, stale, stale.Version); err != nil {
+		t.Fatalf("Claim() error = %v", err)
 	}
 	loaded, err := storeA.Load(ctx, record.RunID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded.OwnerID != record.OwnerID || loaded.ClaimSequence != record.ClaimSequence ||
-		loaded.Version != record.Version || !loaded.LeaseExpiresAt.Equal(future) {
-		t.Fatalf("Load() = %+v, want owner %q expiry %v claim sequence %d version %d",
-			loaded, record.OwnerID, future, record.ClaimSequence, record.Version)
+	if loaded.OwnerID != stale.OwnerID || loaded.ClaimSequence != stale.ClaimSequence ||
+		loaded.Version != record.Version+1 || !loaded.LeaseExpiresAt.Equal(future) {
+		t.Fatalf("Load() = %+v, want claimed owner %q expiry %v claim sequence %d version %d",
+			loaded, stale.OwnerID, future, stale.ClaimSequence, record.Version+1)
 	}
 }
 
@@ -357,7 +476,13 @@ func TestSQLiteClaimErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := openTestStore(t)
 			record := leaseCheckpoint("claim-" + test.name)
-			record.LeaseExpiresAt = past
+			if test.terminal {
+				record.OwnerID = ""
+				record.ClaimSequence = 0
+				record.LeaseExpiresAt = time.Time{}
+			} else {
+				record.LeaseExpiresAt = past
+			}
 			if err := store.Create(context.Background(), record); err != nil {
 				t.Fatalf("Create() error = %v", err)
 			}

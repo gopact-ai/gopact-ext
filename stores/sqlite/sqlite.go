@@ -31,6 +31,7 @@ var (
 	_ workflow.CheckpointHistory    = (*Store)(nil)
 	_ workflow.CheckpointController = (*Store)(nil)
 	_ runlog.Log                    = (*Store)(nil)
+	_ runlog.FencedLog              = (*Store)(nil)
 )
 
 // Open opens or creates a SQLite store at path.
@@ -202,6 +203,19 @@ func (store *Store) Claim(ctx context.Context, candidate workflow.CheckpointReco
 		return fmt.Errorf("sqlite: begin checkpoint claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	locked, err := lockRunHead(ctx, tx, candidate.RunID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointConflict
+		}
+		return fmt.Errorf("sqlite: lock checkpoint claim: %w", err)
+	}
+	if !locked {
+		return workflow.ErrCheckpointNotFound
+	}
 	current, err := loadCheckpoint(ctx, tx, candidate.RunID)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -264,6 +278,19 @@ func (store *Store) RenewLease(ctx context.Context, lease workflow.CheckpointLea
 		return fmt.Errorf("sqlite: begin lease renewal: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	locked, err := lockRunHead(ctx, tx, lease.RunID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: lock lease renewal: %w", err)
+	}
+	if !locked {
+		return workflow.ErrCheckpointLeaseLost
+	}
 	current, err := loadCheckpoint(ctx, tx, lease.RunID)
 	if err != nil {
 		if errors.Is(err, workflow.ErrCheckpointNotFound) || databaseBusy(err) {
@@ -271,8 +298,16 @@ func (store *Store) RenewLease(ctx context.Context, lease workflow.CheckpointLea
 		}
 		return fmt.Errorf("sqlite: load lease checkpoint: %w", err)
 	}
-	if current.Status != workflow.CheckpointRunning || current.OwnerID != lease.OwnerID || current.ClaimSequence != lease.ClaimSequence {
+	now := time.Now()
+	if current.Status != workflow.CheckpointRunning || current.OwnerID != lease.OwnerID ||
+		current.ClaimSequence != lease.ClaimSequence || !current.LeaseExpiresAt.After(now) {
 		return workflow.ErrCheckpointLeaseLost
+	}
+	if !lease.ExpiresAt.After(now) {
+		return fmt.Errorf("%w: renewed lease must expire in the future", workflow.ErrInvalidCheckpoint)
+	}
+	if !lease.ExpiresAt.After(current.LeaseExpiresAt) {
+		return nil
 	}
 	current.LeaseExpiresAt = lease.ExpiresAt
 	metadata, err := encodeCheckpointMetadata(current)
@@ -349,13 +384,24 @@ func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord,
 		return fmt.Errorf("sqlite: begin checkpoint write: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	locked, err := lockRunHead(ctx, tx, record.RunID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointConflict
+		}
+		return fmt.Errorf("sqlite: lock checkpoint write: %w", err)
+	}
+	if !locked {
+		return workflow.ErrCheckpointNotFound
+	}
 	current, err := loadCheckpoint(ctx, tx, record.RunID)
 	if err != nil {
 		return err
 	}
-	if current.Version != version || (reopen && !checkpointTerminal(current.Status)) || (!reopen && checkpointTerminal(current.Status)) {
-		return workflow.ErrCheckpointConflict
-	}
+	currentTerminal := checkpointTerminal(current.Status)
 	if !sameCheckpointIdentity(current, record) {
 		return workflow.ErrCheckpointMismatch
 	}
@@ -364,9 +410,15 @@ func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord,
 			(record.OwnerID != "" && record.OwnerID != current.OwnerID) {
 			return workflow.ErrCheckpointLeaseLost
 		}
-		if record.OwnerID == current.OwnerID && current.LeaseExpiresAt.After(record.LeaseExpiresAt) {
-			record.LeaseExpiresAt = current.LeaseExpiresAt
+		if current.OwnerID != "" && !current.LeaseExpiresAt.After(time.Now()) {
+			return workflow.ErrCheckpointLeaseLost
 		}
+	}
+	if current.Version != version || (reopen && !currentTerminal) || (!reopen && currentTerminal) {
+		return workflow.ErrCheckpointConflict
+	}
+	if !reopen && record.OwnerID == current.OwnerID && current.LeaseExpiresAt.After(record.LeaseExpiresAt) {
+		record.LeaseExpiresAt = current.LeaseExpiresAt
 	}
 	record.Version++
 	if err := insertCheckpointAndHead(ctx, tx, record); err != nil {
@@ -443,7 +495,93 @@ func (store *Store) Append(ctx context.Context, record runlog.Record) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: encode runlog record: %w", err)
 	}
-	_, err = store.db.ExecContext(
+	return appendRunLog(ctx, store.db, record, payload)
+}
+
+// AppendFenced validates the current workflow lease and appends one RunLog
+// record in the same SQLite transaction.
+func (store *Store) AppendFenced(ctx context.Context, record runlog.Record, fence runlog.Fence) error {
+	if err := store.ready(ctx); err != nil {
+		return err
+	}
+	if fence.OwnerID == "" || fence.ClaimSequence <= 0 {
+		return fmt.Errorf("%w: invalid journal fence", workflow.ErrInvalidCheckpoint)
+	}
+	if err := validateRunLogRecord(record); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("sqlite: encode runlog record: %w", err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: begin fenced runlog append: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := appendFencedTx(ctx, tx, record, payload, fence); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: commit fenced runlog append: %w", err)
+	}
+	return nil
+}
+
+func appendFencedTx(ctx context.Context, tx *sql.Tx, record runlog.Record, payload []byte, fence runlog.Fence) error {
+	locked, err := lockRunHead(ctx, tx, record.RunID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: lock fenced run: %w", err)
+	}
+	if !locked {
+		return workflow.ErrCheckpointLeaseLost
+	}
+	current, err := loadCheckpoint(ctx, tx, record.RunID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if errors.Is(err, workflow.ErrCheckpointNotFound) || databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: load fenced checkpoint: %w", err)
+	}
+	if current.Status != workflow.CheckpointRunning || current.OwnerID != fence.OwnerID ||
+		current.ClaimSequence != fence.ClaimSequence || !current.LeaseExpiresAt.After(time.Now()) {
+		return workflow.ErrCheckpointLeaseLost
+	}
+	if err := appendRunLog(ctx, tx, record, payload); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return err
+	}
+	return nil
+}
+
+func appendRunLog(ctx context.Context, target sqlReadExecutor, record runlog.Record, payload []byte) error {
+	_, err := target.ExecContext(
 		ctx,
 		`INSERT INTO `+eventTable+` (session_id, run_id, sequence, record_json) VALUES (?, ?, ?, ?)`,
 		record.SessionID,
@@ -458,7 +596,7 @@ func (store *Store) Append(ctx context.Context, record runlog.Record) error {
 		return fmt.Errorf("sqlite: append runlog: %w", err)
 	}
 	var existing []byte
-	queryErr := store.db.QueryRowContext(
+	queryErr := target.QueryRowContext(
 		ctx,
 		`SELECT record_json FROM `+eventTable+` WHERE run_id = ? AND sequence = ?`,
 		record.RunID,
@@ -530,6 +668,23 @@ type sqlExecutor interface {
 
 type sqlQueryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type sqlReadExecutor interface {
+	sqlExecutor
+	sqlQueryRower
+}
+
+func lockRunHead(ctx context.Context, tx *sql.Tx, runID string) (bool, error) {
+	result, err := tx.ExecContext(ctx, `UPDATE `+runTable+` SET version = version WHERE run_id = ?`, runID)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
 }
 
 type scanner interface{ Scan(...any) error }

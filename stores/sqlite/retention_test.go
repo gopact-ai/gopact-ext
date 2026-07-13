@@ -216,14 +216,14 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	store := openTestStore(t)
 	base := time.Date(2026, time.July, 13, 8, 0, 0, 0, time.UTC)
 	record := retentionCheckpoint("head-sync", workflow.CheckpointRunning, base)
-	record.LeaseExpiresAt = base.Add(-time.Minute)
+	record.LeaseExpiresAt = time.Now().Add(time.Hour)
 	if err := store.Create(ctx, record); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	assertRunHead(t, store, record.RunID, workflow.CheckpointRunning, 1, base)
 
 	if err := store.RenewLease(ctx, workflow.CheckpointLease{
-		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: time.Now().Add(time.Hour),
+		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: time.Now().Add(2 * time.Hour),
 	}); err != nil {
 		t.Fatalf("RenewLease() error = %v", err)
 	}
@@ -535,6 +535,9 @@ func TestPurgeTerminalRunsRacingClaimRetainsInterruptedRun(t *testing.T) {
 func createTerminalRun(t *testing.T, store *Store, runID string, status workflow.CheckpointStatus, updatedAt time.Time) {
 	t.Helper()
 	record := retentionCheckpoint(runID, workflow.CheckpointRunning, updatedAt.Add(-time.Minute))
+	record.OwnerID = ""
+	record.ClaimSequence = 0
+	record.LeaseExpiresAt = time.Time{}
 	if err := store.Create(context.Background(), record); err != nil {
 		t.Fatalf("Create(%q) error = %v", runID, err)
 	}
@@ -549,6 +552,9 @@ func createTerminalRun(t *testing.T, store *Store, runID string, status workflow
 func createRunningRun(t *testing.T, store *Store, runID string, status workflow.CheckpointStatus, updatedAt time.Time) {
 	t.Helper()
 	record := retentionCheckpoint(runID, workflow.CheckpointRunning, updatedAt)
+	record.OwnerID = ""
+	record.ClaimSequence = 0
+	record.LeaseExpiresAt = time.Time{}
 	if err := store.Create(context.Background(), record); err != nil {
 		t.Fatalf("Create(%q) error = %v", runID, err)
 	}
