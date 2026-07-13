@@ -87,6 +87,29 @@ func TestModelInvoke(t *testing.T) {
 	}
 }
 
+func TestModelInvokeRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{
+					"role": "assistant", "content": strings.Repeat("x", maxResponseBytes+1),
+				},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	model, err := New("test", server.URL, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, err = model.Invoke(context.Background(), model.NewRequest(gopact.UserMessage("ping")))
+	if err == nil || !strings.Contains(err.Error(), "openai: decode response") {
+		t.Fatalf("Invoke() error = %v, want bounded response decode failure", err)
+	}
+}
+
 func TestModelInvokeMapsRequestFieldsAndEvents(t *testing.T) {
 	temp := 0.2
 	topP := 0.9

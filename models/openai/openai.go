@@ -21,6 +21,7 @@ import (
 
 const (
 	maxTextBytes          = 4 << 10
+	maxResponseBytes      = 4 << 20
 	maxStreamFrameBytes   = 1 << 20
 	defaultMaxAttempts    = 3
 	defaultRequestTimeout = 2 * time.Minute
@@ -231,7 +232,14 @@ func (c *Model) Invoke(ctx context.Context, req gopact.ModelRequest, opts ...gop
 		}
 	}
 	var out chatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	encoded, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: %w", err)
+	}
+	if len(encoded) > maxResponseBytes {
+		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: body exceeds %d bytes", maxResponseBytes)
+	}
+	if err := json.Unmarshal(encoded, &out); err != nil {
 		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: %w", err)
 	}
 	if len(out.Choices) == 0 {
