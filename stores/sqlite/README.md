@@ -36,7 +36,7 @@ The store solves durable execution persistence. It does not provide semantic Age
 
 ## Trade-offs
 
-SQLite is a single-node store with bounded write concurrency. Atomic lease renewal coordinates Workflow ownership between processes that safely share the same database file; it is not a multi-host distributed coordinator. Multi-host deployments need a distributed database Store with atomic Claim and fencing.
+SQLite is a single-node store with bounded write concurrency. Atomic claim and renewal coordinate Workflow ownership between processes that safely share the same database file; a stale claim fails if another process renewed or replaced the loaded head. It is not a multi-host distributed coordinator. Multi-host deployments need a distributed database Store with atomic Claim and fencing.
 
 The store serializes writes through one SQLite connection and keeps logical checkpoint versions append-only. A heartbeat updates only the current version's lease metadata in place and does not append a history version. When opening an existing database whose `gopact_runlog` table predates session indexing, `Open` adds `session_id` with an empty default and creates the session/ordinal index. Existing rows remain `session_id=''`: session queries intentionally do not return them, while RunID queries still decode their stored JSON. The migration does not guess or backfill historical session identity.
 

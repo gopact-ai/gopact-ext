@@ -138,88 +138,84 @@ func TestStoreRenewLease(t *testing.T) {
 	})
 }
 
-func TestStoreClaimRejectsLeaseRenewedAfterLoad(t *testing.T) {
+func TestSQLiteClaimRejectsLeaseRenewedAfterLoad(t *testing.T) {
 	ctx := context.Background()
 	past := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
-	store := openTestStore(t)
-	record := leaseCheckpoint("claim-renewed")
+	path := filepath.Join(t.TempDir(), "claim.db")
+	storeA := openTestStoreAt(t, path)
+	storeB := openTestStoreAt(t, path)
+	record := leaseCheckpoint("stale-claim")
+	record.OwnerID = "owner-a"
 	record.LeaseExpiresAt = past
-	if err := store.Create(ctx, record); err != nil {
+	if err := storeA.Create(ctx, record); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	stale, err := store.Load(ctx, record.RunID)
+	stale, err := storeB.Load(ctx, record.RunID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if err := store.RenewLease(ctx, workflow.CheckpointLease{
+	if err := storeA.RenewLease(ctx, workflow.CheckpointLease{
 		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: future,
 	}); err != nil {
 		t.Fatalf("RenewLease() error = %v", err)
 	}
-	stale.OwnerID = "owner-2"
+	stale.OwnerID = "owner-b"
 	stale.ClaimSequence++
 	stale.LeaseExpiresAt = future
-	if err := store.Claim(ctx, stale, stale.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
+	if err := storeB.Claim(ctx, stale, stale.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
 		t.Fatalf("Claim() error = %v, want ErrCheckpointConflict", err)
 	}
-	loaded, err := store.Load(ctx, record.RunID)
+	loaded, err := storeA.Load(ctx, record.RunID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if loaded.OwnerID != record.OwnerID || loaded.ClaimSequence != record.ClaimSequence ||
 		loaded.Version != record.Version || !loaded.LeaseExpiresAt.Equal(future) {
-		t.Fatalf("Load() = %+v, want renewed original lease", loaded)
+		t.Fatalf("Load() = %+v, want owner %q expiry %v claim sequence %d version %d",
+			loaded, record.OwnerID, future, record.ClaimSequence, record.Version)
 	}
 }
 
-func TestStoreClaimAllowsOneConcurrentClaimantAcrossStores(t *testing.T) {
+func TestSQLiteClaimAllowsOneConcurrentClaimant(t *testing.T) {
 	ctx := context.Background()
 	past := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "claim.db")
-	first, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = first.Close() }()
-	second, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = second.Close() }()
-	record := leaseCheckpoint("claim-concurrent")
+	storeA := openTestStoreAt(t, path)
+	storeB := openTestStoreAt(t, path)
+	record := leaseCheckpoint("concurrent-claim")
+	record.OwnerID = "expired-owner"
 	record.LeaseExpiresAt = past
-	if err := first.Create(ctx, record); err != nil {
+	if err := storeA.Create(ctx, record); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	head, err := first.Load(ctx, record.RunID)
+	head, err := storeA.Load(ctx, record.RunID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
+	ready := make(chan struct{}, 2)
 	start := make(chan struct{})
 	results := make(chan error, 2)
-	var wait sync.WaitGroup
-	for index, store := range []*Store{first, second} {
+	claim := func(store *Store, ownerID string) {
 		candidate := head
-		candidate.OwnerID = "owner-" + string(rune('a'+index))
+		candidate.OwnerID = ownerID
 		candidate.ClaimSequence++
 		candidate.LeaseExpiresAt = future
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			<-start
-			results <- store.Claim(ctx, candidate, head.Version)
-		}()
+		ready <- struct{}{}
+		<-start
+		results <- store.Claim(ctx, candidate, head.Version)
 	}
+	go claim(storeA, "owner-a")
+	go claim(storeB, "owner-b")
+	<-ready
+	<-ready
 	close(start)
-	wait.Wait()
-	close(results)
 
 	succeeded, conflicted := 0, 0
-	for err := range results {
-		switch {
+	for range 2 {
+		switch err := <-results; {
 		case err == nil:
 			succeeded++
 		case errors.Is(err, workflow.ErrCheckpointConflict):
@@ -231,87 +227,87 @@ func TestStoreClaimAllowsOneConcurrentClaimantAcrossStores(t *testing.T) {
 	if succeeded != 1 || conflicted != 1 {
 		t.Fatalf("Claim() results = %d succeeded, %d conflicted; want 1 and 1", succeeded, conflicted)
 	}
-	loaded, err := first.Load(ctx, record.RunID)
+	loaded, err := storeA.Load(ctx, record.RunID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if loaded.Version != head.Version+1 || loaded.ClaimSequence != head.ClaimSequence+1 {
-		t.Fatalf("Load() = version %d claim sequence %d, want %d and %d", loaded.Version, loaded.ClaimSequence, head.Version+1, head.ClaimSequence+1)
+		t.Fatalf("Load() = version %d claim sequence %d, want %d and %d",
+			loaded.Version, loaded.ClaimSequence, head.Version+1, head.ClaimSequence+1)
 	}
 }
 
-func TestStoreClaimRejectsInvalidHeadOrCandidate(t *testing.T) {
+func TestSQLiteClaimErrors(t *testing.T) {
 	past := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
-
-	t.Run("identity mismatch", func(t *testing.T) {
-		store := openTestStore(t)
-		record := leaseCheckpoint("claim-mismatch")
-		record.LeaseExpiresAt = past
-		if err := store.Create(context.Background(), record); err != nil {
-			t.Fatalf("Create() error = %v", err)
-		}
-		candidate := record
-		candidate.WorkflowName = "other-workflow"
-		candidate.OwnerID = "owner-2"
-		candidate.ClaimSequence++
-		candidate.LeaseExpiresAt = future
-		if err := store.Claim(context.Background(), candidate, candidate.Version); !errors.Is(err, workflow.ErrCheckpointMismatch) {
-			t.Fatalf("Claim() error = %v, want ErrCheckpointMismatch", err)
-		}
-	})
-
-	t.Run("terminal head", func(t *testing.T) {
-		store := openTestStore(t)
-		record := leaseCheckpoint("claim-terminal")
-		record.LeaseExpiresAt = past
-		if err := store.Create(context.Background(), record); err != nil {
-			t.Fatalf("Create() error = %v", err)
-		}
-		record.Status = workflow.CheckpointCompleted
-		if err := store.Finish(context.Background(), record, record.Version); err != nil {
-			t.Fatalf("Finish() error = %v", err)
-		}
-		candidate, err := store.Load(context.Background(), record.RunID)
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		candidate.Status = workflow.CheckpointRunning
-		candidate.OwnerID = "owner-2"
-		candidate.ClaimSequence++
-		candidate.LeaseExpiresAt = future
-		if err := store.Claim(context.Background(), candidate, candidate.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
-			t.Fatalf("Claim() error = %v, want ErrCheckpointConflict", err)
-		}
-	})
-
-	t.Run("stale version", func(t *testing.T) {
-		store := openTestStore(t)
-		record := leaseCheckpoint("claim-version")
-		record.LeaseExpiresAt = past
-		if err := store.Create(context.Background(), record); err != nil {
-			t.Fatalf("Create() error = %v", err)
-		}
-		stale := record
-		if err := store.Save(context.Background(), record, record.Version); err != nil {
-			t.Fatalf("Save() error = %v", err)
-		}
-		stale.OwnerID = "owner-2"
-		stale.ClaimSequence++
-		stale.LeaseExpiresAt = future
-		if err := store.Claim(context.Background(), stale, stale.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
-			t.Fatalf("Claim() error = %v, want ErrCheckpointConflict", err)
-		}
-	})
-
-	t.Run("canceled context", func(t *testing.T) {
-		store := openTestStore(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		if err := store.Claim(ctx, leaseCheckpoint("claim-canceled"), 1); !errors.Is(err, context.Canceled) {
-			t.Fatalf("Claim() error = %v, want context.Canceled", err)
-		}
-	})
+	tests := []struct {
+		name          string
+		terminal      bool
+		mutate        func(*workflow.CheckpointRecord, *int64)
+		cancelContext bool
+		want          error
+	}{
+		{name: "terminal head", terminal: true, want: workflow.ErrCheckpointConflict},
+		{
+			name: "identity mismatch",
+			mutate: func(candidate *workflow.CheckpointRecord, _ *int64) {
+				candidate.SessionID = "other-session"
+			},
+			want: workflow.ErrCheckpointMismatch,
+		},
+		{
+			name: "wrong version",
+			mutate: func(candidate *workflow.CheckpointRecord, version *int64) {
+				candidate.Version++
+				*version = candidate.Version
+			},
+			want: workflow.ErrCheckpointConflict,
+		},
+		{name: "canceled context", cancelContext: true, want: context.Canceled},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := openTestStore(t)
+			record := leaseCheckpoint("claim-" + test.name)
+			record.LeaseExpiresAt = past
+			if err := store.Create(context.Background(), record); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			head, err := store.Load(context.Background(), record.RunID)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if test.terminal {
+				terminal := head
+				terminal.Status = workflow.CheckpointCompleted
+				if err := store.Finish(context.Background(), terminal, head.Version); err != nil {
+					t.Fatalf("Finish() error = %v", err)
+				}
+				head, err = store.Load(context.Background(), record.RunID)
+				if err != nil {
+					t.Fatalf("Load() error = %v", err)
+				}
+			}
+			candidate := head
+			candidate.Status = workflow.CheckpointRunning
+			candidate.OwnerID = "owner-b"
+			candidate.ClaimSequence++
+			candidate.LeaseExpiresAt = future
+			version := candidate.Version
+			if test.mutate != nil {
+				test.mutate(&candidate, &version)
+			}
+			ctx := context.Background()
+			if test.cancelContext {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			if err := store.Claim(ctx, candidate, version); !errors.Is(err, test.want) {
+				t.Fatalf("Claim() error = %v, want %v", err, test.want)
+			}
+		})
+	}
 }
 
 func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
@@ -409,7 +405,12 @@ func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := Open(":memory:")
+	return openTestStoreAt(t, ":memory:")
+}
+
+func openTestStoreAt(t *testing.T, path string) *Store {
+	t.Helper()
+	store, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
