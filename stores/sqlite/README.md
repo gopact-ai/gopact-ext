@@ -39,3 +39,22 @@ The store solves durable execution persistence. It does not provide semantic Age
 SQLite is a single-node store with bounded write concurrency. Atomic lease renewal coordinates Workflow ownership between processes that safely share the same database file; it is not a multi-host distributed coordinator.
 
 The store serializes writes through one SQLite connection and keeps logical checkpoint versions append-only. A heartbeat updates only the current version's lease metadata in place and does not append a history version. When opening an existing database whose `gopact_runlog` table predates session indexing, `Open` adds `session_id` with an empty default and creates the session/ordinal index. Existing rows remain `session_id=''`: session queries intentionally do not return them, while RunID queries still decode their stored JSON. The migration does not guess or backfill historical session identity.
+
+## Retention and maintenance
+
+Checkpoint and RunLog history remains append-only while a Run can still be resumed. The store does not delete the oldest records by count because doing so would make Resume, Retry, Jump, and Fork incomplete. It also does not start a background cleanup goroutine.
+
+After a Run reaches `completed`, `failed`, `canceled`, or `terminated`, the service may delete it after its own retention period:
+
+```go
+result, err := store.PurgeTerminalRuns(ctx, sqlite.PurgeRequest{
+	Before: time.Now().Add(-30 * 24 * time.Hour),
+	Limit:  100,
+})
+```
+
+`Before` is required. A zero `Limit` defaults to 100 and values above 1,000 are rejected. One call deletes a bounded batch of eligible Run heads, every checkpoint version, and all matching RunLog events in one transaction. Running and interrupted Runs are never selected. Repeat calls until `result.Runs == 0` to drain a backlog.
+
+Archive terminal Runs first when audit or replay requirements apply. Schedule purge outside the SDK, record the returned counts, errors, duration, database size, and WAL size, and alert when the backlog stops converging. Deploy this version to every process that writes the database before enabling purge during a rolling upgrade; a stale head with a newer checkpoint is skipped rather than deleted.
+
+SQLite reuses freed pages, so successful purges bound live data without necessarily shrinking the database file. Run `VACUUM` only in a separate maintenance window, after a backup and with sufficient temporary disk space; do not put it on the request or per-batch purge path. Opening an older database backfills the Run-head index in batches of 256 Runs and is safe to repeat.

@@ -79,6 +79,14 @@ func (store *Store) initialize(ctx context.Context) error {
 			record_json BLOB NOT NULL,
 			UNIQUE (run_id, sequence)
 		)`,
+		`CREATE TABLE IF NOT EXISTS ` + runTable + ` (
+			run_id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			version INTEGER NOT NULL,
+			created_at_unix_nano INTEGER NOT NULL,
+			updated_at_unix_nano INTEGER NOT NULL
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
@@ -116,12 +124,13 @@ func (store *Store) initialize(ctx context.Context) error {
 	}
 	for _, statement := range []string{
 		`CREATE INDEX IF NOT EXISTS gopact_runlog_session_ordinal ON ` + eventTable + ` (session_id, ordinal)`,
+		`CREATE INDEX IF NOT EXISTS gopact_workflow_runs_retention ON ` + runTable + ` (status, updated_at_unix_nano, run_id)`,
 	} {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("sqlite: initialize runlog index: %w", err)
+			return fmt.Errorf("sqlite: initialize index: %w", err)
 		}
 	}
-	return nil
+	return store.backfillRunHeads(ctx)
 }
 
 // Create stores a new running checkpoint.
@@ -135,11 +144,25 @@ func (store *Store) Create(ctx context.Context, record workflow.CheckpointRecord
 	if err := validateCheckpoint(record); err != nil {
 		return err
 	}
-	if err := insertCheckpoint(ctx, store.db, record); err != nil {
-		if uniqueConstraint(err) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("sqlite: begin checkpoint create: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := insertCheckpointAndHead(ctx, tx, record); err != nil {
+		if uniqueConstraint(err) || errors.Is(err, errRunHeadConflict) {
 			return workflow.ErrCheckpointExists
 		}
 		return fmt.Errorf("sqlite: create checkpoint: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("sqlite: commit checkpoint create: %w", err)
 	}
 	return nil
 }
@@ -203,11 +226,11 @@ func (store *Store) Claim(ctx context.Context, candidate workflow.CheckpointReco
 		return workflow.ErrCheckpointConflict
 	}
 	candidate.Version++
-	if err := insertCheckpoint(ctx, tx, candidate); err != nil {
+	if err := insertCheckpointAndHead(ctx, tx, candidate); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if uniqueConstraint(err) || databaseBusy(err) {
+		if uniqueConstraint(err) || databaseBusy(err) || errors.Is(err, errRunHeadConflict) {
 			return workflow.ErrCheckpointConflict
 		}
 		return fmt.Errorf("sqlite: claim checkpoint: %w", err)
@@ -336,8 +359,8 @@ func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord,
 		return workflow.ErrCheckpointMismatch
 	}
 	record.Version++
-	if err := insertCheckpoint(ctx, tx, record); err != nil {
-		if uniqueConstraint(err) || databaseBusy(err) {
+	if err := insertCheckpointAndHead(ctx, tx, record); err != nil {
+		if uniqueConstraint(err) || databaseBusy(err) || errors.Is(err, errRunHeadConflict) {
 			return workflow.ErrCheckpointConflict
 		}
 		return fmt.Errorf("sqlite: write checkpoint: %w", err)
