@@ -67,7 +67,11 @@ if err != nil {
 response, err := target.Invoke(ctx, request, gopact.WithRunID("run-123"))
 ```
 
-Durable resume requires reconstructing the same Agent topology with the same identity name and version, opening the same Store, and resuming the same RunID. Do not supply a conflicting SessionID. External side effects remain at-least-once and must use a stable idempotency key.
+Durable resume requires reconstructing the same Agent topology with the same identity name and version, opening the same Store, and resuming the same RunID. Do not supply a conflicting SessionID. External side effects remain at-least-once and must use a key stable across recovery, such as `RunInfo.RunID + "/" + RunInfo.ActivationID`.
+
+That key is reliable only when the external API natively deduplicates it, or when application code writes a uniquely constrained dedup/outbox record in the same database transaction as its business data. `gopact` cannot atomically combine a checkpoint transaction with an arbitrary remote API and does not provide a generic outbox. An explicit business retry intended to produce another side effect must use a new operation key.
+
+Use `workflow.MemoryStore` only for tests and short-lived processes. The SQLite Store is for one machine or multiple processes that safely share the same local database file. Multi-host deployments require a distributed database Store with atomic Claim and fencing.
 
 ## Breaking migration
 

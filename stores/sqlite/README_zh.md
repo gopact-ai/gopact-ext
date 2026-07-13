@@ -36,9 +36,15 @@ wf := workflow.New[Input, Output](
 
 ## 取舍
 
-SQLite 是单节点存储，写入并发能力有限。原子续租可以协调安全共享同一数据库文件的多个进程，但它不是跨主机的分布式协调器。
+SQLite 是单节点存储，写入并发能力有限。原子续租可以协调安全共享同一数据库文件的多个进程，但它不是跨主机的分布式协调器。多主机部署必须改用支持原子 Claim 与 fencing 的分布式数据库 Store。
 
 Store 使用一个 SQLite connection 串行写入，逻辑 checkpoint version 保持 append-only。Heartbeat 只会原地更新当前 version 的租约元数据，不会新增历史 version。打开旧数据库时，如果 `gopact_runlog` 表尚无 session 索引，`Open` 会新增默认值为空字符串的 `session_id` 列，并创建 session/ordinal 索引。旧记录会保留 `session_id=''`：Session 查询不会返回这些记录，RunID 查询仍按原有 JSON 解码。迁移不会猜测或回填历史 Session identity。
+
+## 外部副作用
+
+SQLite 能持久化 Workflow 状态，但恢复后的节点执行仍是 at-least-once。`RunInfo.RunID + "/" + RunInfo.ActivationID` 只能作为跨恢复稳定的 key：要么交给原生支持按 key 去重的外部 API，要么由业务在修改业务数据的同一数据库事务中，写入带唯一约束的 dedup/outbox 记录。该 Store 不会代替业务创建这条记录，也无法把自身 checkpoint 事务与任意远程 API 合并成一个原子事务。
+
+如果显式业务重试需要再次产生副作用，应使用新的 operation key，而不是恢复幂等键。可运行示例见 [`concepts/durable-resume`](https://github.com/gopact-ai/gopact-examples/tree/main/concepts/durable-resume)。
 
 ## 数据保留与维护
 

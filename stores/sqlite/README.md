@@ -36,9 +36,15 @@ The store solves durable execution persistence. It does not provide semantic Age
 
 ## Trade-offs
 
-SQLite is a single-node store with bounded write concurrency. Atomic lease renewal coordinates Workflow ownership between processes that safely share the same database file; it is not a multi-host distributed coordinator.
+SQLite is a single-node store with bounded write concurrency. Atomic lease renewal coordinates Workflow ownership between processes that safely share the same database file; it is not a multi-host distributed coordinator. Multi-host deployments need a distributed database Store with atomic Claim and fencing.
 
 The store serializes writes through one SQLite connection and keeps logical checkpoint versions append-only. A heartbeat updates only the current version's lease metadata in place and does not append a history version. When opening an existing database whose `gopact_runlog` table predates session indexing, `Open` adds `session_id` with an empty default and creates the session/ordinal index. Existing rows remain `session_id=''`: session queries intentionally do not return them, while RunID queries still decode their stored JSON. The migration does not guess or backfill historical session identity.
+
+## External side effects
+
+SQLite makes Workflow state durable, but recovered node execution remains at-least-once. Use `RunInfo.RunID + "/" + RunInfo.ActivationID` as a recovery-stable key only with an external API that natively deduplicates it, or write a uniquely constrained dedup/outbox record in the same database transaction as the business data. This Store does not create that business record and cannot atomically combine its checkpoint transaction with an arbitrary remote API.
+
+If an explicit business retry should produce another side effect, use a new operation key rather than the recovery key. See the runnable [`concepts/durable-resume`](https://github.com/gopact-ai/gopact-examples/tree/main/concepts/durable-resume) example.
 
 ## Retention and maintenance
 

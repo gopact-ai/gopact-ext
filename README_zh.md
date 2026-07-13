@@ -67,7 +67,11 @@ if err != nil {
 response, err := target.Invoke(ctx, request, gopact.WithRunID("run-123"))
 ```
 
-持久化恢复要求用相同的 Agent name、version 和拓扑重新构造 Agent，打开同一个 Store，并恢复同一个 RunID；不要传入冲突的 SessionID。外部副作用仍是 at-least-once 语义，必须使用稳定的幂等键。
+持久化恢复要求用相同的 Agent name、version 和拓扑重新构造 Agent，打开同一个 Store，并恢复同一个 RunID；不要传入冲突的 SessionID。外部副作用仍是 at-least-once 语义，必须使用跨恢复稳定的 key，例如 `RunInfo.RunID + "/" + RunInfo.ActivationID`。
+
+该 key 只有在两种模式下才可靠：外部 API 原生按 key 去重；或者业务在修改业务数据的同一数据库事务中，写入带唯一约束的 dedup/outbox 记录。`gopact` 无法把 checkpoint 事务与任意远程 API 合并成一个原子事务，也不提供通用 outbox。如果显式业务重试要再次产生副作用，必须使用新的 operation key。
+
+`workflow.MemoryStore` 只适合测试和短生命周期进程。SQLite Store 适用于单机，或安全共享同一个本地数据库文件的多进程。多主机部署必须使用支持原子 Claim 与 fencing 的分布式数据库 Store。
 
 ## Breaking 迁移
 
