@@ -19,18 +19,25 @@ import (
 
 func TestAgentReturnsFinalResponseAndConforms(t *testing.T) {
 	model := finalModel("done")
-	target, err := New(testIdentity(), model)
+	store := workflow.NewMemoryStore()
+	target, err := New(testIdentity(), model, WithWorkflowOptions(
+		workflow.WithCheckpointer(store), workflow.WithJournal(store),
+	))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	response, err := target.Invoke(context.Background(), agent.Request{
 		Messages: []gopact.Message{gopact.UserMessage("work")},
-	})
+	}, gopact.WithRunID("react-persistence"))
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
 	if response.Message.Parts[0].Text != "done" {
 		t.Fatalf("response = %+v, want done", response)
+	}
+	checkpoint, err := store.Load(context.Background(), "react-persistence")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 	gopacttest.RequireAgentConformance(t, gopacttest.AgentConformanceCase{
 		Agent:   target,

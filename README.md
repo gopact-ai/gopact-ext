@@ -44,6 +44,31 @@ For complete runnable applications, see [gopact-examples](https://github.com/gop
 
 Every official Agent expresses its algorithmic state machine as one Workflow. Workflow exclusively owns checkpoint, interrupt/resume, child lineage, node facts, and control history; the Agent layer retains model, tool, planning, routing, and research behavior.
 
+## Durable Agent execution
+
+Workflow-backed Agent constructors expose `WithWorkflowOptions`, so production persistence and lease policy can be configured without bypassing the official Agent:
+
+```go
+store, err := sqlite.Open("agent.db")
+if err != nil {
+	return err
+}
+defer store.Close()
+
+target, err := react.New(identity, model, react.WithWorkflowOptions(
+	workflow.WithCheckpointer(store),
+	workflow.WithJournal(store),
+	workflow.WithCheckpointLease(3*time.Minute, time.Minute),
+))
+if err != nil {
+	return err
+}
+
+response, err := target.Invoke(ctx, request, gopact.WithRunID("run-123"))
+```
+
+Durable resume requires reconstructing the same Agent topology with the same identity name and version, opening the same Store, and resuming the same RunID. Do not supply a conflicting SessionID. External side effects remain at-least-once and must use a stable idempotency key.
+
 ## Breaking migration
 
 This rebuild will ship all affected modules at their next pre-v1 minor rather than reusing an old patch line.

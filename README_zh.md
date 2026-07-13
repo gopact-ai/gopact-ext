@@ -44,6 +44,31 @@
 
 所有官方 Agent 都由一个 Workflow 表达算法状态机。checkpoint、interrupt/resume、child lineage、节点事实和控制历史只由 Workflow runtime 所有；Agent 层保留模型、工具、计划、路由和研究等领域能力。
 
+## Agent 持久化执行
+
+基于 Workflow 的 Agent 构造器都提供 `WithWorkflowOptions`，因此生产环境可以直接为官方 Agent 配置持久化与租约策略：
+
+```go
+store, err := sqlite.Open("agent.db")
+if err != nil {
+	return err
+}
+defer store.Close()
+
+target, err := react.New(identity, model, react.WithWorkflowOptions(
+	workflow.WithCheckpointer(store),
+	workflow.WithJournal(store),
+	workflow.WithCheckpointLease(3*time.Minute, time.Minute),
+))
+if err != nil {
+	return err
+}
+
+response, err := target.Invoke(ctx, request, gopact.WithRunID("run-123"))
+```
+
+持久化恢复要求用相同的 Agent name、version 和拓扑重新构造 Agent，打开同一个 Store，并恢复同一个 RunID；不要传入冲突的 SessionID。外部副作用仍是 at-least-once 语义，必须使用稳定的幂等键。
+
 ## Breaking 迁移
 
 本次重建使用各模块的下一个 pre-v1 minor 统一发布，不复用旧 patch 版本。主要入口变化：

@@ -72,8 +72,9 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	maxTasks   int
-	validation *contract.Validator
+	maxTasks        int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 // WithMaxTasks bounds the planned task count.
@@ -81,6 +82,13 @@ func WithMaxTasks(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.maxTasks = limit
 		config.validation.Positive("max tasks", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -123,7 +131,9 @@ func New(identity agent.Identity, directory *agent.Directory, planner Planner, o
 	if err := configuration.validation.Err(); err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
 	plan := wf.Node("plan", func(ctx context.Context, request agent.Request) ([]Task, error) {
 		tasks, err := planner.Plan(ctx, PlanInput{Request: cloneRequest(request)})

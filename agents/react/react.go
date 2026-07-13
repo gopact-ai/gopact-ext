@@ -51,10 +51,11 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	instruction string
-	tools       []agent.Tool
-	limits      Limits
-	validation  *contract.Validator
+	instruction     string
+	tools           []agent.Tool
+	limits          Limits
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 // WithInstruction sets the stable system instruction for new runs.
@@ -75,6 +76,13 @@ func WithLimits(limits Limits) Option {
 			Positive("max turns", limits.MaxTurns).
 			Positive("max tool calls", limits.MaxToolCalls).
 			Positive("max parallel tools", limits.MaxParallelTools)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -120,11 +128,13 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 	if err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](
-		identity.Name,
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(
+		buildOptions,
 		workflow.WithTopologyVersion(identity.Version),
 		workflow.WithMaxParallelism(configuration.limits.MaxParallelTools),
 	)
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State {
 		messages := cloneMessages(request.Messages)
 		if configuration.instruction != "" {

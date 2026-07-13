@@ -34,6 +34,7 @@ func TestAgentReducesConcurrentBranchResultsInDeclaredOrder(t *testing.T) {
 		}))
 	}
 	var reduced []string
+	store := workflow.NewMemoryStore()
 	target, err := New(testIdentity(), compileDirectory(t, children...), []string{"first", "second", "third"}, ReducerFunc(
 		func(_ context.Context, results []BranchResult) (agent.Response, error) {
 			for _, result := range results {
@@ -42,7 +43,7 @@ func TestAgentReducesConcurrentBranchResultsInDeclaredOrder(t *testing.T) {
 			results[0].Response.Message.Parts[0].Text = "caller-mutation"
 			return agent.Response{Message: gopact.UserMessage("done")}, nil
 		},
-	))
+	), WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestAgentReducesConcurrentBranchResultsInDeclaredOrder(t *testing.T) {
 	go func() {
 		response, err := target.Invoke(context.Background(), agent.Request{
 			Messages: []gopact.Message{gopact.UserMessage("shared")}, Metadata: map[string]string{"input": "original"},
-		})
+		}, gopact.WithRunID("parallel-persistence"))
 		done <- invocation{response: response, err: err}
 	}()
 	for range 3 {
@@ -73,6 +74,10 @@ func TestAgentReducesConcurrentBranchResultsInDeclaredOrder(t *testing.T) {
 	want := []string{"first:first-result", "second:second-result", "third:third-result"}
 	if !reflect.DeepEqual(reduced, want) {
 		t.Fatalf("reduced = %v, want declaration order %v", reduced, want)
+	}
+	checkpoint, err := store.Load(context.Background(), "parallel-persistence")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 

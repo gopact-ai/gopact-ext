@@ -158,14 +158,15 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	planner     Planner
-	discoverer  Discoverer
-	fetcher     Fetcher
-	extractor   EvidenceExtractor
-	synthesizer Synthesizer
-	verifier    CitationVerifier
-	parallelism int
-	validation  *contract.Validator
+	planner         Planner
+	discoverer      Discoverer
+	fetcher         Fetcher
+	extractor       EvidenceExtractor
+	synthesizer     Synthesizer
+	verifier        CitationVerifier
+	parallelism     int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 func WithPlanner(planner Planner) Option {
@@ -200,6 +201,13 @@ func WithMaxParallelism(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.parallelism = limit
 		config.validation.Positive("max parallelism", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -251,11 +259,13 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 		Err(); err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](
-		identity.Name,
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(
+		buildOptions,
 		workflow.WithTopologyVersion(identity.Version),
 		workflow.WithMaxParallelism(configuration.parallelism),
 	)
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
 	plan := wf.Node("plan", func(ctx context.Context, request agent.Request) ([]Query, error) {
 		queries, err := configuration.planner.Plan(ctx, PlanInput{Request: cloneRequest(request)})

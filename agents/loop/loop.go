@@ -57,8 +57,9 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	maxIterations int
-	validation    *contract.Validator
+	maxIterations   int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 // WithMaxIterations sets the positive hard iteration limit.
@@ -66,6 +67,13 @@ func WithMaxIterations(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.maxIterations = limit
 		config.validation.Positive("max iterations", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -108,7 +116,9 @@ func New(identity agent.Identity, child agent.Agent, condition Condition, option
 	if err := configuration.validation.Err(); err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) loopContext {
 		return loopContext{Request: cloneRequest(request)}
 	})

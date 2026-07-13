@@ -16,6 +16,7 @@ import (
 func TestDeepExecutesTaskPlanAndCarriesArtifactContext(t *testing.T) {
 	var plannerCalls int
 	var childRequests []agent.Request
+	store := workflow.NewMemoryStore()
 	directory := testDirectory(t,
 		testChild("research", func(_ context.Context, request agent.Request) (agent.Response, error) {
 			childRequests = append(childRequests, cloneRequest(request))
@@ -34,7 +35,7 @@ func TestDeepExecutesTaskPlanAndCarriesArtifactContext(t *testing.T) {
 			{ID: "research", Description: "collect evidence", AgentName: "research"},
 			{ID: "write", Description: "write report", AgentName: "write"},
 		}, nil
-	}))
+	}), WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)))
 	var nodes []string
 	request := agent.Request{
 		Messages:  []gopact.Message{gopact.UserMessage("investigate")},
@@ -71,6 +72,10 @@ func TestDeepExecutesTaskPlanAndCarriesArtifactContext(t *testing.T) {
 	}
 	if !reflect.DeepEqual(nodes, want) {
 		t.Fatalf("completed nodes = %v, want %v", nodes, want)
+	}
+	checkpoint, err := store.Load(context.Background(), "deep-workflow")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 

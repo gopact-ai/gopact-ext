@@ -123,12 +123,13 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	directory      *agent.Directory
-	planner        Planner
-	replanner      Replanner
-	reporter       Reporter
-	maxTransitions int
-	validation     *contract.Validator
+	directory       *agent.Directory
+	planner         Planner
+	replanner       Replanner
+	reporter        Reporter
+	maxTransitions  int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 func WithDirectory(directory *agent.Directory) Option {
@@ -151,6 +152,13 @@ func WithMaxTransitions(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.maxTransitions = limit
 		config.validation.Positive("max transitions", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -199,7 +207,9 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 		Err(); err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
 	plannerNode := wf.Node("plan", func(ctx context.Context, request agent.Request) (Plan, error) {
 		plan, err := configuration.planner.Plan(ctx, PlanInput{Request: cloneRequest(request)})

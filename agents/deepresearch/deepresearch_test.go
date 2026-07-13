@@ -38,7 +38,10 @@ func TestNewRequiresPipelineOptions(t *testing.T) {
 
 func TestDeepResearchRunsWorkflowPipelineAndDeduplicatesSources(t *testing.T) {
 	calls := &researchCalls{}
-	target := newResearchAgent(t, calls)
+	store := workflow.NewMemoryStore()
+	target := newResearchAgent(t, calls, WithWorkflowOptions(
+		workflow.WithCheckpointer(store), workflow.WithJournal(store),
+	))
 	var nodes []string
 	response, err := target.Invoke(
 		context.Background(),
@@ -65,6 +68,10 @@ func TestDeepResearchRunsWorkflowPipelineAndDeduplicatesSources(t *testing.T) {
 	}
 	if !reflect.DeepEqual(nodes, want) {
 		t.Fatalf("completed nodes = %v, want %v", nodes, want)
+	}
+	checkpoint, err := store.Load(context.Background(), "research-workflow")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 
@@ -258,10 +265,9 @@ func TestDeepResearchAgentConformance(t *testing.T) {
 	})
 }
 
-func newResearchAgent(t *testing.T, calls *researchCalls) *Agent {
+func newResearchAgent(t *testing.T, calls *researchCalls, options ...Option) *Agent {
 	t.Helper()
-	target, err := New(
-		testIdentity(),
+	configuration := []Option{
 		WithPlanner(PlannerFunc(func(context.Context, PlanInput) ([]Query, error) {
 			calls.planner++
 			return []Query{{ID: "q1", Text: "first"}, {ID: "q2", Text: "second"}}, nil
@@ -291,7 +297,9 @@ func newResearchAgent(t *testing.T, calls *researchCalls) *Agent {
 			return agent.Response{Message: gopact.UserMessage("report")}, nil
 		})),
 		WithMaxParallelism(1),
-	)
+	}
+	configuration = append(configuration, options...)
+	target, err := New(testIdentity(), configuration...)
 	if err != nil {
 		t.Fatal(err)
 	}

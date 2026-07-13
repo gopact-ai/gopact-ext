@@ -38,13 +38,16 @@ func TestAgentInvokesChildrenInDeclaredOrder(t *testing.T) {
 		return agent.Response{Message: gopact.UserMessage("done")}, nil
 	})
 	directory := compileDirectory(t, first, second)
-	target, err := New(testIdentity(), directory, []string{"first", "second"})
+	store := workflow.NewMemoryStore()
+	target, err := New(testIdentity(), directory, []string{"first", "second"}, WithWorkflowOptions(
+		workflow.WithCheckpointer(store), workflow.WithJournal(store),
+	))
 	if err != nil {
 		t.Fatal(err)
 	}
 	response, err := target.Invoke(context.Background(), agent.Request{
 		Messages: []gopact.Message{gopact.UserMessage("start")},
-	})
+	}, gopact.WithRunID("sequential-persistence"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +57,10 @@ func TestAgentInvokesChildrenInDeclaredOrder(t *testing.T) {
 	want := []string{"first:start", "second:first-result"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	checkpoint, err := store.Load(context.Background(), "sequential-persistence")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 
