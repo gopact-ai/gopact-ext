@@ -8,6 +8,11 @@ Official extensions for the redesigned `gopact` core.
 
 > **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade. Until Go 1.27 is officially released, it requires a development toolchain and should be treated as a preview, not a stable release.
 
+Until the coordinated RC modules are published, this repository is a source-development
+checkout: clone `gopact` beside `gopact-ext`. Its local `replace` directives are not a
+published-consumer contract. A standalone clone is supported only after the corresponding
+tagged modules have passed clean-consumer verification.
+
 ## Extension catalog
 
 ### Model adapters
