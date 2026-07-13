@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +47,213 @@ func TestWorkflowPersistenceConformance(t *testing.T) {
 			return store
 		})
 	})
+}
+
+func TestStoreRenewLease(t *testing.T) {
+	t.Run("updates latest record without a new version", func(t *testing.T) {
+		store := openTestStore(t)
+		record := leaseCheckpoint("renew-success")
+		if err := store.Create(context.Background(), record); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		expiresAt := record.LeaseExpiresAt.Add(time.Minute)
+		if err := store.RenewLease(context.Background(), workflow.CheckpointLease{
+			RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: expiresAt,
+		}); err != nil {
+			t.Fatalf("RenewLease() error = %v", err)
+		}
+		loaded, err := store.Load(context.Background(), record.RunID)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if loaded.Version != record.Version || !loaded.LeaseExpiresAt.Equal(expiresAt) {
+			t.Fatalf("Load() = %+v, want version %d and expiry %v", loaded, record.Version, expiresAt)
+		}
+		history, err := store.ListCheckpoints(context.Background(), workflow.CheckpointHistoryRequest{RunID: record.RunID})
+		if err != nil || len(history) != 1 {
+			t.Fatalf("ListCheckpoints() = %+v, %v, want one version", history, err)
+		}
+	})
+
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *Store, *workflow.CheckpointRecord, *workflow.CheckpointLease)
+	}{
+		{
+			name: "wrong owner",
+			mutate: func(_ *testing.T, _ *Store, _ *workflow.CheckpointRecord, lease *workflow.CheckpointLease) {
+				lease.OwnerID = "other-owner"
+			},
+		},
+		{
+			name: "wrong claim sequence",
+			mutate: func(_ *testing.T, _ *Store, _ *workflow.CheckpointRecord, lease *workflow.CheckpointLease) {
+				lease.ClaimSequence++
+			},
+		},
+		{
+			name: "terminal checkpoint",
+			mutate: func(t *testing.T, store *Store, record *workflow.CheckpointRecord, _ *workflow.CheckpointLease) {
+				t.Helper()
+				record.Status = workflow.CheckpointCompleted
+				if err := store.Finish(context.Background(), *record, record.Version); err != nil {
+					t.Fatalf("Finish() error = %v", err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := openTestStore(t)
+			record := leaseCheckpoint("renew-" + test.name)
+			if err := store.Create(context.Background(), record); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			lease := workflow.CheckpointLease{
+				RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence,
+				ExpiresAt: record.LeaseExpiresAt.Add(time.Minute),
+			}
+			test.mutate(t, store, &record, &lease)
+			if err := store.RenewLease(context.Background(), lease); !errors.Is(err, workflow.ErrCheckpointLeaseLost) {
+				t.Fatalf("RenewLease() error = %v, want ErrCheckpointLeaseLost", err)
+			}
+		})
+	}
+
+	t.Run("canceled context", func(t *testing.T) {
+		store := openTestStore(t)
+		record := leaseCheckpoint("renew-canceled")
+		if err := store.Create(context.Background(), record); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := store.RenewLease(ctx, workflow.CheckpointLease{
+			RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence,
+			ExpiresAt: record.LeaseExpiresAt.Add(time.Minute),
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RenewLease() error = %v, want context.Canceled", err)
+		}
+	})
+}
+
+func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lease.db")
+	firstStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = firstStore.Close() }()
+	secondStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = secondStore.Close() }()
+
+	const (
+		leaseDuration = 300 * time.Millisecond
+		renewEvery    = 50 * time.Millisecond
+	)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseNode := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseNode()
+	first := workflow.New[string, string](
+		"sqlite-heartbeat",
+		workflow.WithCheckpointer(firstStore),
+		workflow.WithCheckpointLease(leaseDuration, renewEvery),
+	)
+	firstNode := first.Node("node", func(ctx context.Context, input string) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return input, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	first.Entry(firstNode)
+	first.Exit(firstNode)
+
+	secondRan := make(chan struct{}, 1)
+	second := workflow.New[string, string](
+		"sqlite-heartbeat",
+		workflow.WithCheckpointer(secondStore),
+		workflow.WithCheckpointLease(leaseDuration, renewEvery),
+	)
+	secondNode := second.Node("node", func(_ context.Context, input string) (string, error) {
+		secondRan <- struct{}{}
+		return input, nil
+	})
+	second.Entry(secondNode)
+	second.Exit(secondNode)
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := first.Invoke(context.Background(), "input", gopact.WithRunID("shared-run"))
+		firstDone <- err
+	}()
+	<-started
+	initial, err := secondStore.Load(context.Background(), "shared-run")
+	if err != nil {
+		t.Fatalf("initial Load() error = %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	renewedPastInitialLease := false
+	for time.Now().Before(deadline) {
+		current, loadErr := secondStore.Load(context.Background(), "shared-run")
+		if loadErr != nil {
+			t.Fatalf("Load() error = %v", loadErr)
+		}
+		if time.Now().After(initial.LeaseExpiresAt) && current.LeaseExpiresAt.After(time.Now()) {
+			renewedPastInitialLease = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !renewedPastInitialLease {
+		t.Fatal("lease was not renewed past its initial expiry")
+	}
+	_, err = second.Invoke(context.Background(), "", workflow.WithResume(workflow.ResumeRequest{RunID: "shared-run"}))
+	if !errors.Is(err, workflow.ErrCheckpointConflict) {
+		t.Fatalf("second Invoke() error = %v, want ErrCheckpointConflict", err)
+	}
+	select {
+	case <-secondRan:
+		t.Fatal("second instance executed the leased node")
+	default:
+	}
+	releaseNode()
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first Invoke() error = %v", err)
+	}
+}
+
+func openTestStore(t *testing.T) *Store {
+	t.Helper()
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return store
+}
+
+func leaseCheckpoint(runID string) workflow.CheckpointRecord {
+	now := time.Now().UTC()
+	return workflow.CheckpointRecord{
+		ID: "checkpoint:" + runID, SessionID: "session-1", RunID: runID, WorkflowName: "workflow",
+		TopologyVersion: "v1", SchemaVersion: 2, Version: 1, Status: workflow.CheckpointRunning,
+		Payload: []byte(`{"state":"running"}`), ReplayStatus: workflow.ReplayUnknown,
+		OwnerID: "owner-1", ClaimSequence: 1, LeaseExpiresAt: now.Add(time.Minute),
+		CreatedAt: now, UpdatedAt: now,
+	}
 }
 
 func requireWorkflowPersistence(t *testing.T, store persistence, reopen func(*testing.T) persistence) {

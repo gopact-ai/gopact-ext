@@ -154,6 +154,70 @@ func (store *Store) Load(ctx context.Context, runID string) (workflow.Checkpoint
 	return loadCheckpoint(ctx, store.db, runID)
 }
 
+// RenewLease extends the current running ownership claim without creating a checkpoint version.
+func (store *Store) RenewLease(ctx context.Context, lease workflow.CheckpointLease) error {
+	if err := store.ready(ctx); err != nil {
+		return err
+	}
+	if lease.RunID == "" || lease.OwnerID == "" || lease.ClaimSequence <= 0 || lease.ExpiresAt.IsZero() {
+		return fmt.Errorf("%w: invalid checkpoint lease", workflow.ErrInvalidCheckpoint)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: begin lease renewal: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := loadCheckpoint(ctx, tx, lease.RunID)
+	if err != nil {
+		if errors.Is(err, workflow.ErrCheckpointNotFound) || databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: load lease checkpoint: %w", err)
+	}
+	if current.Status != workflow.CheckpointRunning || current.OwnerID != lease.OwnerID || current.ClaimSequence != lease.ClaimSequence {
+		return workflow.ErrCheckpointLeaseLost
+	}
+	current.LeaseExpiresAt = lease.ExpiresAt
+	metadata, err := encodeCheckpointMetadata(current)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(
+		ctx,
+		`UPDATE `+checkpointTable+` SET record_json = ? WHERE run_id = ? AND version = ? AND NOT EXISTS (`+
+			`SELECT 1 FROM `+checkpointTable+` AS newer WHERE newer.run_id = ? AND newer.version > ?`+
+			`)`,
+		metadata,
+		lease.RunID,
+		current.Version,
+		lease.RunID,
+		current.Version,
+	)
+	if err != nil {
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: renew checkpoint lease: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: count renewed checkpoint leases: %w", err)
+	}
+	if affected != 1 {
+		return workflow.ErrCheckpointLeaseLost
+	}
+	if err := tx.Commit(); err != nil {
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		return fmt.Errorf("sqlite: commit lease renewal: %w", err)
+	}
+	return nil
+}
+
 // Save writes a non-terminal checkpoint using version CAS.
 func (store *Store) Save(ctx context.Context, record workflow.CheckpointRecord, version int64) error {
 	return store.write(ctx, record, version, false, false)
@@ -368,11 +432,9 @@ type sqlQueryRower interface {
 type scanner interface{ Scan(...any) error }
 
 func insertCheckpoint(ctx context.Context, executor sqlExecutor, record workflow.CheckpointRecord) error {
-	metadata := record
-	metadata.Payload = nil
-	encoded, err := json.Marshal(metadata)
+	encoded, err := encodeCheckpointMetadata(record)
 	if err != nil {
-		return fmt.Errorf("sqlite: encode checkpoint: %w", err)
+		return err
 	}
 	_, err = executor.ExecContext(
 		ctx,
@@ -383,6 +445,16 @@ func insertCheckpoint(ctx context.Context, executor sqlExecutor, record workflow
 		record.Payload,
 	)
 	return err
+}
+
+func encodeCheckpointMetadata(record workflow.CheckpointRecord) ([]byte, error) {
+	metadata := record
+	metadata.Payload = nil
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: encode checkpoint: %w", err)
+	}
+	return encoded, nil
 }
 
 func loadCheckpoint(ctx context.Context, queryer sqlQueryRower, runID string) (workflow.CheckpointRecord, error) {
