@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/gopact/runlog"
 	"github.com/gopact-ai/gopact/workflow"
 	_ "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const (
@@ -358,6 +359,15 @@ func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord,
 	if !sameCheckpointIdentity(current, record) {
 		return workflow.ErrCheckpointMismatch
 	}
+	if !reopen {
+		if record.ClaimSequence != current.ClaimSequence ||
+			(record.OwnerID != "" && record.OwnerID != current.OwnerID) {
+			return workflow.ErrCheckpointLeaseLost
+		}
+		if record.OwnerID == current.OwnerID && current.LeaseExpiresAt.After(record.LeaseExpiresAt) {
+			record.LeaseExpiresAt = current.LeaseExpiresAt
+		}
+	}
 	record.Version++
 	if err := insertCheckpointAndHead(ctx, tx, record); err != nil {
 		if uniqueConstraint(err) || databaseBusy(err) || errors.Is(err, errRunHeadConflict) {
@@ -645,6 +655,10 @@ func uniqueConstraint(err error) bool {
 }
 
 func databaseBusy(err error) bool {
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "database is locked") || strings.Contains(message, "database is busy")
+	var result interface{ Code() int }
+	if !errors.As(err, &result) {
+		return false
+	}
+	code := result.Code() & 0xff
+	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
 }

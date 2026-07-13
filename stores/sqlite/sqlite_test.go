@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/gopact/agent"
 	"github.com/gopact-ai/gopact/runlog"
 	"github.com/gopact-ai/gopact/workflow"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 type persistence interface {
@@ -136,6 +137,93 @@ func TestStoreRenewLease(t *testing.T) {
 			t.Fatalf("RenewLease() error = %v, want context.Canceled", err)
 		}
 	})
+}
+
+func TestSQLiteSavePreservesLeaseRenewedAfterLoad(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	originalExpiry := now.Add(time.Minute)
+	renewedExpiry := now.Add(2 * time.Minute)
+	path := filepath.Join(t.TempDir(), "save.db")
+	storeA := openTestStoreAt(t, path)
+	storeB := openTestStoreAt(t, path)
+	record := leaseCheckpoint("stale-save")
+	record.LeaseExpiresAt = originalExpiry
+	if err := storeA.Create(ctx, record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	stale, err := storeB.Load(ctx, record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := storeA.RenewLease(ctx, workflow.CheckpointLease{
+		RunID: record.RunID, OwnerID: record.OwnerID,
+		ClaimSequence: record.ClaimSequence, ExpiresAt: renewedExpiry,
+	}); err != nil {
+		t.Fatalf("RenewLease() error = %v", err)
+	}
+	stale.ConfirmedSequence = 1
+	stale.ReplayStatus = workflow.ReplaySafe
+	stale.UpdatedAt = now.Add(time.Second)
+	if err := storeB.Save(ctx, stale, stale.Version); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	loaded, err := storeA.Load(ctx, record.RunID)
+	if err != nil {
+		t.Fatalf("Load() after Save error = %v", err)
+	}
+	if loaded.Version != 2 || loaded.ConfirmedSequence != 1 ||
+		loaded.OwnerID != record.OwnerID || loaded.ClaimSequence != record.ClaimSequence ||
+		!loaded.LeaseExpiresAt.Equal(renewedExpiry) {
+		t.Fatalf("Load() = %+v, want saved state with renewed expiry %v", loaded, renewedExpiry)
+	}
+}
+
+func TestSQLiteSaveRejectsChangedLeaseIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*workflow.CheckpointRecord)
+	}{
+		{
+			name: "owner",
+			mutate: func(record *workflow.CheckpointRecord) {
+				record.OwnerID = "owner-2"
+			},
+		},
+		{
+			name: "claim sequence",
+			mutate: func(record *workflow.CheckpointRecord) {
+				record.ClaimSequence++
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "save.db")
+			storeA := openTestStoreAt(t, path)
+			storeB := openTestStoreAt(t, path)
+			record := leaseCheckpoint("changed-lease")
+			if err := storeA.Create(t.Context(), record); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			candidate, err := storeB.Load(t.Context(), record.RunID)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			test.mutate(&candidate)
+			if err := storeB.Save(t.Context(), candidate, candidate.Version); !errors.Is(err, workflow.ErrCheckpointLeaseLost) {
+				t.Fatalf("Save() error = %v, want ErrCheckpointLeaseLost", err)
+			}
+			loaded, err := storeA.Load(t.Context(), record.RunID)
+			if err != nil {
+				t.Fatalf("Load() after Save error = %v", err)
+			}
+			if loaded.Version != record.Version || loaded.OwnerID != record.OwnerID ||
+				loaded.ClaimSequence != record.ClaimSequence {
+				t.Fatalf("Load() = %+v, want original lease identity", loaded)
+			}
+		})
+	}
 }
 
 func TestSQLiteClaimRejectsLeaseRenewedAfterLoad(t *testing.T) {
@@ -305,6 +393,37 @@ func TestSQLiteClaimErrors(t *testing.T) {
 			}
 			if err := store.Claim(ctx, candidate, version); !errors.Is(err, test.want) {
 				t.Fatalf("Claim() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
+type sqliteResultError struct {
+	code    int
+	message string
+}
+
+func (err sqliteResultError) Error() string { return err.message }
+func (err sqliteResultError) Code() int     { return err.code }
+
+func TestDatabaseBusyUsesSQLiteResultCode(t *testing.T) {
+	tests := []struct {
+		name string
+		code int
+		text string
+		want bool
+	}{
+		{name: "busy", code: sqlite3.SQLITE_BUSY, text: "opaque sqlite error", want: true},
+		{name: "busy snapshot", code: sqlite3.SQLITE_BUSY | (2 << 8), text: "opaque sqlite error", want: true},
+		{name: "locked", code: sqlite3.SQLITE_LOCKED, text: "opaque sqlite error", want: true},
+		{name: "locked shared cache", code: sqlite3.SQLITE_LOCKED | (1 << 8), text: "opaque sqlite error", want: true},
+		{name: "unrelated code", code: sqlite3.SQLITE_CONSTRAINT, text: "database is locked", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := errors.Join(errors.New("wrapped sqlite operation"), sqliteResultError{code: test.code, message: test.text})
+			if got := databaseBusy(err); got != test.want {
+				t.Fatalf("databaseBusy() = %t, want %t for result code %d", got, test.want, test.code)
 			}
 		})
 	}

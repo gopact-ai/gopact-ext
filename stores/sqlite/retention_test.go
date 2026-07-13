@@ -234,8 +234,9 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	current.Status = workflow.CheckpointInterrupted
+	current.OwnerID = ""
+	current.LeaseExpiresAt = time.Time{}
 	current.UpdatedAt = base.Add(time.Minute)
-	current.LeaseExpiresAt = base.Add(-time.Minute)
 	if err := store.Save(ctx, current, current.Version); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -244,6 +245,9 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	current, err = store.Load(ctx, record.RunID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if current.OwnerID != "" || !current.LeaseExpiresAt.IsZero() {
+		t.Fatalf("Load() = owner %q expiry %v, want cleared interrupted lease", current.OwnerID, current.LeaseExpiresAt)
 	}
 	current.Status = workflow.CheckpointRunning
 	current.OwnerID = "owner-2"
@@ -260,6 +264,8 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	current.Status = workflow.CheckpointCompleted
+	current.OwnerID = ""
+	current.LeaseExpiresAt = time.Time{}
 	current.UpdatedAt = base.Add(3 * time.Minute)
 	if err := store.Finish(ctx, current, current.Version); err != nil {
 		t.Fatalf("Finish() error = %v", err)
@@ -269,6 +275,9 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	current, err = store.Load(ctx, record.RunID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if current.OwnerID != "" || !current.LeaseExpiresAt.IsZero() {
+		t.Fatalf("Load() = owner %q expiry %v, want cleared terminal lease", current.OwnerID, current.LeaseExpiresAt)
 	}
 	current.Status = workflow.CheckpointRunning
 	current.UpdatedAt = base.Add(4 * time.Minute)
