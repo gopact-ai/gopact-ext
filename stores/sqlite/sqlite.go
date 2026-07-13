@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gopact-ai/gopact/runlog"
 	"github.com/gopact-ai/gopact/workflow"
@@ -152,6 +153,75 @@ func (store *Store) Load(ctx context.Context, runID string) (workflow.Checkpoint
 		return workflow.CheckpointRecord{}, fmt.Errorf("%w: run id is required", workflow.ErrInvalidCheckpoint)
 	}
 	return loadCheckpoint(ctx, store.db, runID)
+}
+
+// Claim atomically replaces an expired running or interrupted checkpoint.
+func (store *Store) Claim(ctx context.Context, candidate workflow.CheckpointRecord, version int64) error {
+	if err := store.ready(ctx); err != nil {
+		return err
+	}
+	if version <= 0 || candidate.Version != version || candidate.Status != workflow.CheckpointRunning ||
+		candidate.OwnerID == "" || candidate.ClaimSequence <= 0 || candidate.LeaseExpiresAt.IsZero() {
+		return fmt.Errorf("%w: invalid checkpoint claim", workflow.ErrInvalidCheckpoint)
+	}
+	if err := validateCheckpoint(candidate); err != nil {
+		return err
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointConflict
+		}
+		return fmt.Errorf("sqlite: begin checkpoint claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := loadCheckpoint(ctx, tx, candidate.RunID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointConflict
+		}
+		return err
+	}
+	now := time.Now()
+	if !candidate.LeaseExpiresAt.After(now) {
+		return fmt.Errorf("%w: checkpoint claim lease must be in the future", workflow.ErrInvalidCheckpoint)
+	}
+	if current.Version != version ||
+		(current.Status != workflow.CheckpointRunning && current.Status != workflow.CheckpointInterrupted) {
+		return workflow.ErrCheckpointConflict
+	}
+	if !sameCheckpointIdentity(current, candidate) {
+		return workflow.ErrCheckpointMismatch
+	}
+	if current.LeaseExpiresAt.After(now) || candidate.ClaimSequence != current.ClaimSequence+1 {
+		return workflow.ErrCheckpointConflict
+	}
+	candidate.Version++
+	if err := insertCheckpoint(ctx, tx, candidate); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if uniqueConstraint(err) || databaseBusy(err) {
+			return workflow.ErrCheckpointConflict
+		}
+		return fmt.Errorf("sqlite: claim checkpoint: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if databaseBusy(err) {
+			return workflow.ErrCheckpointConflict
+		}
+		return fmt.Errorf("sqlite: commit checkpoint claim: %w", err)
+	}
+	return nil
 }
 
 // RenewLease extends the current running ownership claim without creating a checkpoint version.

@@ -138,6 +138,182 @@ func TestStoreRenewLease(t *testing.T) {
 	})
 }
 
+func TestStoreClaimRejectsLeaseRenewedAfterLoad(t *testing.T) {
+	ctx := context.Background()
+	past := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
+	store := openTestStore(t)
+	record := leaseCheckpoint("claim-renewed")
+	record.LeaseExpiresAt = past
+	if err := store.Create(ctx, record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	stale, err := store.Load(ctx, record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := store.RenewLease(ctx, workflow.CheckpointLease{
+		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: future,
+	}); err != nil {
+		t.Fatalf("RenewLease() error = %v", err)
+	}
+	stale.OwnerID = "owner-2"
+	stale.ClaimSequence++
+	stale.LeaseExpiresAt = future
+	if err := store.Claim(ctx, stale, stale.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
+		t.Fatalf("Claim() error = %v, want ErrCheckpointConflict", err)
+	}
+	loaded, err := store.Load(ctx, record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.OwnerID != record.OwnerID || loaded.ClaimSequence != record.ClaimSequence ||
+		loaded.Version != record.Version || !loaded.LeaseExpiresAt.Equal(future) {
+		t.Fatalf("Load() = %+v, want renewed original lease", loaded)
+	}
+}
+
+func TestStoreClaimAllowsOneConcurrentClaimantAcrossStores(t *testing.T) {
+	ctx := context.Background()
+	past := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "claim.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	record := leaseCheckpoint("claim-concurrent")
+	record.LeaseExpiresAt = past
+	if err := first.Create(ctx, record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	head, err := first.Load(ctx, record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for index, store := range []*Store{first, second} {
+		candidate := head
+		candidate.OwnerID = "owner-" + string(rune('a'+index))
+		candidate.ClaimSequence++
+		candidate.LeaseExpiresAt = future
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			results <- store.Claim(ctx, candidate, head.Version)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	succeeded, conflicted := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, workflow.ErrCheckpointConflict):
+			conflicted++
+		default:
+			t.Fatalf("Claim() error = %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("Claim() results = %d succeeded, %d conflicted; want 1 and 1", succeeded, conflicted)
+	}
+	loaded, err := first.Load(ctx, record.RunID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Version != head.Version+1 || loaded.ClaimSequence != head.ClaimSequence+1 {
+		t.Fatalf("Load() = version %d claim sequence %d, want %d and %d", loaded.Version, loaded.ClaimSequence, head.Version+1, head.ClaimSequence+1)
+	}
+}
+
+func TestStoreClaimRejectsInvalidHeadOrCandidate(t *testing.T) {
+	past := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	t.Run("identity mismatch", func(t *testing.T) {
+		store := openTestStore(t)
+		record := leaseCheckpoint("claim-mismatch")
+		record.LeaseExpiresAt = past
+		if err := store.Create(context.Background(), record); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		candidate := record
+		candidate.WorkflowName = "other-workflow"
+		candidate.OwnerID = "owner-2"
+		candidate.ClaimSequence++
+		candidate.LeaseExpiresAt = future
+		if err := store.Claim(context.Background(), candidate, candidate.Version); !errors.Is(err, workflow.ErrCheckpointMismatch) {
+			t.Fatalf("Claim() error = %v, want ErrCheckpointMismatch", err)
+		}
+	})
+
+	t.Run("terminal head", func(t *testing.T) {
+		store := openTestStore(t)
+		record := leaseCheckpoint("claim-terminal")
+		record.LeaseExpiresAt = past
+		if err := store.Create(context.Background(), record); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		record.Status = workflow.CheckpointCompleted
+		if err := store.Finish(context.Background(), record, record.Version); err != nil {
+			t.Fatalf("Finish() error = %v", err)
+		}
+		candidate, err := store.Load(context.Background(), record.RunID)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		candidate.Status = workflow.CheckpointRunning
+		candidate.OwnerID = "owner-2"
+		candidate.ClaimSequence++
+		candidate.LeaseExpiresAt = future
+		if err := store.Claim(context.Background(), candidate, candidate.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
+			t.Fatalf("Claim() error = %v, want ErrCheckpointConflict", err)
+		}
+	})
+
+	t.Run("stale version", func(t *testing.T) {
+		store := openTestStore(t)
+		record := leaseCheckpoint("claim-version")
+		record.LeaseExpiresAt = past
+		if err := store.Create(context.Background(), record); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		stale := record
+		if err := store.Save(context.Background(), record, record.Version); err != nil {
+			t.Fatalf("Save() error = %v", err)
+		}
+		stale.OwnerID = "owner-2"
+		stale.ClaimSequence++
+		stale.LeaseExpiresAt = future
+		if err := store.Claim(context.Background(), stale, stale.Version); !errors.Is(err, workflow.ErrCheckpointConflict) {
+			t.Fatalf("Claim() error = %v, want ErrCheckpointConflict", err)
+		}
+	})
+
+	t.Run("canceled context", func(t *testing.T) {
+		store := openTestStore(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := store.Claim(ctx, leaseCheckpoint("claim-canceled"), 1); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Claim() error = %v, want context.Canceled", err)
+		}
+	})
+}
+
 func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lease.db")
 	firstStore, err := Open(path)
