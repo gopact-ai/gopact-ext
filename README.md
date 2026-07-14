@@ -43,7 +43,11 @@ tagged modules have passed clean-consumer verification.
 
 | Package | Use it for |
 | --- | --- |
-| [`stores/sqlite`](./stores/sqlite) | Durable local checkpoints, history, control, and run logs |
+| [`stores/dbstore`](./stores/dbstore) | Shared GORM checkpoint, lease, fencing, RunLog, and retention logic |
+| [`stores/sqlite`](./stores/sqlite) | Pure-Go local persistence using SQLite rollback journal mode |
+| [`stores/mysql`](./stores/mysql) | Multi-host persistence on MySQL |
+| [`stores/mariadb`](./stores/mariadb) | Multi-host persistence on MariaDB through the MySQL dialect |
+| [`stores/postgres`](./stores/postgres) | Multi-host persistence on PostgreSQL |
 
 For complete runnable applications, see [gopact-examples](https://github.com/gopact-ai/gopact-examples).
 
@@ -54,6 +58,9 @@ Every official Agent expresses its algorithmic state machine as one Workflow. Wo
 Workflow-backed Agent constructors expose `WithWorkflowOptions`, so production persistence and lease policy can be configured without bypassing the official Agent:
 
 ```go
+if err := sqlite.Migrate("agent.db"); err != nil { // deployment migration stage
+	return err
+}
 store, err := sqlite.Open("agent.db")
 if err != nil {
 	return err
@@ -76,7 +83,7 @@ Durable resume requires reconstructing the same Agent topology with the same ide
 
 That key is reliable only when the external API natively deduplicates it, or when application code writes a uniquely constrained dedup/outbox record in the same database transaction as its business data. `gopact` cannot atomically combine a checkpoint transaction with an arbitrary remote API and does not provide a generic outbox. An explicit business retry intended to produce another side effect must use a new operation key.
 
-Use `workflow.MemoryStore` only for tests and short-lived processes. The SQLite Store is for one machine or multiple processes that safely share the same local database file. Multi-host deployments require a distributed database Store with atomic Claim and fencing.
+Use `workflow.MemoryStore` only for tests and short-lived processes. The SQLite Store is for one machine or multiple processes that safely share the same local database file. File databases require `journal_mode=DELETE`; explicit non-DELETE DSNs are rejected, and the first conversion of a persistent WAL database needs a maintenance window with all other SQLite connections stopped. SQLite, MySQL, MariaDB, and PostgreSQL all use `Migrate(dsn)` in the deployment stage followed by `Open(dsn)` in application instances; a true in-memory SQLite database is initialized by `Open`. Multi-host deployments should use the MySQL, MariaDB, or PostgreSQL Store. These stores derive lease expiry from the database clock inside the ownership transaction. For an existing schema, stop and drain all old writers before migration. The database advisory lock serializes migrators but does not make mixed-version writers safe. Schedule terminal and standalone-journal purge; exceptionally long active Runs can compact only their confirmed contiguous prefix with explicit `AllowHistoryLoss`, because the removed Retry/Fork/audit history cannot be reconstructed.
 
 ## Breaking migration
 

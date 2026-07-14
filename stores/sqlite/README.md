@@ -1,6 +1,6 @@
 # 💾 SQLite Workflow Store
 
-`stores/sqlite` is a single-file durable backend built with `database/sql` and the CGO-free `modernc.org/sqlite` driver.
+`stores/sqlite` is a single-file durable backend built on the shared GORM `dbstore` with the CGO-free `libtnb/sqlite` driver powered by modernc SQLite.
 
 ## Use cases
 
@@ -12,6 +12,9 @@ The store directly implements `workflow.Checkpointer`, `workflow.CheckpointHisto
 ## Example
 
 ```go
+if err := sqlite.Migrate("gopact.db"); err != nil { // deployment migration stage
+	return err
+}
 store, err := sqlite.Open("gopact.db")
 if err != nil {
 	return err
@@ -40,7 +43,9 @@ The store solves durable execution persistence. It does not provide semantic Age
 
 SQLite is a single-node store with bounded write concurrency. Atomic claim and renewal coordinate Workflow ownership between processes that safely share the same database file; a stale claim fails if another process renewed or replaced the loaded head. It is not a multi-host distributed coordinator. Multi-host deployments need a distributed database Store with atomic Claim and fencing.
 
-The store serializes writes through one SQLite connection and keeps logical checkpoint versions append-only. A heartbeat updates only the current version's lease metadata in place and does not append a history version. When opening an existing database whose `gopact_runlog` table predates session indexing, `Open` adds `session_id` with an empty default and creates the session/ordinal index. Existing rows remain `session_id=''`: session queries intentionally do not return them, while RunID queries still decode their stored JSON. The migration does not guess or backfill historical session identity.
+The store serializes writes through one SQLite connection. File databases require `journal_mode=DELETE`, and `Migrate`/`Open` reject DSNs that explicitly select another journal mode; only a true in-memory database may use `MEMORY`. `Migrate` runs in the deployment stage, while application instances call `Open`, which only verifies and connects. When an old database is persistently in WAL mode, `Migrate` first runs a truncating checkpoint, requires it to report no busy readers, switches to `journal_mode=DELETE`, and verifies the result before schema changes. Stop every other SQLite connection for migration; never delete `-wal` or `-shm` files by hand. A heartbeat updates only the current version's lease metadata in place and does not append a history version. A true in-memory database is initialized by `Open` because its schema cannot survive a separate migration connection.
+
+Migration performs a read-only compatibility preflight before changing schema. Run and Session IDs over 191 bytes, IDs ending in a space, invalid UTF-8/NUL, malformed historical JSON, and records above the new 4 MiB limit fail explicitly without writing a migration marker. Older RunLog rows start their retention age at migration time. Defensive SQLite triggers keep v2 metadata synchronized for direct inserts, but they do not make mixed-version writers safe: stop every writer for the upgrade and do not run or downgrade to an old binary afterward. Historical rows without a Session identity retain `session_id=''`; RunID queries still work, while Session queries intentionally omit those rows.
 
 ## External side effects
 
@@ -56,13 +61,30 @@ After a Run reaches `completed`, `failed`, `canceled`, or `terminated`, the serv
 
 ```go
 result, err := store.PurgeTerminalRuns(ctx, sqlite.PurgeRequest{
-	Before: time.Now().Add(-30 * 24 * time.Hour),
-	Limit:  100,
+	Before:    time.Now().Add(-30 * 24 * time.Hour),
+	Limit:     100,
+	RowLimit:  1000,
+	ByteLimit: 64 << 20,
 })
 ```
 
-`Before` is required. A zero `Limit` defaults to 100 and values above 1,000 are rejected. One call deletes a bounded batch of eligible Run heads, every checkpoint version, and all matching RunLog events in one transaction. Running and interrupted Runs are never selected. Repeat calls until `result.Runs == 0` to drain a backlog.
+`Before` is required. `Limit` bounds selected Runs (default 100, maximum 1,000). `RowLimit` counts logical checkpoint/event history rows and `ByteLimit` counts encoded record/payload bytes deleted by one call (defaults 1,000 rows and 64 MiB; maxima 10,000 rows and 1 GiB). They are work budgets, not hard limits on rollback-journal or filesystem writes; indexes, metadata, and page changes add overhead. One oversized legacy row is processed alone so cleanup can advance. Selection atomically changes the registry to `purging` and removes the executable Run head; later appends and reopen attempts are rejected. History is then deleted in small transactions, and the permanent `purged` tombstone prevents RunID resurrection. `result.Pending` reports Runs still being drained; repeat until it reaches zero and no new eligible Runs are selected. Running and interrupted Runs are never selected.
 
-Archive terminal Runs first when audit or replay requirements apply. Schedule purge outside the SDK, record the returned counts, errors, duration, database size, and WAL size, and alert when the backlog stops converging. Deploy this version to every process that writes the database before enabling purge during a rolling upgrade; a stale head with a newer checkpoint is skipped rather than deleted.
+Standalone RunLog retention is separate and destructive to replay:
 
-SQLite reuses freed pages, so successful purges bound live data without necessarily shrinking the database file. Run `VACUUM` only in a separate maintenance window, after a backup and with sufficient temporary disk space; do not put it on the request or per-batch purge path. Opening an older database backfills the Run-head index in batches of 256 Runs and is safe to repeat.
+```go
+result, err := store.PurgeRunLog(ctx, sqlite.RunLogPurgeRequest{
+	Before:          time.Now().Add(-30 * 24 * time.Hour),
+	Limit:           1000,
+	ByteLimit:       64 << 20,
+	AllowReplayLoss: true,
+})
+```
+
+The cutoff is Store append time, not `Record.Timestamp`. Only registry entries classified as journal are selected; Workflow entries in this database are excluded. `AllowReplayLoss` is mandatory because a separate journal database may still be used by Retry, Fork, or audit workflows even though it has no local checkpoint head. Do not call this purge for such a database until the application's replay contract permits deletion. Empty journal registry rows are reclaimed; compact Workflow tombstones remain and grow with unique purged RunIDs.
+
+For a long-running active Workflow, `PurgeConfirmedRunLog` can compact one RunID's contiguous confirmed prefix in bounded batches. It requires `AllowHistoryLoss: true`, refuses a checkpoint with a pending event, and preserves a durable sequence floor that rejects late writes. Current-checkpoint recovery remains valid, but Retry/Fork, timeline, and audit access to the deleted prefix does not; archive first when those contracts apply. Queries below the floor return `runlog.ErrHistoryCompacted`.
+
+Archive terminal Runs first when audit or replay requirements apply. Schedule purge outside the SDK, record counts, pending backlog, errors, duration, and database size, and alert when the backlog stops converging. The SDK starts no cleanup goroutine. A stale Run head with a newer checkpoint is skipped rather than deleted.
+
+SQLite reuses freed pages, so successful purges bound live data without necessarily shrinking the database file. Run `VACUUM` only in a separate maintenance window, after a backup and with sufficient temporary disk space; do not put it on the request or per-batch purge path. Migrating an older database backfills narrow retention metadata and Run registries in bounded, restart-safe batches without rewriting RunLog BLOBs.

@@ -48,6 +48,22 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestNewDefaultsToHTTPSAndRequiresExplicitHTTPOptIn(t *testing.T) {
+	model, err := New("test", "example.com/v1", "key", "model")
+	if err != nil {
+		t.Fatalf("New(default HTTPS) error = %v", err)
+	}
+	if model.baseURL != "https://example.com/v1" {
+		t.Fatalf("base URL = %q, want HTTPS default", model.baseURL)
+	}
+	if _, err := New("test", "http://example.com/v1", "key", "model"); err == nil {
+		t.Fatal("New(explicit HTTP) error = nil, want insecure transport rejection")
+	}
+	if _, err := New("test", "http://example.com/v1", "key", "model", WithInsecureHTTP()); err != nil {
+		t.Fatalf("New(WithInsecureHTTP) error = %v", err)
+	}
+}
+
 func TestModelInvoke(t *testing.T) {
 	var got chatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +77,7 @@ func TestModelInvoke(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -100,7 +116,7 @@ func TestModelInvokeRejectsOversizedResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -122,7 +138,7 @@ func TestModelInvokeMapsRequestFieldsAndEvents(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -223,7 +239,7 @@ func TestModelInvokeMapsToolsSchemaReasoningAndToolIntent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -268,7 +284,7 @@ func TestModelInvokeStream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -295,6 +311,39 @@ func TestModelInvokeStream(t *testing.T) {
 	}
 }
 
+func TestModelInvokeStreamRequiresTerminalMarker(t *testing.T) {
+	tests := []struct {
+		name              string
+		body              string
+		wantUnexpectedEOF bool
+	}{
+		{name: "clean EOF after partial chunk", body: "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n", wantUnexpectedEOF: true},
+		{name: "finish reason", body: "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"},\"finish_reason\":\"stop\"}]}\n\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var gotErr error
+			for _, err := range model.InvokeStream(t.Context(), model.NewRequest(gopact.UserMessage("ping"))) {
+				if err != nil {
+					gotErr = err
+				}
+			}
+			if test.wantUnexpectedEOF != errors.Is(gotErr, io.ErrUnexpectedEOF) {
+				t.Fatalf("InvokeStream() error = %v, want unexpected EOF = %v", gotErr, test.wantUnexpectedEOF)
+			}
+		})
+	}
+}
+
 func TestModelInvokeConcurrent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var got chatRequest
@@ -305,7 +354,7 @@ func TestModelInvokeConcurrent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -342,7 +391,7 @@ func TestModelInvokeBoundsModelEventSummary(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -366,7 +415,7 @@ func TestModelInvokeHTTPErrorIsBoundedAndRetryable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -401,7 +450,7 @@ func TestModelInvokeRetriesRetryableStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model", WithMaxAttempts(2))
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP(), WithMaxAttempts(2))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -466,7 +515,7 @@ func TestModelInvokeAppliesPerCallTimeout(t *testing.T) {
 		close(release)
 		server.Close()
 	}()
-	model, err := New("test", server.URL, "test-key", "test-model", WithTimeout(20*time.Millisecond))
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP(), WithTimeout(20*time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +543,7 @@ func TestModelInvokeRejectsInvalidToolArguments(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"search","arguments":"{"}}]}}]}`))
 	}))
 	defer server.Close()
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +559,7 @@ func TestModelInvokeHonorsContextCancel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -546,7 +595,7 @@ func BenchmarkModelInvoke(b *testing.B) {
 	}))
 	defer server.Close()
 
-	model, err := New("test", server.URL, "test-key", "test-model")
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
 	if err != nil {
 		b.Fatalf("New() error = %v", err)
 	}

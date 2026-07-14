@@ -86,6 +86,9 @@ func TestIntegrationWorkflowSwitchesFromMemoryToSQLiteByConfiguration(t *testing
 			})
 			t.Run("sqlite", func(t *testing.T) {
 				path := t.TempDir() + "/workflow.db"
+				if err := storesqlite.Migrate(path); err != nil {
+					t.Fatal(err)
+				}
 				store, err := storesqlite.Open(path)
 				if err != nil {
 					t.Fatal(err)

@@ -152,7 +152,7 @@ func TestPurgeTerminalRunsSkipsStaleRunHead(t *testing.T) {
 	if err != nil || loaded.Status != workflow.CheckpointRunning || loaded.Version != latest.Version {
 		t.Fatalf("Load() = %+v, %v, want newer running checkpoint", loaded, err)
 	}
-	assertRunStorageCounts(t, store, "stale-head", 3, 1, 1)
+	assertRunStorageCounts(t, store, "stale-head", runStorageCounts{checkpoints: 3, events: 1, heads: 1})
 }
 
 func TestPurgeTerminalRunsFailsClosedOnMismatchedRunHead(t *testing.T) {
@@ -183,7 +183,7 @@ func TestPurgeTerminalRunsFailsClosedOnMismatchedRunHead(t *testing.T) {
 	if _, err := store.PurgeTerminalRuns(ctx, PurgeRequest{Before: before}); err == nil {
 		t.Fatal("PurgeTerminalRuns() error = nil, want mismatched head error")
 	}
-	assertRunStorageCounts(t, store, "mismatched-head", 2, 1, 1)
+	assertRunStorageCounts(t, store, "mismatched-head", runStorageCounts{checkpoints: 2, events: 1, heads: 1})
 }
 
 func TestPurgeTerminalRunsValidatesRequestAndCancellation(t *testing.T) {
@@ -220,14 +220,18 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	if err := store.Create(ctx, record); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	assertRunHead(t, store, record.RunID, workflow.CheckpointRunning, 1, base)
+	assertRunHead(t, store, runHeadExpectation{
+		runID: record.RunID, status: workflow.CheckpointRunning, version: 1, updatedAt: base,
+	})
 
 	if err := store.RenewLease(ctx, workflow.CheckpointLease{
 		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: time.Now().Add(2 * time.Hour),
 	}); err != nil {
 		t.Fatalf("RenewLease() error = %v", err)
 	}
-	assertRunHead(t, store, record.RunID, workflow.CheckpointRunning, 1, base)
+	assertRunHead(t, store, runHeadExpectation{
+		runID: record.RunID, status: workflow.CheckpointRunning, version: 1, updatedAt: base,
+	})
 
 	current, err := store.Load(ctx, record.RunID)
 	if err != nil {
@@ -240,7 +244,9 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	if err := store.Save(ctx, current, current.Version); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	assertRunHead(t, store, record.RunID, workflow.CheckpointInterrupted, 2, base.Add(time.Minute))
+	assertRunHead(t, store, runHeadExpectation{
+		runID: record.RunID, status: workflow.CheckpointInterrupted, version: 2, updatedAt: base.Add(time.Minute),
+	})
 
 	current, err = store.Load(ctx, record.RunID)
 	if err != nil {
@@ -257,7 +263,9 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	if err := store.Claim(ctx, current, current.Version); err != nil {
 		t.Fatalf("Claim() error = %v", err)
 	}
-	assertRunHead(t, store, record.RunID, workflow.CheckpointRunning, 3, base.Add(2*time.Minute))
+	assertRunHead(t, store, runHeadExpectation{
+		runID: record.RunID, status: workflow.CheckpointRunning, version: 3, updatedAt: base.Add(2 * time.Minute),
+	})
 
 	current, err = store.Load(ctx, record.RunID)
 	if err != nil {
@@ -270,7 +278,9 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	if err := store.Finish(ctx, current, current.Version); err != nil {
 		t.Fatalf("Finish() error = %v", err)
 	}
-	assertRunHead(t, store, record.RunID, workflow.CheckpointCompleted, 4, base.Add(3*time.Minute))
+	assertRunHead(t, store, runHeadExpectation{
+		runID: record.RunID, status: workflow.CheckpointCompleted, version: 4, updatedAt: base.Add(3 * time.Minute),
+	})
 
 	current, err = store.Load(ctx, record.RunID)
 	if err != nil {
@@ -284,29 +294,9 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	if err := store.Reopen(ctx, current, current.Version); err != nil {
 		t.Fatalf("Reopen() error = %v", err)
 	}
-	assertRunHead(t, store, record.RunID, workflow.CheckpointRunning, 5, base.Add(4*time.Minute))
-}
-
-func TestRunHeadUpsertRequiresCurrentCheckpointSource(t *testing.T) {
-	ctx := context.Background()
-	store := openTestStore(t)
-	record := retentionCheckpoint("missing-source", workflow.CheckpointCompleted, time.Now().UTC())
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated, err := upsertRunHead(ctx, tx, record)
-	if err != nil {
-		_ = tx.Rollback()
-		t.Fatalf("upsertRunHead() error = %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	if updated {
-		t.Fatal("upsertRunHead() updated a head without its checkpoint source")
-	}
-	assertRunStorageCounts(t, store, record.RunID, 0, 0, 0)
+	assertRunHead(t, store, runHeadExpectation{
+		runID: record.RunID, status: workflow.CheckpointRunning, version: 5, updatedAt: base.Add(4 * time.Minute),
+	})
 }
 
 func TestOpenBackfillsRunHeadsInBatches(t *testing.T) {
@@ -331,24 +321,30 @@ func TestOpenBackfillsRunHeadsInBatches(t *testing.T) {
 		if err := insertCheckpoint(ctx, db, record); err != nil {
 			t.Fatalf("insert legacy checkpoint %d: %v", index, err)
 		}
-		if index == 0 {
-			record.Version = 2
-			record.Status = workflow.CheckpointCompleted
-			record.UpdatedAt = base.Add(time.Hour)
-			if err := insertCheckpoint(ctx, db, record); err != nil {
-				t.Fatalf("insert latest legacy checkpoint: %v", err)
-			}
+		if index != 0 {
+			continue
+		}
+		record.Version = 2
+		record.Status = workflow.CheckpointCompleted
+		record.UpdatedAt = base.Add(time.Hour)
+		if err := insertCheckpoint(ctx, db, record); err != nil {
+			t.Fatalf("insert latest legacy checkpoint: %v", err)
 		}
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 
+	if err := Migrate(path); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
 	store, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	assertRunHead(t, store, "legacy-000", workflow.CheckpointCompleted, 2, base.Add(time.Hour))
+	assertRunHead(t, store, runHeadExpectation{
+		runID: "legacy-000", status: workflow.CheckpointCompleted, version: 2, updatedAt: base.Add(time.Hour),
+	})
 	if count := countRows(t, store.db, "gopact_workflow_runs"); count != 257 {
 		t.Fatalf("run head count = %d, want 257", count)
 	}
@@ -365,6 +361,9 @@ func TestOpenBackfillsRunHeadsInBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := Migrate(path); err != nil {
+		t.Fatalf("second Migrate() error = %v", err)
+	}
 	store, err = Open(path)
 	if err != nil {
 		t.Fatalf("second Open() error = %v", err)
@@ -377,6 +376,9 @@ func TestOpenBackfillsRunHeadsInBatches(t *testing.T) {
 
 func TestOpenDoesNotRewriteCurrentRunHeads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "current-heads.db")
+	if err := Migrate(path); err != nil {
+		t.Fatal(err)
+	}
 	store, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -396,17 +398,35 @@ func TestOpenDoesNotRewriteCurrentRunHeads(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := Migrate(path); err != nil {
+		t.Fatalf("Migrate() rewrote an already-current run head: %v", err)
+	}
 	store, err = Open(path)
 	if err != nil {
-		t.Fatalf("Open() rewrote an already-current run head: %v", err)
+		t.Fatalf("Open() after repeated Migrate error = %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	assertRunHead(t, store, record.RunID, record.Status, record.Version, record.UpdatedAt)
+	assertRunHead(t, store, runHeadExpectation{
+		runID: record.RunID, status: record.Status, version: record.Version, updatedAt: record.UpdatedAt,
+	})
+}
+
+type reopenRaceOutcome struct {
+	iteration   int
+	store       *Store
+	loaded      workflow.CheckpointRecord
+	terminal    workflow.CheckpointRecord
+	purgeResult PurgeResult
+	purgeErr    error
+	reopenErr   error
 }
 
 func TestPurgeTerminalRunsRacingReopenLeavesNoPartialRun(t *testing.T) {
 	for iteration := range 20 {
 		path := filepath.Join(t.TempDir(), fmt.Sprintf("race-%d.db", iteration))
+		if err := Migrate(path); err != nil {
+			t.Fatal(err)
+		}
 		purger, err := Open(path)
 		if err != nil {
 			t.Fatal(err)
@@ -445,26 +465,15 @@ func TestPurgeTerminalRunsRacingReopenLeavesNoPartialRun(t *testing.T) {
 		wait.Wait()
 
 		loaded, loadErr := purger.Load(context.Background(), "race")
+		outcome := reopenRaceOutcome{
+			iteration: iteration, store: purger, loaded: loaded, terminal: terminal,
+			purgeResult: purgeResult, purgeErr: purgeErr, reopenErr: reopenErr,
+		}
 		switch {
 		case loadErr == nil:
-			if loaded.Status != workflow.CheckpointRunning || loaded.Version != terminal.Version+1 {
-				t.Fatalf("iteration %d: Load() = %+v after race", iteration, loaded)
-			}
-			if reopenErr != nil {
-				t.Fatalf("iteration %d: retained run but Reopen() error = %v", iteration, reopenErr)
-			}
-			if purgeResult.Runs != 0 {
-				t.Fatalf("iteration %d: retained run but purge result = %+v", iteration, purgeResult)
-			}
-			assertRunStorageCounts(t, purger, "race", 3, 1, 1)
+			assertRetainedReopenRace(t, outcome)
 		case errors.Is(loadErr, workflow.ErrCheckpointNotFound):
-			if purgeErr != nil || purgeResult != (PurgeResult{Runs: 1, Checkpoints: 2, Events: 1}) {
-				t.Fatalf("iteration %d: purged run result = %+v, error = %v", iteration, purgeResult, purgeErr)
-			}
-			if reopenErr == nil {
-				t.Fatalf("iteration %d: Reopen() succeeded after the run was purged", iteration)
-			}
-			assertRunStorageCounts(t, purger, "race", 0, 0, 0)
+			assertPurgedReopenRace(t, outcome)
 		default:
 			t.Fatalf("iteration %d: Load() error = %v", iteration, loadErr)
 		}
@@ -476,8 +485,42 @@ func TestPurgeTerminalRunsRacingReopenLeavesNoPartialRun(t *testing.T) {
 	}
 }
 
+func assertRetainedReopenRace(t *testing.T, outcome reopenRaceOutcome) {
+	t.Helper()
+	if outcome.loaded.Status != workflow.CheckpointRunning || outcome.loaded.Version != outcome.terminal.Version+1 {
+		t.Fatalf("iteration %d: Load() = %+v after race", outcome.iteration, outcome.loaded)
+	}
+	if outcome.reopenErr != nil {
+		t.Fatalf("iteration %d: retained run but Reopen() error = %v", outcome.iteration, outcome.reopenErr)
+	}
+	if outcome.purgeResult.Runs != 0 {
+		t.Fatalf("iteration %d: retained run but purge result = %+v", outcome.iteration, outcome.purgeResult)
+	}
+	assertRunStorageCounts(t, outcome.store, "race", runStorageCounts{checkpoints: 3, events: 1, heads: 1})
+}
+
+func assertPurgedReopenRace(t *testing.T, outcome reopenRaceOutcome) {
+	t.Helper()
+	expected := PurgeResult{Runs: 1, Checkpoints: 2, Events: 1}
+	if outcome.purgeErr != nil || outcome.purgeResult != expected {
+		t.Fatalf(
+			"iteration %d: purged run result = %+v, error = %v",
+			outcome.iteration,
+			outcome.purgeResult,
+			outcome.purgeErr,
+		)
+	}
+	if outcome.reopenErr == nil {
+		t.Fatalf("iteration %d: Reopen() succeeded after the run was purged", outcome.iteration)
+	}
+	assertRunStorageCounts(t, outcome.store, "race", runStorageCounts{})
+}
+
 func TestPurgeTerminalRunsRacingClaimRetainsInterruptedRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claim-race.db")
+	if err := Migrate(path); err != nil {
+		t.Fatal(err)
+	}
 	purger, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -529,7 +572,7 @@ func TestPurgeTerminalRunsRacingClaimRetainsInterruptedRun(t *testing.T) {
 	if err != nil || loaded.Status != workflow.CheckpointRunning || loaded.Version != candidate.Version+1 {
 		t.Fatalf("Load() = %+v, %v, want claimed running checkpoint", loaded, err)
 	}
-	assertRunStorageCounts(t, purger, "claim-race", 3, 1, 1)
+	assertRunStorageCounts(t, purger, "claim-race", runStorageCounts{checkpoints: 3, events: 1, heads: 1})
 }
 
 func createTerminalRun(t *testing.T, store *Store, runID string, status workflow.CheckpointStatus, updatedAt time.Time) {
@@ -601,45 +644,57 @@ func assertRunPurged(t *testing.T, store *Store, runID string) {
 	if err != nil || len(records) != 0 {
 		t.Fatalf("List(%q) = %+v, %v, want no events", runID, records, err)
 	}
-	assertRunStorageCounts(t, store, runID, 0, 0, 0)
+	assertRunStorageCounts(t, store, runID, runStorageCounts{})
 }
 
-func assertRunHead(
-	t *testing.T,
-	store *Store,
-	runID string,
-	status workflow.CheckpointStatus,
-	version int64,
-	updatedAt time.Time,
-) {
+type runHeadExpectation struct {
+	runID     string
+	status    workflow.CheckpointStatus
+	version   int64
+	updatedAt time.Time
+}
+
+type runStorageCounts struct {
+	checkpoints int
+	events      int
+	heads       int
+}
+
+func assertRunHead(t *testing.T, store *Store, expected runHeadExpectation) {
 	t.Helper()
 	var gotStatus string
 	var gotVersion, gotUpdatedAt int64
 	err := store.db.QueryRow(
 		`SELECT status, version, updated_at_unix_nano FROM gopact_workflow_runs WHERE run_id = ?`,
-		runID,
+		expected.runID,
 	).Scan(&gotStatus, &gotVersion, &gotUpdatedAt)
 	if err != nil {
-		t.Fatalf("load run head %q: %v", runID, err)
+		t.Fatalf("load run head %q: %v", expected.runID, err)
 	}
-	if gotStatus != string(status) || gotVersion != version || gotUpdatedAt != updatedAt.UnixNano() {
+	if gotStatus != string(expected.status) || gotVersion != expected.version || gotUpdatedAt != expected.updatedAt.UnixNano() {
 		t.Fatalf(
 			"run head %q = status %q, version %d, updated %d; want %q, %d, %d",
-			runID, gotStatus, gotVersion, gotUpdatedAt, status, version, updatedAt.UnixNano(),
+			expected.runID,
+			gotStatus,
+			gotVersion,
+			gotUpdatedAt,
+			expected.status,
+			expected.version,
+			expected.updatedAt.UnixNano(),
 		)
 	}
 }
 
-func assertRunStorageCounts(t *testing.T, store *Store, runID string, checkpoints, events, heads int) {
+func assertRunStorageCounts(t *testing.T, store *Store, runID string, expected runStorageCounts) {
 	t.Helper()
 	queries := []struct {
 		name  string
 		query string
 		want  int
 	}{
-		{"checkpoints", `SELECT COUNT(*) FROM gopact_workflow_checkpoints WHERE run_id = ?`, checkpoints},
-		{"events", `SELECT COUNT(*) FROM gopact_runlog WHERE run_id = ?`, events},
-		{"heads", `SELECT COUNT(*) FROM gopact_workflow_runs WHERE run_id = ?`, heads},
+		{"checkpoints", `SELECT COUNT(*) FROM gopact_workflow_checkpoints WHERE run_id = ?`, expected.checkpoints},
+		{"events", `SELECT COUNT(*) FROM gopact_runlog WHERE run_id = ?`, expected.events},
+		{"heads", `SELECT COUNT(*) FROM gopact_workflow_runs WHERE run_id = ?`, expected.heads},
 	}
 	for _, query := range queries {
 		var got int

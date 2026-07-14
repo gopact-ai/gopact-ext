@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -125,66 +124,6 @@ func TestStoreAppendFencedRejectsInvalidFence(t *testing.T) {
 				t.Fatalf("AppendFenced() error = %v, want ErrInvalidCheckpoint", err)
 			}
 		})
-	}
-}
-
-func TestAppendFencedTransactionRejectsClaimCommittedAfterSnapshot(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "fenced.db")
-	appendStore := openTestStoreAt(t, path)
-	claimStore := openTestStoreAt(t, path)
-	checkpoint := leaseCheckpoint("fenced-race")
-	checkpoint.LeaseExpiresAt = time.Now().Add(time.Hour)
-	if err := appendStore.Create(ctx, checkpoint); err != nil {
-		t.Fatalf("Create() error = %v", err)
-	}
-
-	appendTx, err := appendStore.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatalf("begin append transaction: %v", err)
-	}
-	defer func() { _ = appendTx.Rollback() }()
-	if _, err := loadCheckpoint(ctx, appendTx, checkpoint.RunID); err != nil {
-		t.Fatalf("establish append snapshot: %v", err)
-	}
-
-	claimed := checkpoint
-	claimed.Version++
-	claimed.OwnerID = "owner-2"
-	claimed.ClaimSequence++
-	claimed.LeaseExpiresAt = time.Now().Add(2 * time.Hour)
-	claimTx, err := claimStore.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatalf("begin claim transaction: %v", err)
-	}
-	if err := insertCheckpointAndHead(ctx, claimTx, claimed); err != nil {
-		_ = claimTx.Rollback()
-		t.Fatalf("write claimed checkpoint: %v", err)
-	}
-	if err := claimTx.Commit(); err != nil {
-		t.Fatalf("commit claimed checkpoint: %v", err)
-	}
-
-	record := sqliteRunRecord(checkpoint.SessionID, checkpoint.RunID, 1, "audit.custom")
-	payload, err := json.Marshal(record)
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	err = appendFencedTx(ctx, appendTx, record, payload, runlog.Fence{
-		OwnerID: checkpoint.OwnerID, ClaimSequence: checkpoint.ClaimSequence,
-	})
-	if !errors.Is(err, workflow.ErrCheckpointLeaseLost) {
-		t.Fatalf("appendFencedTx() error = %v, want ErrCheckpointLeaseLost", err)
-	}
-	if err := appendTx.Rollback(); err != nil {
-		t.Fatalf("rollback append transaction: %v", err)
-	}
-	records, err := appendStore.List(ctx, runlog.Query{RunID: checkpoint.RunID})
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
-	}
-	if len(records) != 0 {
-		t.Fatalf("records = %+v, want committed claim to fence stale snapshot", records)
 	}
 }
 

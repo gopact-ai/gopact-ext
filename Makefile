@@ -1,9 +1,9 @@
-MODULES := models/openai models/agnes models/fake models/glm agents/internal agents/react agents/sequential agents/parallel agents/loop agents/agenttool agents/router agents/planexec agents/supervisor agents/deep agents/deepresearch stores/sqlite
+MODULES := models/openai models/agnes models/fake models/glm agents/internal agents/react agents/sequential agents/parallel agents/loop agents/agenttool agents/router agents/planexec agents/supervisor agents/deep agents/deepresearch stores/dbstore stores/mariadb stores/mysql stores/postgres stores/sqlite
 
 .PHONY: test integration capability fmt-check tidy race vet security benchmark
 
 test:
-	GOTOOLCHAIN=local go test ./models/openai/... ./models/agnes/... ./models/fake/... ./models/glm/... ./agents/internal/... ./agents/react/... ./agents/sequential/... ./agents/parallel/... ./agents/loop/... ./agents/agenttool/... ./agents/router/... ./agents/planexec/... ./agents/supervisor/... ./agents/deep/... ./agents/deepresearch/... ./stores/sqlite/... ./tests/workflow/...
+	GOTOOLCHAIN=local go test ./models/openai/... ./models/agnes/... ./models/fake/... ./models/glm/... ./agents/internal/... ./agents/react/... ./agents/sequential/... ./agents/parallel/... ./agents/loop/... ./agents/agenttool/... ./agents/router/... ./agents/planexec/... ./agents/supervisor/... ./agents/deep/... ./agents/deepresearch/... ./stores/dbstore/... ./stores/mariadb/... ./stores/mysql/... ./stores/postgres/... ./stores/sqlite/... ./tests/workflow/...
 
 integration:
 	@set -a; [ ! -f .env ] || . ./.env; set +a; \
@@ -22,10 +22,10 @@ tidy:
 	done
 
 race:
-	GOTOOLCHAIN=local go test -race ./models/openai/... ./models/agnes/... ./models/fake/... ./models/glm/... ./agents/internal/... ./agents/react/... ./agents/sequential/... ./agents/parallel/... ./agents/loop/... ./agents/agenttool/... ./agents/router/... ./agents/planexec/... ./agents/supervisor/... ./agents/deep/... ./agents/deepresearch/... ./stores/sqlite/... ./tests/workflow/...
+	GOTOOLCHAIN=local go test -race ./models/openai/... ./models/agnes/... ./models/fake/... ./models/glm/... ./agents/internal/... ./agents/react/... ./agents/sequential/... ./agents/parallel/... ./agents/loop/... ./agents/agenttool/... ./agents/router/... ./agents/planexec/... ./agents/supervisor/... ./agents/deep/... ./agents/deepresearch/... ./stores/dbstore/... ./stores/mariadb/... ./stores/mysql/... ./stores/postgres/... ./stores/sqlite/... ./tests/workflow/...
 
 vet:
-	GOTOOLCHAIN=local go vet ./models/openai/... ./models/agnes/... ./models/fake/... ./models/glm/... ./agents/internal/... ./agents/react/... ./agents/sequential/... ./agents/parallel/... ./agents/loop/... ./agents/agenttool/... ./agents/router/... ./agents/planexec/... ./agents/supervisor/... ./agents/deep/... ./agents/deepresearch/... ./stores/sqlite/... ./tests/workflow/...
+	GOTOOLCHAIN=local go vet ./models/openai/... ./models/agnes/... ./models/fake/... ./models/glm/... ./agents/internal/... ./agents/react/... ./agents/sequential/... ./agents/parallel/... ./agents/loop/... ./agents/agenttool/... ./agents/router/... ./agents/planexec/... ./agents/supervisor/... ./agents/deep/... ./agents/deepresearch/... ./stores/dbstore/... ./stores/mariadb/... ./stores/mysql/... ./stores/postgres/... ./stores/sqlite/... ./tests/workflow/...
 
 security:
 	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found; install golang.org/x/vuln/cmd/govulncheck@v1.5.0"; exit 1; }

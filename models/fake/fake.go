@@ -96,8 +96,8 @@ func (m *Model) Invoke(ctx context.Context, req gopact.ModelRequest, opts ...gop
 	}
 	return gopact.ModelResponse{
 		Message: gopact.Message{
-			Role:  "assistant",
-			Parts: []gopact.MessagePart{{Type: "text", Text: m.response}},
+			Role:  gopact.MessageRoleAssistant,
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: m.response}},
 		},
 		Intent:       gopact.FinalIntent{},
 		FinishReason: "stop",

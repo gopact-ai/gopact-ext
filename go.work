@@ -17,6 +17,10 @@ use (
 	./models/fake
 	./models/glm
 	./models/openai
+	./stores/dbstore
+	./stores/mariadb
+	./stores/mysql
+	./stores/postgres
 	./stores/sqlite
 	./tests/workflow
 )

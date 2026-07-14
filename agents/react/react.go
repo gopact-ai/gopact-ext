@@ -139,7 +139,8 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 		messages := cloneMessages(request.Messages)
 		if configuration.instruction != "" {
 			messages = append([]gopact.Message{{
-				Role: "system", Parts: []gopact.MessagePart{{Type: "text", Text: configuration.instruction}},
+				Role:  gopact.MessageRoleSystem,
+				Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: configuration.instruction}},
 			}}, messages...)
 		}
 		return State{

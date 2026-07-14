@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -24,6 +25,38 @@ type persistence interface {
 	runlog.Log
 }
 
+func TestMigrateThenOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "explicit-migration.db")
+	if store, err := Open(path); err == nil {
+		_ = store.Close()
+		t.Fatal("Open() succeeded before Migrate")
+	}
+	if err := Migrate(path); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() after Migrate error = %v", err)
+	}
+	if store == nil || store.Store == nil {
+		t.Fatal("Open() returned a nil Store")
+	}
+	_ = store.Close()
+}
+
+func TestContextEntryPointsRejectCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	path := filepath.Join(t.TempDir(), "canceled.db")
+
+	if err := MigrateContext(ctx, path); !errors.Is(err, context.Canceled) {
+		t.Fatalf("MigrateContext(canceled) error = %v, want context.Canceled", err)
+	}
+	if store, err := OpenContext(ctx, path); store != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenContext(canceled) = %v, %v, want nil, context.Canceled", store, err)
+	}
+}
+
 func TestWorkflowPersistenceConformance(t *testing.T) {
 	t.Run("memory", func(t *testing.T) {
 		store := workflow.NewMemoryStore()
@@ -31,6 +64,9 @@ func TestWorkflowPersistenceConformance(t *testing.T) {
 	})
 	t.Run("sqlite", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "workflow.db")
+		if err := Migrate(path); err != nil {
+			t.Fatal(err)
+		}
 		store, err := Open(path)
 		if err != nil {
 			t.Fatal(err)
@@ -556,6 +592,9 @@ func TestDatabaseBusyUsesSQLiteResultCode(t *testing.T) {
 
 func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lease.db")
+	if err := Migrate(path); err != nil {
+		t.Fatal(err)
+	}
 	firstStore, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -654,6 +693,7 @@ func openTestStore(t *testing.T) *Store {
 
 func openTestStoreAt(t *testing.T, path string) *Store {
 	t.Helper()
+	migrateTestStore(t, path)
 	store, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -664,6 +704,90 @@ func openTestStoreAt(t *testing.T, path string) *Store {
 		}
 	})
 	return store
+}
+
+func migrateTestStore(t *testing.T, path string) {
+	t.Helper()
+	if inMemoryDSN(path) {
+		return
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err := Migrate(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenDoesNotEnableWAL(t *testing.T) {
+	store := openTestStoreAt(t, filepath.Join(t.TempDir(), "rollback-journal.db"))
+	var mode string
+	if err := store.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatalf("read journal mode: %v", err)
+	}
+	if mode != "delete" {
+		t.Fatalf("journal mode = %q, want delete", mode)
+	}
+}
+
+func TestMigrateConvertsPersistentWAL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-wal.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mode string
+	if err := db.QueryRow(`PRAGMA journal_mode=WAL`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "wal" {
+		t.Fatalf("legacy journal mode = %q, want wal", mode)
+	}
+	if _, err := db.Exec(`CREATE TABLE legacy_data (value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO legacy_data (value) VALUES ('preserved')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Migrate(path); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() after Migrate error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "delete" {
+		t.Fatalf("journal mode after upgrade = %q, want delete", mode)
+	}
+	var value string
+	if err := store.db.QueryRow(`SELECT value FROM legacy_data`).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if value != "preserved" {
+		t.Fatalf("legacy value = %q", value)
+	}
+}
+
+func TestOpenRejectsExplicitWALDSN(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "explicit-wal.db") + "?_pragma=journal_mode(WAL)"
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open() error = nil, want explicit WAL rejection")
+	}
+}
+
+func TestOpenRejectsFileBackedMemoryJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory-journal.db") + "?_pragma=journal_mode(MEMORY)"
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open() error = nil, want file-backed MEMORY journal rejection")
+	}
 }
 
 func leaseCheckpoint(runID string) workflow.CheckpointRecord {
@@ -773,6 +897,9 @@ func requireRunLogSemantics(t *testing.T, log runlog.Log) {
 
 func TestSessionRunLogPersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.db")
+	if err := Migrate(path); err != nil {
+		t.Fatal(err)
+	}
 	store, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -957,7 +1084,7 @@ func TestCheckpointSessionIdentityIsImmutable(t *testing.T) {
 	}
 }
 
-func TestOpenMigratesLegacyRunLogTable(t *testing.T) {
+func TestMigrateUpgradesLegacyRunLogTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -985,6 +1112,9 @@ func TestOpenMigratesLegacyRunLogTable(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := Migrate(path); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
 	store, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)

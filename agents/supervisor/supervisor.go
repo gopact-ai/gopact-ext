@@ -17,6 +17,7 @@ const defaultMaxRounds = 32
 // DecisionKind is the supervisor's closed decision set.
 type DecisionKind string
 
+// Supervisor decision kinds.
 const (
 	DecisionDelegate DecisionKind = "delegate"
 	DecisionFinal    DecisionKind = "final"
@@ -53,6 +54,7 @@ type Decider interface {
 // DeciderFunc adapts a function into a Decider.
 type DeciderFunc func(context.Context, DecisionInput) (Decision, error)
 
+// Decide calls the wrapped decider with an isolated decision context.
 func (decider DeciderFunc) Decide(ctx context.Context, input DecisionInput) (Decision, error) {
 	if decider == nil {
 		return Decision{}, errors.New("supervisor: decider is nil")

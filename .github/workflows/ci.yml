@@ -45,3 +45,69 @@ jobs:
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         run: make integration
+
+  database-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: source/gopact-ext/stores/dbstore
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: gopact
+          MYSQL_USER: gopact
+          MYSQL_PASSWORD: gopact
+        ports:
+          - 33060:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: gopact
+          MARIADB_USER: gopact
+          MARIADB_PASSWORD: gopact
+        ports:
+          - 33061:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: gopact
+          POSTGRES_USER: gopact
+          POSTGRES_PASSWORD: gopact
+        ports:
+          - 54320:5432
+        options: >-
+          --health-cmd "pg_isready -U gopact -d gopact"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GOPACT_TEST_MYSQL_DSN: "gopact:gopact@tcp(127.0.0.1:33060)/gopact?charset=utf8mb4&parseTime=true&loc=UTC"
+      GOPACT_TEST_MARIADB_DSN: "gopact:gopact@tcp(127.0.0.1:33061)/gopact?charset=utf8mb4&parseTime=true&loc=UTC"
+      GOPACT_TEST_POSTGRES_DSN: "host=127.0.0.1 port=54320 user=gopact password=gopact dbname=gopact sslmode=disable TimeZone=UTC"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: source/gopact-ext
+      - uses: actions/checkout@v7
+        with:
+          repository: gopact-ai/gopact
+          path: source/gopact
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.0-rc.2'
+          cache-dependency-path: source/gopact-ext/stores/dbstore/go.sum
+      - run: GOWORK=off GOTOOLCHAIN=local go test -tags=dbintegration -count=1
