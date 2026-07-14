@@ -9,13 +9,22 @@ Official extensions for the redesigned `gopact` core.
 > **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade. Until Go 1.27 is officially released, it requires a development toolchain and should be treated as a preview, not a stable release.
 
 Until the coordinated RC modules are published, this repository is a source-development
-checkout: clone `gopact` beside `gopact-ext`. Its local `replace` directives are not a
-published-consumer contract. A standalone clone is supported only after the corresponding
-tagged modules have passed clean-consumer verification.
+checkout: clone `gopact` beside `gopact-ext`; the committed `go.work` joins the source
+modules without changing their published dependency contract. A standalone clone is
+supported only after the corresponding tagged modules have passed clean-consumer verification.
 
 ## Release verification
 
-The release order is `gopact` → `gopact-ext` and `gopact-ext/stores` → `gopact-examples`. Before tags exist, the three repositories are tested from coordinated source checkouts through Go workspaces. After each approved tag is visible, run `./scripts/clean-consumer.sh scripts/release-versions.txt` from an empty-consumer environment; it rejects missing modules, `replace` directives, pseudo-versions, and `v0.0.0`. Until the exact versions are approved and published, the provisional manifest and a failed tag lookup are not release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
+The release order is `gopact` → `gopact-ext` → `gopact-ext/stores` → `gopact-examples`. Before tags exist, the three repositories are tested from coordinated source checkouts through Go workspaces. Increase the prefix after each approved tag; the final default remains strict over all four:
+
+```bash
+./scripts/clean-consumer.sh --prefix-count 1 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
+./scripts/clean-consumer.sh scripts/release-versions.txt
+```
+
+The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. Until the exact versions are approved and published, the provisional manifest and a failed tag lookup are not release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
 
 ## Extension catalog
 

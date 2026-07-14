@@ -2,14 +2,30 @@
 set -euo pipefail
 
 validate_only=false
-if [[ "${1:-}" == "--validate-only" ]]; then
-	validate_only=true
+prefix_count=4
+manifest=""
+while [[ "$#" -gt 0 ]]; do
+	case "$1" in
+		--validate-only) validate_only=true ;;
+		--prefix-count)
+			shift
+			prefix_count="${1:-}"
+			;;
+		-*) echo "unknown option: $1" >&2; exit 2 ;;
+		*)
+			[[ -z "${manifest}" ]] || { echo "only one manifest may be supplied" >&2; exit 2; }
+			manifest="$1"
+			;;
+	esac
 	shift
-fi
+done
 
-manifest="${1:-}"
-if [[ -z "${manifest}" || "${2:-}" != "" ]]; then
-	echo "usage: $0 [--validate-only] <release-versions.txt>" >&2
+if [[ -z "${manifest}" ]]; then
+	echo "usage: $0 [--validate-only] [--prefix-count 1-4] <release-versions.txt>" >&2
+	exit 2
+fi
+if [[ ! "${prefix_count}" =~ ^[1-4]$ ]]; then
+	echo "--prefix-count must be 1, 2, 3, or 4" >&2
 	exit 2
 fi
 if [[ ! -f "${manifest}" ]]; then
@@ -56,7 +72,7 @@ for index in "${!expected[@]}"; do
 done
 
 if [[ "${validate_only}" == true ]]; then
-	echo "manifest is structurally valid"
+	echo "manifest is structurally valid for release prefix ${prefix_count}"
 	exit 0
 fi
 
@@ -65,9 +81,19 @@ trap 'rm -rf "${consumer}"' EXIT
 cd "${consumer}"
 go mod init clean-consumer.example
 
-for index in "${!expected[@]}"; do
+for ((index = 0; index < prefix_count; index++)); do
 	module="${expected[${index}]}"
 	version="${versions[${index}]}"
+	download="$(GOWORK=off go mod download -json "${module}@${version}")"
+	module_gomod="$(printf '%s\n' "${download}" | sed -n 's/^[[:space:]]*"GoMod": "\(.*\)",$/\1/p')"
+	if [[ -z "${module_gomod}" || ! -f "${module_gomod}" ]]; then
+		echo "downloaded module has no readable go.mod: ${module}@${version}" >&2
+		exit 1
+	fi
+	if grep -Eq '^[[:space:]]*replace([[:space:](]|$)' "${module_gomod}"; then
+		echo "tagged module contains a replace directive: ${module}@${version}" >&2
+		exit 1
+	fi
 	case "${module}" in
 		github.com/gopact-ai/gopact) package="${module}" ;;
 		github.com/gopact-ai/gopact-ext) package="${module}/models/fake" ;;
@@ -77,22 +103,25 @@ for index in "${!expected[@]}"; do
 	GOWORK=off go get "${package}@${version}"
 done
 
-cat > consumer_test.go <<'EOF'
-package cleanconsumer
-
-import (
-	_ "github.com/gopact-ai/gopact"
-	_ "github.com/gopact-ai/gopact-ext/models/fake"
-	_ "github.com/gopact-ai/gopact-ext/stores/sqlite"
-)
-EOF
+{
+	echo 'package cleanconsumer'
+	echo 'import ('
+	for ((index = 0; index < prefix_count; index++)); do
+		case "${expected[${index}]}" in
+			github.com/gopact-ai/gopact) printf '\t_ "github.com/gopact-ai/gopact"\n' ;;
+			github.com/gopact-ai/gopact-ext) printf '\t_ "github.com/gopact-ai/gopact-ext/models/fake"\n' ;;
+			github.com/gopact-ai/gopact-ext/stores) printf '\t_ "github.com/gopact-ai/gopact-ext/stores/sqlite"\n' ;;
+		esac
+	done
+	echo ')'
+} > consumer_test.go
 
 if grep -Eq '^[[:space:]]*replace([[:space:](]|$)' go.mod; then
 	echo "clean consumer unexpectedly contains a replace directive" >&2
 	exit 1
 fi
 
-for index in "${!expected[@]}"; do
+for ((index = 0; index < prefix_count; index++)); do
 	module="${expected[${index}]}"
 	version="${versions[${index}]}"
 	selected="$(GOWORK=off go list -m -f '{{.Version}}{{if .Replace}} replace{{end}}' "${module}")"
