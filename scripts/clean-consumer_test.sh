@@ -34,6 +34,10 @@ for pseudo in \
 	expect_rejection "${tmp}/pseudo.txt"
 done
 
+sed '1s/v0.1.0-rc.1/v0.1.0-release.20260714120000-0123456789ab/' \
+	"${tmp}/valid.txt" > "${tmp}/valid-timestamped-semver.txt"
+"${script_dir}/clean-consumer.sh" --validate-only "${tmp}/valid-timestamped-semver.txt" >/dev/null
+
 expect_rejection --prefix-count 0 "${tmp}/valid.txt"
 
 mkdir "${tmp}/fake-bin"
