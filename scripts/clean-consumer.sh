@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+validate_only=false
+prefix_count=4
+manifest=""
+while [[ "$#" -gt 0 ]]; do
+	case "$1" in
+		--validate-only) validate_only=true ;;
+		--prefix-count)
+			shift
+			prefix_count="${1:-}"
+			;;
+		-*) echo "unknown option: $1" >&2; exit 2 ;;
+		*)
+			[[ -z "${manifest}" ]] || { echo "only one manifest may be supplied" >&2; exit 2; }
+			manifest="$1"
+			;;
+	esac
+	shift
+done
+
+if [[ -z "${manifest}" ]]; then
+	echo "usage: $0 [--validate-only] [--prefix-count 1-4] <release-versions.txt>" >&2
+	exit 2
+fi
+if [[ ! "${prefix_count}" =~ ^[1-4]$ ]]; then
+	echo "--prefix-count must be 1, 2, 3, or 4" >&2
+	exit 2
+fi
+if [[ ! -f "${manifest}" ]]; then
+	echo "manifest not found: ${manifest}" >&2
+	exit 2
+fi
+
+expected=(
+	github.com/gopact-ai/gopact
+	github.com/gopact-ai/gopact-ext
+	github.com/gopact-ai/gopact-ext/stores
+	github.com/gopact-ai/gopact-examples
+)
+modules=()
+versions=()
+
+while read -r module version extra; do
+	[[ -z "${module}" || "${module:0:1}" == "#" ]] && continue
+	if [[ -z "${version:-}" || -n "${extra:-}" ]]; then
+		echo "invalid manifest entry: ${module} ${version:-} ${extra:-}" >&2
+		exit 1
+	fi
+	if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+		echo "version must be an exact semantic version tag: ${module} ${version}" >&2
+		exit 1
+	fi
+	if [[ "${version}" == "v0.0.0" ||
+		"${version}" =~ ^v[0-9]+\.0\.0-[0-9]{14}-[0-9a-f]{12}$ ||
+		"${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-0\.[0-9]{14}-[0-9a-f]{12}$ ||
+		"${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*\.0\.[0-9]{14}-[0-9a-f]{12}$ ]]; then
+		echo "placeholder and pseudo-versions are forbidden: ${module} ${version}" >&2
+		exit 1
+	fi
+	modules+=("${module}")
+	versions+=("${version}")
+done < "${manifest}"
+
+if [[ "${#modules[@]}" -ne "${#expected[@]}" ]]; then
+	echo "manifest must contain exactly ${#expected[@]} release modules" >&2
+	exit 1
+fi
+for index in "${!expected[@]}"; do
+	if [[ "${modules[${index}]}" != "${expected[${index}]}" ]]; then
+		echo "manifest entry $((index + 1)) is ${modules[${index}]}; want ${expected[${index}]}" >&2
+		exit 1
+	fi
+done
+
+if [[ "${validate_only}" == true ]]; then
+	echo "manifest is structurally valid for release prefix ${prefix_count}"
+	exit 0
+fi
+
+consumer="$(mktemp -d)"
+trap 'rm -rf "${consumer}"' EXIT
+cd "${consumer}"
+go mod init clean-consumer.example
+
+for ((index = 0; index < prefix_count; index++)); do
+	module="${expected[${index}]}"
+	version="${versions[${index}]}"
+	download="$(GOWORK=off go mod download -json "${module}@${version}")"
+	module_gomod="$(printf '%s\n' "${download}" | sed -n 's/^[[:space:]]*"GoMod": "\(.*\)",$/\1/p')"
+	if [[ -z "${module_gomod}" || ! -f "${module_gomod}" ]]; then
+		echo "downloaded module has no readable go.mod: ${module}@${version}" >&2
+		exit 1
+	fi
+	if grep -Eq '^[[:space:]]*replace([[:space:](]|$)' "${module_gomod}"; then
+		echo "tagged module contains a replace directive: ${module}@${version}" >&2
+		exit 1
+	fi
+	case "${module}" in
+		github.com/gopact-ai/gopact) package="${module}" ;;
+		github.com/gopact-ai/gopact-ext) package="${module}/models/fake" ;;
+		github.com/gopact-ai/gopact-ext/stores) package="${module}/sqlite" ;;
+		github.com/gopact-ai/gopact-examples) package="${module}/quickstart/model-basic" ;;
+	esac
+	GOWORK=off go get "${package}@${version}"
+done
+
+{
+	echo 'package cleanconsumer'
+	echo 'import ('
+	for ((index = 0; index < prefix_count; index++)); do
+		case "${expected[${index}]}" in
+			github.com/gopact-ai/gopact) printf '\t_ "github.com/gopact-ai/gopact"\n' ;;
+			github.com/gopact-ai/gopact-ext) printf '\t_ "github.com/gopact-ai/gopact-ext/models/fake"\n' ;;
+			github.com/gopact-ai/gopact-ext/stores) printf '\t_ "github.com/gopact-ai/gopact-ext/stores/sqlite"\n' ;;
+		esac
+	done
+	echo ')'
+} > consumer_test.go
+
+if grep -Eq '^[[:space:]]*replace([[:space:](]|$)' go.mod; then
+	echo "clean consumer unexpectedly contains a replace directive" >&2
+	exit 1
+fi
+
+for ((index = 0; index < prefix_count; index++)); do
+	module="${expected[${index}]}"
+	version="${versions[${index}]}"
+	selected="$(GOWORK=off go list -m -f '{{.Version}}{{if .Replace}} replace{{end}}' "${module}")"
+	if [[ "${selected}" != "${version}" ]]; then
+		echo "selected ${module} ${selected}; want ${version}" >&2
+		exit 1
+	fi
+done
+
+GOWORK=off go mod verify
+GOWORK=off go test ./...

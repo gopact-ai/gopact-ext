@@ -42,8 +42,9 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	maxParallelism int
-	validation     *contract.Validator
+	maxParallelism  int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 // WithMaxParallelism limits simultaneously executing branches.
@@ -51,6 +52,13 @@ func WithMaxParallelism(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.maxParallelism = limit
 		config.validation.Positive("max parallelism", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -95,9 +103,8 @@ func New(identity agent.Identity, directory *agent.Directory, childNames []strin
 	if parallelism == 0 {
 		parallelism = len(children)
 	}
-	buildOptions := []workflow.BuildOption{
-		workflow.WithTopologyVersion(identity.Version), workflow.WithMaxParallelism(parallelism),
-	}
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version), workflow.WithMaxParallelism(parallelism))
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	plan := wf.Node("plan", func(_ context.Context, request agent.Request) (agent.Request, error) {
 		return cloneRequest(request), nil

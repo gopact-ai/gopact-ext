@@ -64,6 +64,7 @@ type Planner interface {
 // PlannerFunc adapts a planning function.
 type PlannerFunc func(context.Context, PlanInput) ([]Query, error)
 
+// Plan calls the wrapped planner and returns an isolated query slice.
 func (planner PlannerFunc) Plan(ctx context.Context, input PlanInput) ([]Query, error) {
 	if planner == nil {
 		return nil, errors.New("deepresearch: planner is nil")
@@ -80,6 +81,7 @@ type Discoverer interface {
 // DiscovererFunc adapts a discovery function.
 type DiscovererFunc func(context.Context, Query) ([]Source, error)
 
+// Discover calls the wrapped discoverer and returns isolated sources.
 func (discoverer DiscovererFunc) Discover(ctx context.Context, query Query) ([]Source, error) {
 	if discoverer == nil {
 		return nil, errors.New("deepresearch: discoverer is nil")
@@ -96,6 +98,7 @@ type Fetcher interface {
 // FetcherFunc adapts a source fetch function.
 type FetcherFunc func(context.Context, Source) (Source, error)
 
+// Fetch calls the wrapped fetcher with an isolated source value.
 func (fetcher FetcherFunc) Fetch(ctx context.Context, source Source) (Source, error) {
 	if fetcher == nil {
 		return Source{}, errors.New("deepresearch: fetcher is nil")
@@ -112,6 +115,7 @@ type EvidenceExtractor interface {
 // EvidenceExtractorFunc adapts an extraction function.
 type EvidenceExtractorFunc func(context.Context, Source) ([]Evidence, error)
 
+// Extract calls the wrapped extractor with an isolated source value.
 func (extractor EvidenceExtractorFunc) Extract(ctx context.Context, source Source) ([]Evidence, error) {
 	if extractor == nil {
 		return nil, errors.New("deepresearch: evidence extractor is nil")
@@ -128,6 +132,7 @@ type Synthesizer interface {
 // SynthesizerFunc adapts a synthesis function.
 type SynthesizerFunc func(context.Context, SynthesisInput) (agent.Response, error)
 
+// Synthesize calls the wrapped synthesizer with an isolated research context.
 func (synthesizer SynthesizerFunc) Synthesize(ctx context.Context, input SynthesisInput) (agent.Response, error) {
 	if synthesizer == nil {
 		return agent.Response{}, errors.New("deepresearch: synthesizer is nil")
@@ -144,6 +149,7 @@ type CitationVerifier interface {
 // CitationVerifierFunc adapts a verifier function.
 type CitationVerifierFunc func(context.Context, SynthesisInput) error
 
+// Verify calls the wrapped citation verifier with an isolated research context.
 func (verifier CitationVerifierFunc) Verify(ctx context.Context, input SynthesisInput) error {
 	if verifier == nil {
 		return errors.New("deepresearch: citation verifier is nil")
@@ -158,36 +164,43 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	planner     Planner
-	discoverer  Discoverer
-	fetcher     Fetcher
-	extractor   EvidenceExtractor
-	synthesizer Synthesizer
-	verifier    CitationVerifier
-	parallelism int
-	validation  *contract.Validator
+	planner         Planner
+	discoverer      Discoverer
+	fetcher         Fetcher
+	extractor       EvidenceExtractor
+	synthesizer     Synthesizer
+	verifier        CitationVerifier
+	parallelism     int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
+// WithPlanner selects the component that creates research queries.
 func WithPlanner(planner Planner) Option {
 	return optionFunc(func(config *config) { config.planner = planner })
 }
 
+// WithDiscoverer selects the component that discovers candidate sources.
 func WithDiscoverer(discoverer Discoverer) Option {
 	return optionFunc(func(config *config) { config.discoverer = discoverer })
 }
 
+// WithFetcher selects the component that loads source content.
 func WithFetcher(fetcher Fetcher) Option {
 	return optionFunc(func(config *config) { config.fetcher = fetcher })
 }
 
+// WithEvidenceExtractor selects the component that grounds claims in sources.
 func WithEvidenceExtractor(extractor EvidenceExtractor) Option {
 	return optionFunc(func(config *config) { config.extractor = extractor })
 }
 
+// WithSynthesizer selects the component that produces the final response.
 func WithSynthesizer(synthesizer Synthesizer) Option {
 	return optionFunc(func(config *config) { config.synthesizer = synthesizer })
 }
 
+// WithCitationVerifier adds citation policy after structural verification.
 func WithCitationVerifier(verifier CitationVerifier) Option {
 	return optionFunc(func(config *config) {
 		config.verifier = verifier
@@ -200,6 +213,13 @@ func WithMaxParallelism(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.parallelism = limit
 		config.validation.Positive("max parallelism", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -251,11 +271,13 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 		Err(); err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](
-		identity.Name,
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(
+		buildOptions,
 		workflow.WithTopologyVersion(identity.Version),
 		workflow.WithMaxParallelism(configuration.parallelism),
 	)
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
 	plan := wf.Node("plan", func(ctx context.Context, request agent.Request) ([]Query, error) {
 		queries, err := configuration.planner.Plan(ctx, PlanInput{Request: cloneRequest(request)})

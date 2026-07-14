@@ -15,6 +15,7 @@ import (
 
 func TestSupervisorDelegatesThenFinalizesThroughWorkflowFacts(t *testing.T) {
 	var rounds []int
+	store := workflow.NewMemoryStore()
 	target := newTestAgent(t, testDirectory(t, testChild("research", func(_ context.Context, request agent.Request) (agent.Response, error) {
 		return agent.Response{Message: gopact.UserMessage("evidence:" + request.Messages[0].Parts[0].Text)}, nil
 	})), DeciderFunc(func(_ context.Context, input DecisionInput) (Decision, error) {
@@ -26,7 +27,7 @@ func TestSupervisorDelegatesThenFinalizesThroughWorkflowFacts(t *testing.T) {
 			}, nil
 		}
 		return Decision{Kind: DecisionFinal, Response: &input.Results[0].Response}, nil
-	}))
+	}), WithWorkflowOptions(workflow.WithStore(store)))
 	var nodes []string
 	response, err := target.Invoke(
 		context.Background(),
@@ -48,6 +49,10 @@ func TestSupervisorDelegatesThenFinalizesThroughWorkflowFacts(t *testing.T) {
 	wantNodes := []string{"start", "decide", "delegate", "record", "decide", "finish"}
 	if !reflect.DeepEqual(nodes, wantNodes) || !reflect.DeepEqual(rounds, []int{1, 2}) {
 		t.Fatalf("nodes/rounds = %v/%v, want %v/[1 2]", nodes, rounds, wantNodes)
+	}
+	checkpoint, err := store.Load(context.Background(), "supervisor-workflow")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 

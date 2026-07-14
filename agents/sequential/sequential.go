@@ -19,8 +19,24 @@ type Agent struct {
 
 var _ agent.Agent = (*Agent)(nil)
 
+// Option configures an Agent during construction.
+type Option interface{ apply(*config) }
+
+type optionFunc func(*config)
+
+func (option optionFunc) apply(config *config) { option(config) }
+
+type config struct{ workflowOptions []workflow.BuildOption }
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
+	})
+}
+
 // New creates an immutable sequential Agent from one Directory snapshot.
-func New(identity agent.Identity, directory *agent.Directory, childNames []string) (*Agent, error) {
+func New(identity agent.Identity, directory *agent.Directory, childNames []string, options ...Option) (*Agent, error) {
 	validator := contract.New("sequential").
 		Identity("agent", identity).
 		Present("directory", directory).
@@ -31,6 +47,12 @@ func New(identity agent.Identity, directory *agent.Directory, childNames []strin
 	if err := validator.Err(); err != nil {
 		return nil, err
 	}
+	configuration := config{}
+	for _, option := range options {
+		if option != nil {
+			option.apply(&configuration)
+		}
+	}
 	children := make([]agent.Agent, len(childNames))
 	for index, name := range childNames {
 		child, ok := directory.Lookup(name)
@@ -39,7 +61,9 @@ func New(identity agent.Identity, directory *agent.Directory, childNames []strin
 		}
 		children[index] = child
 	}
-	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	nodes := make([]*workflow.Node[agent.Request, agent.Response], len(children))
 	for index, child := range children {
 		nodes[index] = wf.AddInvokable(child.Identity().Name, child)

@@ -8,6 +8,24 @@ Official extensions for the redesigned `gopact` core.
 
 > **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade. Until Go 1.27 is officially released, it requires a development toolchain and should be treated as a preview, not a stable release.
 
+Until the coordinated RC modules are published, this repository is a source-development
+checkout: clone `gopact` beside `gopact-ext`; the committed `go.work` joins the source
+modules without changing their published dependency contract. A standalone clone is
+supported only after the corresponding tagged modules have passed clean-consumer verification.
+
+## Release verification
+
+The release order is `gopact` → `gopact-ext` → `gopact-ext/stores` → `gopact-examples`. Before tags exist, the three repositories are tested from coordinated source checkouts through Go workspaces. Increase the prefix after each approved tag; the final default remains strict over all four:
+
+```bash
+./scripts/clean-consumer.sh --prefix-count 1 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
+./scripts/clean-consumer.sh scripts/release-versions.txt
+```
+
+The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. During staged publication, only a successful prefix is release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
+
 ## Extension catalog
 
 ### Model adapters
@@ -38,11 +56,46 @@ Official extensions for the redesigned `gopact` core.
 
 | Package | Use it for |
 | --- | --- |
-| [`stores/sqlite`](./stores/sqlite) | Durable local checkpoints, history, control, and run logs |
+| [`stores/dbstore`](./stores/dbstore) | Shared GORM checkpoint, lease, fencing, RunLog, and retention logic |
+| [`stores/sqlite`](./stores/sqlite) | Pure-Go local persistence using SQLite rollback journal mode |
+| [`stores/mysql`](./stores/mysql) | Multi-host persistence on MySQL |
+| [`stores/mariadb`](./stores/mariadb) | Multi-host persistence on MariaDB through the MySQL dialect |
+| [`stores/postgres`](./stores/postgres) | Multi-host persistence on PostgreSQL |
 
 For complete runnable applications, see [gopact-examples](https://github.com/gopact-ai/gopact-examples).
 
 Every official Agent expresses its algorithmic state machine as one Workflow. Workflow exclusively owns checkpoint, interrupt/resume, child lineage, node facts, and control history; the Agent layer retains model, tool, planning, routing, and research behavior.
+
+## Durable Agent execution
+
+Workflow-backed Agent constructors expose `WithWorkflowOptions`, so production persistence and lease policy can be configured without bypassing the official Agent:
+
+```go
+if err := sqlite.Migrate("agent.db"); err != nil { // deployment migration stage
+	return err
+}
+store, err := sqlite.Open("agent.db")
+if err != nil {
+	return err
+}
+defer store.Close()
+
+target, err := react.New(identity, model, react.WithWorkflowOptions(
+	workflow.WithStore(store),
+	workflow.WithCheckpointLease(3*time.Minute, time.Minute),
+))
+if err != nil {
+	return err
+}
+
+response, err := target.Invoke(ctx, request, gopact.WithRunID("run-123"))
+```
+
+Durable resume requires reconstructing the same Agent topology with the same identity name and version, opening the same Store, and resuming the same RunID. Do not supply a conflicting SessionID. External side effects remain at-least-once and must use a key stable across recovery, such as `RunInfo.RunID + "/" + RunInfo.ActivationID`.
+
+That key is reliable only when the external API natively deduplicates it, or when application code writes a uniquely constrained dedup/outbox record in the same database transaction as its business data. `gopact` cannot atomically combine a checkpoint transaction with an arbitrary remote API and does not provide a generic outbox. An explicit business retry intended to produce another side effect must use a new operation key.
+
+Use `workflow.MemoryStore` only for tests and short-lived processes. The SQLite Store is for one machine or multiple processes that safely share the same local database file. File databases require `journal_mode=DELETE`; explicit non-DELETE DSNs are rejected, and the first conversion of a persistent WAL database needs a maintenance window with all other SQLite connections stopped. SQLite, MySQL, MariaDB, and PostgreSQL all use `Migrate(dsn)` in the deployment stage followed by `Open(dsn)` in application instances; a true in-memory SQLite database is initialized by `Open`. Multi-host deployments should use the MySQL, MariaDB, or PostgreSQL Store. These stores derive lease expiry from the database clock inside the ownership transaction. For an existing schema, stop and drain all old writers before migration. The database advisory lock serializes migrators but does not make mixed-version writers safe. Schedule terminal and standalone-journal purge; exceptionally long active Runs can compact only their confirmed contiguous prefix with explicit `AllowHistoryLoss`, because the removed Retry/Fork/audit history cannot be reconstructed.
 
 ## Breaking migration
 

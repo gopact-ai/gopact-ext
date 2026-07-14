@@ -46,8 +46,24 @@ type Agent struct {
 
 var _ agent.Agent = (*Agent)(nil)
 
+// Option configures an Agent during construction.
+type Option interface{ apply(*config) }
+
+type optionFunc func(*config)
+
+func (option optionFunc) apply(config *config) { option(config) }
+
+type config struct{ workflowOptions []workflow.BuildOption }
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
+	})
+}
+
 // New creates a one-shot router over an immutable Directory snapshot.
-func New(identity agent.Identity, directory *agent.Directory, selector Selector) (*Agent, error) {
+func New(identity agent.Identity, directory *agent.Directory, selector Selector, options ...Option) (*Agent, error) {
 	if err := contract.New("router").
 		Identity("agent", identity).
 		Present("directory", directory).
@@ -55,8 +71,16 @@ func New(identity agent.Identity, directory *agent.Directory, selector Selector)
 		Err(); err != nil {
 		return nil, err
 	}
+	configuration := config{}
+	for _, option := range options {
+		if option != nil {
+			option.apply(&configuration)
+		}
+	}
 	candidates := directory.List()
-	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	selectNode := wf.Node("select", func(ctx context.Context, request agent.Request) (routeResult, error) {
 		selection, err := selector.Select(ctx, cloneRequest(request), candidates)
 		if err != nil {

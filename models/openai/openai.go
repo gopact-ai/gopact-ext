@@ -21,6 +21,7 @@ import (
 
 const (
 	maxTextBytes          = 4 << 10
+	maxResponseBytes      = 4 << 20
 	maxStreamFrameBytes   = 1 << 20
 	defaultMaxAttempts    = 3
 	defaultRequestTimeout = 2 * time.Minute
@@ -28,6 +29,7 @@ const (
 	defaultMaxBackoff     = 2 * time.Second
 	maximumRetryAfter     = 30 * time.Second
 	backoffFactor         = 2
+	defaultMaxRedirects   = 10
 )
 
 // RetryPolicy configures bounded retries for transient provider failures.
@@ -46,6 +48,7 @@ type Model struct {
 	defaultRequest gopact.ModelRequest
 	retry          RetryPolicy
 	timeout        time.Duration
+	allowHTTP      bool
 	configErr      error
 }
 
@@ -91,6 +94,13 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithInsecureHTTP allows an explicit HTTP base URL for local development and tests.
+func WithInsecureHTTP() Option {
+	return func(model *Model) {
+		model.allowHTTP = true
+	}
+}
+
 // New creates an OpenAI-compatible model adapter.
 func New(provider, baseURL, apiKey, model string, opts ...Option) (*Model, error) {
 	if provider == "" {
@@ -101,6 +111,9 @@ func New(provider, baseURL, apiKey, model string, opts ...Option) (*Model, error
 	}
 	if apiKey == "" {
 		return nil, errors.New("openai: api key is required")
+	}
+	if !strings.Contains(baseURL, "://") {
+		baseURL = "https://" + baseURL
 	}
 	client := &Model{
 		provider:       provider,
@@ -143,7 +156,7 @@ func (c *Model) validate() error {
 	if err := c.retry.validate(); err != nil {
 		return err
 	}
-	if err := validateBaseURL(c.baseURL); err != nil {
+	if err := validateBaseURL(c.baseURL, c.allowHTTP); err != nil {
 		return err
 	}
 	return validateModelRequest(c.defaultRequest, false)
@@ -159,10 +172,13 @@ func (policy RetryPolicy) validate() error {
 	return nil
 }
 
-func validateBaseURL(value string) error {
+func validateBaseURL(value string, allowHTTP bool) error {
 	parsed, err := url.Parse(value)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return errors.New("openai: base url is invalid")
+	}
+	if parsed.Scheme == "http" && !allowHTTP {
+		return errors.New("openai: HTTP base url requires WithInsecureHTTP")
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return errors.New("openai: base url must not contain credentials, query, or fragment")
@@ -231,7 +247,14 @@ func (c *Model) Invoke(ctx context.Context, req gopact.ModelRequest, opts ...gop
 		}
 	}
 	var out chatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	encoded, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: %w", err)
+	}
+	if len(encoded) > maxResponseBytes {
+		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: body exceeds %d bytes", maxResponseBytes)
+	}
+	if err := json.Unmarshal(encoded, &out); err != nil {
 		return gopact.ModelResponse{}, fmt.Errorf("openai: decode response: %w", err)
 	}
 	if len(out.Choices) == 0 {
@@ -247,8 +270,8 @@ func (c *Model) Invoke(ctx context.Context, req gopact.ModelRequest, opts ...gop
 	}
 	return gopact.ModelResponse{
 		Message: gopact.Message{
-			Role:  "assistant",
-			Parts: []gopact.MessagePart{{Type: "text", Text: text}},
+			Role:  gopact.MessageRoleAssistant,
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: text}},
 		},
 		Intent:       intent,
 		Usage:        out.Usage.toGopact(),
@@ -309,6 +332,7 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 		}
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, maxTextBytes), maxStreamFrameBytes)
+		terminal := false
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, ":") {
@@ -319,6 +343,7 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
+				terminal = true
 				return
 			}
 			var chunk chatStreamChunk
@@ -326,10 +351,16 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 				yield(gopact.ModelOutputChunk{}, fmt.Errorf("openai: decode stream chunk: %w", err))
 				return
 			}
-			if len(chunk.Choices) == 0 || chunk.Choices[0].Delta.Content == "" {
+			if len(chunk.Choices) == 0 {
 				continue
 			}
+			if chunk.Choices[0].FinishReason != "" {
+				terminal = true
+			}
 			text := chunk.Choices[0].Delta.Content
+			if text == "" {
+				continue
+			}
 			if err := c.emitDelta(callCtx, cfg.ModelEventSinks, text); err != nil {
 				yield(gopact.ModelOutputChunk{}, err)
 				return
@@ -337,9 +368,14 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 			if !yield(gopact.ModelOutputChunk{Text: text}, nil) {
 				return
 			}
+			if terminal {
+				return
+			}
 		}
 		if err := scanner.Err(); err != nil {
 			yield(gopact.ModelOutputChunk{}, fmt.Errorf("openai: read stream: %w", err))
+		} else if !terminal {
+			yield(gopact.ModelOutputChunk{}, fmt.Errorf("openai: read stream: %w", io.ErrUnexpectedEOF))
 		}
 	}
 }
@@ -381,7 +417,23 @@ func (c *Model) doAttempt(req *http.Request, attempt int) (*http.Response, error
 	if err := resetRequestBody(req, attempt); err != nil {
 		return nil, err
 	}
-	return c.httpClient.Do(req)
+	client := *c.httpClient
+	checkRedirect := client.CheckRedirect
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if checkRedirect != nil {
+			if err := checkRedirect(next, via); err != nil {
+				return err
+			}
+		} else if len(via) >= defaultMaxRedirects {
+			return fmt.Errorf("stopped after %d redirects", defaultMaxRedirects)
+		}
+		if c.apiKey != "" && !c.allowHTTP && len(via) > 0 &&
+			via[len(via)-1].URL.Scheme == "https" && next.URL.Scheme == "http" {
+			return errors.New("openai: refusing HTTPS to HTTP redirect")
+		}
+		return nil
+	}
+	return client.Do(req)
 }
 
 func (c *Model) shouldRetry(ctx context.Context, resp *http.Response, err error, attempt int) bool {
@@ -593,9 +645,9 @@ func validateTools(tools []gopact.ToolSpec) error {
 
 func validateToolChoice(choice gopact.ToolChoice) error {
 	switch choice.Mode {
-	case "", "auto", "none", "required":
+	case "", gopact.ToolChoiceModeAuto, gopact.ToolChoiceModeNone, gopact.ToolChoiceModeRequired:
 		return nil
-	case "named":
+	case gopact.ToolChoiceModeNamed:
 		if choice.Name == "" {
 			return errors.New("openai: named tool choice requires a name")
 		}
@@ -609,7 +661,7 @@ func encodeToolChoice(choice gopact.ToolChoice) any {
 	switch choice.Mode {
 	case "":
 		return nil
-	case "auto", "none", "required":
+	case gopact.ToolChoiceModeAuto, gopact.ToolChoiceModeNone, gopact.ToolChoiceModeRequired:
 		return choice.Mode
 	default:
 		return namedToolChoice(choice.Name)
@@ -631,7 +683,7 @@ func namedToolChoice(name string) any {
 func messageText(msg gopact.Message) (string, error) {
 	var b strings.Builder
 	for _, part := range msg.Parts {
-		if part.Type != "text" || part.Ref != nil {
+		if part.Type != gopact.MessagePartTypeText || part.Ref != nil {
 			return "", fmt.Errorf("openai: unsupported message part %q", part.Type)
 		}
 		b.WriteString(part.Text)
@@ -814,7 +866,8 @@ type chatJSONSchema struct {
 
 type chatStreamChunk struct {
 	Choices []struct {
-		Delta chatMessage `json:"delta"`
+		Delta        chatMessage `json:"delta"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 }
 

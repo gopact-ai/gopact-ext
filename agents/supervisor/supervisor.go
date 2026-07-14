@@ -17,6 +17,7 @@ const defaultMaxRounds = 32
 // DecisionKind is the supervisor's closed decision set.
 type DecisionKind string
 
+// Supervisor decision kinds.
 const (
 	DecisionDelegate DecisionKind = "delegate"
 	DecisionFinal    DecisionKind = "final"
@@ -53,6 +54,7 @@ type Decider interface {
 // DeciderFunc adapts a function into a Decider.
 type DeciderFunc func(context.Context, DecisionInput) (Decision, error)
 
+// Decide calls the wrapped decider with an isolated decision context.
 func (decider DeciderFunc) Decide(ctx context.Context, input DecisionInput) (Decision, error) {
 	if decider == nil {
 		return Decision{}, errors.New("supervisor: decider is nil")
@@ -68,8 +70,9 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	maxRounds  int
-	validation *contract.Validator
+	maxRounds       int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 // WithMaxRounds bounds the number of child delegations.
@@ -77,6 +80,13 @@ func WithMaxRounds(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.maxRounds = limit
 		config.validation.Positive("max rounds", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -119,7 +129,9 @@ func New(identity agent.Identity, directory *agent.Directory, decider Decider, o
 	if err := configuration.validation.Err(); err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
 	start := wf.Node("start", func(_ context.Context, _ agent.Request) (signal, error) {
 		return signal{}, nil

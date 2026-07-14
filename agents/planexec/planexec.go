@@ -17,6 +17,7 @@ const defaultMaxTransitions = 32
 // StepStatus is the typed status of one plan step.
 type StepStatus string
 
+// Step statuses.
 const (
 	StepPending   StepStatus = "pending"
 	StepCompleted StepStatus = "completed"
@@ -79,6 +80,7 @@ type Planner interface {
 // PlannerFunc adapts a planner function.
 type PlannerFunc func(context.Context, PlanInput) (Plan, error)
 
+// Plan calls the wrapped planner with an isolated input copy.
 func (planner PlannerFunc) Plan(ctx context.Context, input PlanInput) (Plan, error) {
 	if planner == nil {
 		return Plan{}, errors.New("planexec: planner is nil")
@@ -94,6 +96,7 @@ type Replanner interface {
 // ReplannerFunc adapts a replanner function.
 type ReplannerFunc func(context.Context, ReplanInput) (ReplanDecision, error)
 
+// Replan calls the wrapped replanner with an isolated input copy.
 func (replanner ReplannerFunc) Replan(ctx context.Context, input ReplanInput) (ReplanDecision, error) {
 	if replanner == nil {
 		return ReplanDecision{}, errors.New("planexec: replanner is nil")
@@ -109,6 +112,7 @@ type Reporter interface {
 // ReporterFunc adapts a reporter function.
 type ReporterFunc func(context.Context, ReportInput) (agent.Response, error)
 
+// Report calls the wrapped reporter with an isolated input copy.
 func (reporter ReporterFunc) Report(ctx context.Context, input ReportInput) (agent.Response, error) {
 	if reporter == nil {
 		return agent.Response{}, errors.New("planexec: reporter is nil")
@@ -123,34 +127,47 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	directory      *agent.Directory
-	planner        Planner
-	replanner      Replanner
-	reporter       Reporter
-	maxTransitions int
-	validation     *contract.Validator
+	directory       *agent.Directory
+	planner         Planner
+	replanner       Replanner
+	reporter        Reporter
+	maxTransitions  int
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
+// WithDirectory selects the immutable child directory used to execute steps.
 func WithDirectory(directory *agent.Directory) Option {
 	return optionFunc(func(config *config) { config.directory = directory })
 }
 
+// WithPlanner selects the component that creates the initial plan.
 func WithPlanner(planner Planner) Option {
 	return optionFunc(func(config *config) { config.planner = planner })
 }
 
+// WithReplanner selects the component that evaluates progress after each step.
 func WithReplanner(replanner Replanner) Option {
 	return optionFunc(func(config *config) { config.replanner = replanner })
 }
 
+// WithReporter selects the component that produces the final response.
 func WithReporter(reporter Reporter) Option {
 	return optionFunc(func(config *config) { config.reporter = reporter })
 }
 
+// WithMaxTransitions bounds replanning transitions for one invocation.
 func WithMaxTransitions(limit int) Option {
 	return optionFunc(func(config *config) {
 		config.maxTransitions = limit
 		config.validation.Positive("max transitions", limit)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -177,7 +194,9 @@ type Agent struct{ workflow *agent.WorkflowAgent }
 var _ agent.Agent = (*Agent)(nil)
 
 var (
-	ErrPlanExhausted   = errors.New("planexec: plan exhausted without completion")
+	// ErrPlanExhausted reports a plan with no remaining step and no final decision.
+	ErrPlanExhausted = errors.New("planexec: plan exhausted without completion")
+	// ErrTransitionLimit reports that replanning exceeded the configured bound.
 	ErrTransitionLimit = errors.New("transition limit reached")
 )
 
@@ -199,7 +218,9 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 		Err(); err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](identity.Name, workflow.WithTopologyVersion(identity.Version))
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
 	plannerNode := wf.Node("plan", func(ctx context.Context, request agent.Request) (Plan, error) {
 		plan, err := configuration.planner.Plan(ctx, PlanInput{Request: cloneRequest(request)})
@@ -332,6 +353,7 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 	return &Agent{workflow: facade}, nil
 }
 
+// Identity returns the immutable Agent identity.
 func (target *Agent) Identity() agent.Identity {
 	if target == nil || target.workflow == nil {
 		return agent.Identity{}
@@ -339,6 +361,7 @@ func (target *Agent) Identity() agent.Identity {
 	return target.workflow.Identity()
 }
 
+// Invoke executes the current plan through completion and reports its result.
 func (target *Agent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
 	if target == nil || target.workflow == nil {
 		return agent.Response{}, errors.New("planexec: agent is nil")

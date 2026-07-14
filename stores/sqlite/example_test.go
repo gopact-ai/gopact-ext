@@ -26,8 +26,7 @@ func ExampleStore() {
 	wf := workflow.New[agent.Request, agent.Response](
 		identity.Name,
 		workflow.WithTopologyVersion(identity.Version),
-		workflow.WithStrictCheckpointer(store),
-		workflow.WithStrictJournal(store),
+		workflow.WithStore(store),
 	)
 	echo := wf.Node("echo", func(_ context.Context, request agent.Request) (agent.Response, error) {
 		return agent.Response{Message: request.Messages[0]}, nil

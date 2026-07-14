@@ -28,14 +28,18 @@ func TestAgentLoopsUntilConditionStops(t *testing.T) {
 		}
 		return DecisionStop, nil
 	})
-	target, err := New(testIdentity(), child, condition, WithMaxIterations(5))
+	store := workflow.NewMemoryStore()
+	target, err := New(
+		testIdentity(), child, condition, WithMaxIterations(5),
+		WithWorkflowOptions(workflow.WithStore(store)),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var events []gopact.Event
 	response, err := target.Invoke(context.Background(), agent.Request{
 		Messages: []gopact.Message{gopact.UserMessage("start")},
-	}, gopact.WithStrictEventHandler(func(_ context.Context, event gopact.Event) error {
+	}, gopact.WithRunID("loop-persistence"), gopact.WithStrictEventHandler(func(_ context.Context, event gopact.Event) error {
 		if event.Type == workflow.EventNodeStarted {
 			events = append(events, event)
 		}
@@ -60,6 +64,10 @@ func TestAgentLoopsUntilConditionStops(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotNodes, wantNodes) {
 		t.Fatalf("node starts = %v, want %v", gotNodes, wantNodes)
+	}
+	checkpoint, err := store.Load(context.Background(), "loop-persistence")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 

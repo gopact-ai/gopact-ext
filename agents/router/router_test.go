@@ -53,6 +53,7 @@ func TestRouterInvokesOnlySelectedChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := workflow.NewMemoryStore()
 	target, err := New(
 		agent.Identity{Name: "router", Description: "one route", Version: "v1"},
 		directory,
@@ -62,12 +63,13 @@ func TestRouterInvokesOnlySelectedChild(t *testing.T) {
 			}
 			return Selection{Child: "second"}, nil
 		}),
+		WithWorkflowOptions(workflow.WithStore(store)),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var events []gopact.Event
-	response, err := target.Invoke(context.Background(), agent.Request{Messages: []gopact.Message{gopact.UserMessage("go")}}, gopact.WithSessionID("router-session"), gopact.WithStrictEventHandler(func(_ context.Context, event gopact.Event) error {
+	response, err := target.Invoke(context.Background(), agent.Request{Messages: []gopact.Message{gopact.UserMessage("go")}}, gopact.WithSessionID("router-session"), gopact.WithRunID("router-persistence"), gopact.WithStrictEventHandler(func(_ context.Context, event gopact.Event) error {
 		events = append(events, event)
 		return nil
 	}))
@@ -82,6 +84,10 @@ func TestRouterInvokesOnlySelectedChild(t *testing.T) {
 		if event.Sequence != int64(index+1) || event.SessionID != "router-session" || event.RunID == "" || event.ParentRunID != "" || event.DefinitionID != "router" {
 			t.Fatalf("event[%d] = %+v, want root envelope", index, event)
 		}
+	}
+	checkpoint, err := store.Load(context.Background(), "router-persistence")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 

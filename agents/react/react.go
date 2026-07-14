@@ -51,10 +51,11 @@ type optionFunc func(*config)
 func (option optionFunc) apply(config *config) { option(config) }
 
 type config struct {
-	instruction string
-	tools       []agent.Tool
-	limits      Limits
-	validation  *contract.Validator
+	instruction     string
+	tools           []agent.Tool
+	limits          Limits
+	workflowOptions []workflow.BuildOption
+	validation      *contract.Validator
 }
 
 // WithInstruction sets the stable system instruction for new runs.
@@ -75,6 +76,13 @@ func WithLimits(limits Limits) Option {
 			Positive("max turns", limits.MaxTurns).
 			Positive("max tool calls", limits.MaxToolCalls).
 			Positive("max parallel tools", limits.MaxParallelTools)
+	})
+}
+
+// WithWorkflowOptions configures the underlying Workflow.
+func WithWorkflowOptions(options ...workflow.BuildOption) Option {
+	return optionFunc(func(config *config) {
+		config.workflowOptions = append([]workflow.BuildOption(nil), options...)
 	})
 }
 
@@ -120,16 +128,25 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 	if err != nil {
 		return nil, err
 	}
-	wf := workflow.New[agent.Request, agent.Response](
-		identity.Name,
+	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
+	buildOptions = append(
+		buildOptions,
 		workflow.WithTopologyVersion(identity.Version),
 		workflow.WithMaxParallelism(configuration.limits.MaxParallelTools),
+		workflow.WithCheckpointTypes(
+			gopact.ToolResultOutcome{},
+			gopact.ToolRejectedOutcome{},
+			gopact.ToolErrorOutcome{},
+			gopact.ToolInterruptOutcome{},
+		),
 	)
+	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State {
 		messages := cloneMessages(request.Messages)
 		if configuration.instruction != "" {
 			messages = append([]gopact.Message{{
-				Role: "system", Parts: []gopact.MessagePart{{Type: "text", Text: configuration.instruction}},
+				Role:  gopact.MessageRoleSystem,
+				Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: configuration.instruction}},
 			}}, messages...)
 		}
 		return State{
@@ -410,6 +427,7 @@ func (dispatcher toolDispatcher) Invoke(ctx context.Context, call gopact.ToolCal
 	if err != nil {
 		return nil, fmt.Errorf("react: execute tool %q: %w", call.Name, err)
 	}
+	outcome = normalizeToolOutcome(outcome)
 	if outcome == nil || outcome.ToolCallID() != call.ID || outcome.ToolName() != call.Name {
 		return nil, fmt.Errorf("react: tool %q returned mismatched outcome identity", call.Name)
 	}
@@ -417,6 +435,30 @@ func (dispatcher toolDispatcher) Invoke(ctx context.Context, call gopact.ToolCal
 		return nil, fmt.Errorf("react: tool %q returned an interrupt without a Workflow continuation", call.Name)
 	}
 	return outcome, nil
+}
+
+func normalizeToolOutcome(outcome gopact.ToolOutcome) gopact.ToolOutcome {
+	switch value := outcome.(type) {
+	case *gopact.ToolResultOutcome:
+		if value != nil {
+			return *value
+		}
+	case *gopact.ToolRejectedOutcome:
+		if value != nil {
+			return *value
+		}
+	case *gopact.ToolErrorOutcome:
+		if value != nil {
+			return *value
+		}
+	case *gopact.ToolInterruptOutcome:
+		if value != nil {
+			return *value
+		}
+	default:
+		return outcome
+	}
+	return nil
 }
 
 func unknownToolOutcome(call gopact.ToolCall) gopact.ToolOutcome {

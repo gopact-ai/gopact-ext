@@ -31,6 +31,7 @@ func TestPlanExecRunsReplacementPlanThroughWorkflowFacts(t *testing.T) {
 		childCalls++
 		return agent.Response{Message: gopact.UserMessage("done:" + request.Messages[0].Parts[0].Text)}, nil
 	}))
+	store := workflow.NewMemoryStore()
 	target, err := New(
 		testIdentity(),
 		WithDirectory(directory),
@@ -49,6 +50,7 @@ func TestPlanExecRunsReplacementPlanThroughWorkflowFacts(t *testing.T) {
 		WithReporter(ReporterFunc(func(_ context.Context, input ReportInput) (agent.Response, error) {
 			return input.Results[len(input.Results)-1].Response, nil
 		})),
+		WithWorkflowOptions(workflow.WithStore(store)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +79,10 @@ func TestPlanExecRunsReplacementPlanThroughWorkflowFacts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(nodes, want) {
 		t.Fatalf("completed nodes = %v, want %v", nodes, want)
+	}
+	checkpoint, err := store.Load(context.Background(), "planexec-workflow")
+	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
+		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
 }
 
