@@ -17,7 +17,7 @@ jobs:
       run:
         working-directory: source/gopact-ext
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           path: source/gopact-ext
       - name: reject private development documents
@@ -28,17 +28,20 @@ jobs:
             printf 'private development documents are tracked:\n%s\n' "$files"
             exit 1
           }
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: gopact-ai/gopact
           path: source/gopact
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.27.0-rc.2'
-          cache-dependency-path: source/gopact-ext/go.work.sum
-      - run: make fmt-check tidy
+          cache-dependency-path: |
+            source/gopact-ext/go.sum
+            source/gopact-ext/stores/go.sum
+            source/gopact-ext/tests/workflow/go.sum
+      - run: make fmt-check tidy test race vet
       - run: go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
-      - run: make test race vet security
+      - run: make security
       - name: integration
         if: github.event_name != 'pull_request'
         env:
@@ -51,7 +54,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: source/gopact-ext/stores/dbstore
+        working-directory: source/gopact-ext/stores
     services:
       mysql:
         image: mysql:8.4
@@ -99,15 +102,16 @@ jobs:
       GOPACT_TEST_MARIADB_DSN: "gopact:gopact@tcp(127.0.0.1:33061)/gopact?charset=utf8mb4&parseTime=true&loc=UTC"
       GOPACT_TEST_POSTGRES_DSN: "host=127.0.0.1 port=54320 user=gopact password=gopact dbname=gopact sslmode=disable TimeZone=UTC"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           path: source/gopact-ext
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: gopact-ai/gopact
           path: source/gopact
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.27.0-rc.2'
-          cache-dependency-path: source/gopact-ext/stores/dbstore/go.sum
-      - run: GOWORK=off GOTOOLCHAIN=local go test -tags=dbintegration -count=1
+          cache-dependency-path: source/gopact-ext/stores/go.sum
+      - run: make dbintegration
+        working-directory: source/gopact-ext

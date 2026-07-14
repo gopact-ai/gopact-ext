@@ -13,6 +13,10 @@ checkout: clone `gopact` beside `gopact-ext`. Its local `replace` directives are
 published-consumer contract. A standalone clone is supported only after the corresponding
 tagged modules have passed clean-consumer verification.
 
+## Release verification
+
+The release order is `gopact` → `gopact-ext` and `gopact-ext/stores` → `gopact-examples`. Before tags exist, the three repositories are tested from coordinated source checkouts through Go workspaces. After each approved tag is visible, run `./scripts/clean-consumer.sh scripts/release-versions.txt` from an empty-consumer environment; it rejects missing modules, `replace` directives, pseudo-versions, and `v0.0.0`. The checked-in manifest currently contains proposed RC versions only, so a failed lookup is expected until those exact tags are approved and published. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
+
 ## Extension catalog
 
 ### Model adapters

@@ -12,6 +12,10 @@
 `gopact-ext` 并排 clone。本地 `replace` 仅用于源码开发，不构成已发布模块的消费契约。
 只有对应标签通过 clean-consumer 验证后，才支持单独 clone 本仓库。
 
+## 发布验证
+
+发布顺序固定为 `gopact` → `gopact-ext` 与 `gopact-ext/stores` → `gopact-examples`。tag 前，三个仓库通过 Go workspace 对协调源码 checkout 做联调；每个获批 tag 可见后，在空 consumer 环境运行 `./scripts/clean-consumer.sh scripts/release-versions.txt`。脚本会拒绝缺失模块、`replace`、pseudo-version 和 `v0.0.0`。当前 manifest 只记录拟议 RC 版本，因此在这些精确 tag 获批并发布前，版本查询失败是预期结果。只有 Go 1.27 stable 门禁与 RC burn-in 通过后，才能称为 production-ready。
+
 ## 扩展目录
 
 ### 模型 Adapter

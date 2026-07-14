@@ -182,7 +182,7 @@ func testIntegrationPopulatedV1Upgrade(t *testing.T, dialector func(string) gorm
 
 func prepareIntegrationV1(t *testing.T, dialector gorm.Dialector, prefix string) integrationV1Fixture {
 	t.Helper()
-	store, sqlDB, err := openConnection(dialector)
+	store, sqlDB, err := openConnection(t.Context(), dialector)
 	if err != nil {
 		t.Fatalf("open v1 fixture connection: %v", err)
 	}
