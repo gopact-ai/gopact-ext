@@ -52,7 +52,7 @@ while read -r module version extra; do
 		echo "version must be an exact semantic version tag: ${module} ${version}" >&2
 		exit 1
 	fi
-	if [[ "${version}" == "v0.0.0" || "${version}" =~ -[0-9.]*[0-9]{14}-[0-9a-f]{12}$ ]]; then
+	if [[ "${version}" == "v0.0.0" || "${version}" =~ -[0-9A-Za-z.-]*[0-9]{14}-[0-9a-f]{12}$ ]]; then
 		echo "placeholder and pseudo-versions are forbidden: ${module} ${version}" >&2
 		exit 1
 	fi

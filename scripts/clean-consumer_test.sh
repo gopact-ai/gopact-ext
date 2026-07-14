@@ -26,8 +26,13 @@ expect_rejection() {
 sed 's/v0.1.0-rc.1/v0.0.0/' "${tmp}/valid.txt" > "${tmp}/zero.txt"
 expect_rejection "${tmp}/zero.txt"
 
-sed 's/v0.1.0-rc.1/v0.1.1-0.20260714120000-0123456789ab/' "${tmp}/valid.txt" > "${tmp}/pseudo.txt"
-expect_rejection "${tmp}/pseudo.txt"
+for pseudo in \
+	v2.0.0-20260714120000-0123456789ab \
+	v1.2.4-0.20260714120000-0123456789ab \
+	v1.2.4-rc.1.0.20260714120000-0123456789ab; do
+	sed "1s/v0.1.0-rc.1/${pseudo}/" "${tmp}/valid.txt" > "${tmp}/pseudo.txt"
+	expect_rejection "${tmp}/pseudo.txt"
+done
 
 expect_rejection --prefix-count 0 "${tmp}/valid.txt"
 
