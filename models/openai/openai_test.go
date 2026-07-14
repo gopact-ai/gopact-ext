@@ -64,6 +64,104 @@ func TestNewDefaultsToHTTPSAndRequiresExplicitHTTPOptIn(t *testing.T) {
 	}
 }
 
+func TestModelInvokeRejectsHTTPSDowngradeRedirectWithoutSendingCredentials(t *testing.T) {
+	reached := make(chan string, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		reached <- r.Header.Get("Authorization")
+	}))
+	defer target.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	model, err := New("test", source.URL, "test-key", "test-model", WithHTTPClient(source.Client()), WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := model.Invoke(t.Context(), model.NewRequest(gopact.UserMessage("ping"))); err == nil {
+		t.Fatal("Invoke() error = nil, want HTTPS downgrade rejection")
+	}
+	select {
+	case authorization := <-reached:
+		t.Fatalf("downgrade target received Authorization %q", authorization)
+	default:
+	}
+}
+
+func TestModelInvokeAllowsSafeHTTPSRedirect(t *testing.T) {
+	var redirected atomic.Bool
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/final" {
+			http.Redirect(w, r, server.URL+"/final", http.StatusTemporaryRedirect)
+			return
+		}
+		redirected.Store(true)
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("redirected Authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	model, err := New("test", server.URL, "test-key", "test-model", WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := model.Invoke(t.Context(), model.NewRequest(gopact.UserMessage("ping"))); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if !redirected.Load() {
+		t.Fatal("HTTPS redirect was not followed")
+	}
+}
+
+func TestModelInvokeAllowsDowngradeRedirectWithInsecureHTTP(t *testing.T) {
+	reached := make(chan string, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached <- r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}]}`)
+	}))
+	defer target.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	model, err := New(
+		"test", source.URL, "test-key", "test-model",
+		WithHTTPClient(source.Client()), WithInsecureHTTP(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := model.Invoke(t.Context(), model.NewRequest(gopact.UserMessage("ping"))); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if authorization := <-reached; authorization != "Bearer test-key" {
+		t.Fatalf("downgrade Authorization = %q, want bearer token", authorization)
+	}
+}
+
+func TestModelInvokeRespectsCustomRedirectPolicy(t *testing.T) {
+	policyErr := errors.New("custom redirect rejected")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/final", http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	client := server.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return policyErr }
+
+	model, err := New("test", server.URL, "test-key", "test-model", WithHTTPClient(client), WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := model.Invoke(t.Context(), model.NewRequest(gopact.UserMessage("ping"))); !errors.Is(err, policyErr) {
+		t.Fatalf("Invoke() error = %v, want custom redirect error", err)
+	}
+}
+
 func TestModelInvoke(t *testing.T) {
 	var got chatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -341,6 +439,46 @@ func TestModelInvokeStreamRequiresTerminalMarker(t *testing.T) {
 				t.Fatalf("InvokeStream() error = %v, want unexpected EOF = %v", gotErr, test.wantUnexpectedEOF)
 			}
 		})
+	}
+}
+
+func TestModelInvokeStreamReturnsImmediatelyAfterFinishReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"},\"finish_reason\":\"stop\"}]}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	type streamResult struct {
+		chunks []string
+		err    error
+	}
+	completed := make(chan streamResult, 1)
+	go func() {
+		result := streamResult{}
+		for chunk, err := range model.InvokeStream(ctx, model.NewRequest(gopact.UserMessage("ping"))) {
+			result.chunks = append(result.chunks, chunk.Text)
+			if err != nil {
+				result.err = err
+			}
+		}
+		completed <- result
+	}()
+
+	select {
+	case result := <-completed:
+		if result.err != nil || !slices.Equal(result.chunks, []string{"complete"}) {
+			t.Fatalf("InvokeStream() = %v, %v", result.chunks, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("InvokeStream() did not return after terminal frame")
 	}
 }
 

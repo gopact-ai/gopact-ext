@@ -356,15 +356,17 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 			if chunk.Choices[0].FinishReason != "" {
 				terminal = true
 			}
-			if chunk.Choices[0].Delta.Content == "" {
-				continue
-			}
 			text := chunk.Choices[0].Delta.Content
-			if err := c.emitDelta(callCtx, cfg.ModelEventSinks, text); err != nil {
-				yield(gopact.ModelOutputChunk{}, err)
-				return
+			if text != "" {
+				if err := c.emitDelta(callCtx, cfg.ModelEventSinks, text); err != nil {
+					yield(gopact.ModelOutputChunk{}, err)
+					return
+				}
+				if !yield(gopact.ModelOutputChunk{Text: text}, nil) {
+					return
+				}
 			}
-			if !yield(gopact.ModelOutputChunk{Text: text}, nil) {
+			if terminal {
 				return
 			}
 		}
@@ -413,7 +415,23 @@ func (c *Model) doAttempt(req *http.Request, attempt int) (*http.Response, error
 	if err := resetRequestBody(req, attempt); err != nil {
 		return nil, err
 	}
-	return c.httpClient.Do(req)
+	client := *c.httpClient
+	checkRedirect := client.CheckRedirect
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if checkRedirect != nil {
+			if err := checkRedirect(next, via); err != nil {
+				return err
+			}
+		} else if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if c.apiKey != "" && !c.allowHTTP && len(via) > 0 &&
+			via[len(via)-1].URL.Scheme == "https" && next.URL.Scheme == "http" {
+			return errors.New("openai: refusing HTTPS to HTTP redirect")
+		}
+		return nil
+	}
+	return client.Do(req)
 }
 
 func (c *Model) shouldRetry(ctx context.Context, resp *http.Response, err error, attempt int) bool {
