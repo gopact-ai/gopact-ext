@@ -153,31 +153,22 @@ func (store *Store) RenewLease(ctx context.Context, lease workflow.CheckpointLea
 
 // Save writes a non-terminal checkpoint using version CAS.
 func (store *Store) Save(ctx context.Context, record workflow.CheckpointRecord, version int64) error {
-	return store.write(ctx, record, version, false, false)
+	return store.write(ctx, record, version, false)
 }
 
 // Finish writes a terminal checkpoint using version CAS.
 func (store *Store) Finish(ctx context.Context, record workflow.CheckpointRecord, version int64) error {
-	return store.write(ctx, record, version, true, false)
+	return store.write(ctx, record, version, true)
 }
 
-// Reopen starts an explicit control epoch from a terminal checkpoint.
-func (store *Store) Reopen(ctx context.Context, record workflow.CheckpointRecord, version int64) error {
-	return store.write(ctx, record, version, false, true)
-}
-
-func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord, version int64, terminal, reopen bool) error {
+func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord, version int64, terminal bool) error {
 	if err := store.ready(ctx); err != nil {
 		return err
 	}
 	if version <= 0 || record.Version != version {
 		return fmt.Errorf("%w: snapshot version %d, expected %d", workflow.ErrCheckpointConflict, record.Version, version)
 	}
-	if reopen {
-		if record.Status != workflow.CheckpointRunning {
-			return fmt.Errorf("%w: invalid reopened checkpoint", workflow.ErrInvalidCheckpoint)
-		}
-	} else if terminal != checkpointTerminal(record.Status) {
+	if terminal != checkpointTerminal(record.Status) {
 		return fmt.Errorf("%w: status %q does not match write operation", workflow.ErrInvalidCheckpoint, record.Status)
 	}
 	if err := validateCheckpoint(record); err != nil {
@@ -195,17 +186,16 @@ func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord,
 		if err != nil {
 			return err
 		}
-		currentTerminal := checkpointTerminal(current.Status)
 		if !sameCheckpointIdentity(current, record) {
 			return workflow.ErrCheckpointMismatch
 		}
-		if err := store.prepareCheckpointWriteLease(tx, current, &record, reopen); err != nil {
+		if err := store.prepareCheckpointWriteLease(tx, current, &record); err != nil {
 			return err
 		}
-		if current.Version != version || (reopen && !currentTerminal) || (!reopen && currentTerminal) {
+		if current.Version != version || checkpointTerminal(current.Status) {
 			return workflow.ErrCheckpointConflict
 		}
-		if !reopen && record.OwnerID == current.OwnerID && current.LeaseExpiresAt.After(record.LeaseExpiresAt) {
+		if record.OwnerID == current.OwnerID && current.LeaseExpiresAt.After(record.LeaseExpiresAt) {
 			record.LeaseExpiresAt = current.LeaseExpiresAt
 		}
 		record.Version++
@@ -223,10 +213,7 @@ func (store *Store) write(ctx context.Context, record workflow.CheckpointRecord,
 	return nil
 }
 
-func (store *Store) prepareCheckpointWriteLease(tx *gorm.DB, current workflow.CheckpointRecord, record *workflow.CheckpointRecord, reopen bool) error {
-	if reopen {
-		return nil
-	}
+func (store *Store) prepareCheckpointWriteLease(tx *gorm.DB, current workflow.CheckpointRecord, record *workflow.CheckpointRecord) error {
 	claimMismatch := record.ClaimSequence != current.ClaimSequence
 	ownerMismatch := record.OwnerID != "" && record.OwnerID != current.OwnerID
 	if claimMismatch || ownerMismatch {

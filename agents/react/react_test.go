@@ -21,7 +21,7 @@ func TestAgentReturnsFinalResponseAndConforms(t *testing.T) {
 	model := finalModel("done")
 	store := workflow.NewMemoryStore()
 	target, err := New(testIdentity(), model, WithWorkflowOptions(
-		workflow.WithCheckpointer(store), workflow.WithJournal(store),
+		workflow.WithStore(store),
 	))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

@@ -63,7 +63,7 @@ func TestRouterInvokesOnlySelectedChild(t *testing.T) {
 			}
 			return Selection{Child: "second"}, nil
 		}),
-		WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)),
+		WithWorkflowOptions(workflow.WithStore(store)),
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -135,12 +135,7 @@ func (store *Store) PurgeTerminalRuns(ctx context.Context, request PurgeRequest)
 	return result, nil
 }
 
-func (store *Store) enrollTerminalRuns(
-	ctx context.Context,
-	runIDs []string,
-	before time.Time,
-	budget purgeBudget,
-) error {
+func (store *Store) enrollTerminalRuns(ctx context.Context, runIDs []string, before time.Time, budget purgeBudget) error {
 	for _, runID := range runIDs {
 		fits, err := store.firstHistoryRowFits(ctx, runID, budget)
 		if err != nil {

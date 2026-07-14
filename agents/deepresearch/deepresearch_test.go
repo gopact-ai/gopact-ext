@@ -40,7 +40,7 @@ func TestDeepResearchRunsWorkflowPipelineAndDeduplicatesSources(t *testing.T) {
 	calls := &researchCalls{}
 	store := workflow.NewMemoryStore()
 	target := newResearchAgent(t, calls, WithWorkflowOptions(
-		workflow.WithCheckpointer(store), workflow.WithJournal(store),
+		workflow.WithStore(store),
 	))
 	var nodes []string
 	response, err := target.Invoke(

@@ -18,12 +18,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-type persistence interface {
-	workflow.Checkpointer
-	workflow.CheckpointHistory
-	workflow.CheckpointController
-	runlog.Log
-}
+type persistence interface{ workflow.Store }
 
 func TestMigrateThenOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "explicit-migration.db")
@@ -617,7 +612,7 @@ func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
 	defer releaseNode()
 	first := workflow.New[string, string](
 		"sqlite-heartbeat",
-		workflow.WithCheckpointer(firstStore),
+		workflow.WithStore(firstStore),
 		workflow.WithCheckpointLease(leaseDuration, renewEvery),
 	)
 	firstNode := first.Node("node", func(ctx context.Context, input string) (string, error) {
@@ -635,7 +630,7 @@ func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
 	secondRan := make(chan struct{}, 1)
 	second := workflow.New[string, string](
 		"sqlite-heartbeat",
-		workflow.WithCheckpointer(secondStore),
+		workflow.WithStore(secondStore),
 		workflow.WithCheckpointLease(leaseDuration, renewEvery),
 	)
 	secondNode := second.Node("node", func(_ context.Context, input string) (string, error) {
@@ -830,31 +825,13 @@ func requireWorkflowPersistence(t *testing.T, store persistence, reopen func(*te
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("ListCheckpoints(after end) = %+v, %v, want empty history", empty, err)
 	}
-	version := nodeVersion(t, snapshot.Timeline, "work")
-	retried, err := wf.Retry(context.Background(), workflow.RetryRequest{
-		RunID: "store-run", NodeID: "work", NodeExecutionVersion: version,
-	})
-	if err != nil || retried != "input-done" || bodyCalls != 2 {
-		t.Fatalf("Retry() = %q, %v, calls %d", retried, err, bodyCalls)
-	}
 	requireRunLogSemantics(t, store)
-}
-
-func nodeVersion(t *testing.T, records []runlog.Record, nodeID string) int64 {
-	t.Helper()
-	for _, record := range records {
-		if record.NodeID == nodeID && record.EventType == workflow.EventNodeCompleted {
-			return record.NodeExecutionVersion
-		}
-	}
-	t.Fatalf("completed node %q not found in timeline", nodeID)
-	return 0
 }
 
 func persistenceWorkflow(store persistence, bodyCalls *int, interrupt *bool) *workflow.Workflow[string, string] {
 	wf := workflow.New[string, string](
 		"store-conformance", workflow.WithTopologyVersion("v1"),
-		workflow.WithStrictCheckpointer(store), workflow.WithStrictJournal(store),
+		workflow.WithStore(store),
 	)
 	work := wf.Node("work", func(_ context.Context, input string) (string, error) {
 		*bodyCalls++
@@ -968,8 +945,7 @@ func TestWorkflowAgentPersistsSessionRun(t *testing.T) {
 	wf := workflow.New[agent.Request, agent.Response](
 		identity.Name,
 		workflow.WithTopologyVersion(identity.Version),
-		workflow.WithStrictCheckpointer(store),
-		workflow.WithStrictJournal(store),
+		workflow.WithStore(store),
 	)
 	respond := wf.Node("respond", func(_ context.Context, request agent.Request) (agent.Response, error) {
 		return agent.Response{Message: request.Messages[0]}, nil
@@ -1067,16 +1043,6 @@ func TestCheckpointSessionIdentityIsImmutable(t *testing.T) {
 	completed.Status = workflow.CheckpointCompleted
 	if err := store.Finish(context.Background(), completed, loaded.Version); err != nil {
 		t.Fatalf("Finish() error = %v", err)
-	}
-	terminal, err := store.Load(context.Background(), "run-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reopened := terminal
-	reopened.Status = workflow.CheckpointRunning
-	reopened.SessionID = "session-2"
-	if err := store.Reopen(context.Background(), reopened, terminal.Version); !errors.Is(err, workflow.ErrCheckpointMismatch) {
-		t.Fatalf("Reopen() changed session error = %v, want ErrCheckpointMismatch", err)
 	}
 	history, err := store.ListCheckpoints(context.Background(), workflow.CheckpointHistoryRequest{RunID: "run-1"})
 	if err != nil || len(history) != 2 || history[0].SessionID != "session-1" || history[1].SessionID != "session-1" {

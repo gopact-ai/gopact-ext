@@ -466,25 +466,6 @@ func testIntegrationLifecycle(t *testing.T, store *Store, runID string) {
 		t.Fatalf("Save() lease = %v, want %v", current.LeaseExpiresAt, renewed)
 	}
 
-	current.Status = workflow.CheckpointCompleted
-	current.OwnerID = ""
-	current.LeaseExpiresAt = time.Time{}
-	if err := store.Finish(t.Context(), current, current.Version); err != nil {
-		t.Fatalf("Finish() error = %v", err)
-	}
-
-	current = loadIntegrationCheckpoint(t, store, runID)
-	current.Status = workflow.CheckpointRunning
-	current.OwnerID = "reopen-owner"
-	current.LeaseExpiresAt = time.Now().Add(-time.Minute)
-	if err := store.Reopen(t.Context(), current, current.Version); err != nil {
-		t.Fatalf("Reopen() error = %v", err)
-	}
-
-	current = loadIntegrationCheckpoint(t, store, runID)
-	claimIntegrationCheckpoint(t, store, current)
-	current = loadIntegrationCheckpoint(t, store, runID)
-
 	event := runlog.Record{
 		SessionID: current.SessionID, RunID: current.RunID, Sequence: 1,
 		EventType: "test.event", Source: "dbintegration", Timestamp: time.Now().UTC(),
@@ -514,8 +495,8 @@ func testIntegrationLifecycle(t *testing.T, store *Store, runID string) {
 	if err != nil {
 		t.Fatalf("PurgeTerminalRuns() error = %v", err)
 	}
-	if result.Runs != 1 || result.Checkpoints != 6 || result.Events != 1 {
-		t.Fatalf("PurgeTerminalRuns() = %+v, want 1 run, 6 checkpoints, 1 event", result)
+	if result.Runs != 1 || result.Checkpoints != 3 || result.Events != 1 {
+		t.Fatalf("PurgeTerminalRuns() = %+v, want 1 run, 3 checkpoints, 1 event", result)
 	}
 	if _, err := store.Load(t.Context(), runID); !errors.Is(err, workflow.ErrCheckpointNotFound) {
 		t.Fatalf("Load(purged run) error = %v, want ErrCheckpointNotFound", err)

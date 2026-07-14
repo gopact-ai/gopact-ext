@@ -35,7 +35,7 @@ func TestDeepExecutesTaskPlanAndCarriesArtifactContext(t *testing.T) {
 			{ID: "research", Description: "collect evidence", AgentName: "research"},
 			{ID: "write", Description: "write report", AgentName: "write"},
 		}, nil
-	}), WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)))
+	}), WithWorkflowOptions(workflow.WithStore(store)))
 	var nodes []string
 	request := agent.Request{
 		Messages:  []gopact.Message{gopact.UserMessage("investigate")},

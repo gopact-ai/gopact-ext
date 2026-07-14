@@ -50,7 +50,7 @@ func TestPlanExecRunsReplacementPlanThroughWorkflowFacts(t *testing.T) {
 		WithReporter(ReporterFunc(func(_ context.Context, input ReportInput) (agent.Response, error) {
 			return input.Results[len(input.Results)-1].Response, nil
 		})),
-		WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)),
+		WithWorkflowOptions(workflow.WithStore(store)),
 	)
 	if err != nil {
 		t.Fatal(err)

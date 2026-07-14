@@ -14,10 +14,7 @@ import (
 )
 
 var (
-	_ workflow.Checkpointer         = (*Store)(nil)
-	_ workflow.CheckpointHistory    = (*Store)(nil)
-	_ workflow.CheckpointController = (*Store)(nil)
-	_ runlog.FencedLog              = (*Store)(nil)
+	_ workflow.Store = (*Store)(nil)
 )
 
 func TestStoreLifecycleAndFencedRunLog(t *testing.T) {
@@ -50,29 +47,6 @@ func TestStoreLifecycleAndFencedRunLog(t *testing.T) {
 	if !current.LeaseExpiresAt.Equal(renewed) {
 		t.Fatalf("Save() shortened renewed lease to %v", current.LeaseExpiresAt)
 	}
-	current.Status = workflow.CheckpointCompleted
-	current.OwnerID = ""
-	current.LeaseExpiresAt = time.Time{}
-	if err := store.Finish(t.Context(), current, current.Version); err != nil {
-		t.Fatalf("Finish() error = %v", err)
-	}
-	current, _ = store.Load(t.Context(), record.RunID)
-	current.Status = workflow.CheckpointRunning
-	current.OwnerID = "owner-1"
-	current.LeaseExpiresAt = time.Now().Add(-time.Minute)
-	if err := store.Reopen(t.Context(), current, current.Version); err != nil {
-		t.Fatalf("Reopen() error = %v", err)
-	}
-	current, _ = store.Load(t.Context(), record.RunID)
-	claimed := current
-	claimed.OwnerID = "owner-2"
-	claimed.ClaimSequence++
-	claimed.LeaseExpiresAt = time.Now().Add(time.Hour)
-	if err := store.Claim(t.Context(), claimed, current.Version); err != nil {
-		t.Fatalf("Claim() error = %v", err)
-	}
-	current, _ = store.Load(t.Context(), record.RunID)
-
 	event := runlog.Record{
 		SessionID: current.SessionID, RunID: current.RunID, Sequence: 1,
 		EventType: "test.event", Source: "test", Timestamp: time.Now().UTC(),
@@ -93,9 +67,15 @@ func TestStoreLifecycleAndFencedRunLog(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("List() = %+v, %v, want one event", events, err)
 	}
+	current.Status = workflow.CheckpointCompleted
+	current.OwnerID = ""
+	current.LeaseExpiresAt = time.Time{}
+	if err := store.Finish(t.Context(), current, current.Version); err != nil {
+		t.Fatalf("Finish() error = %v", err)
+	}
 	history, err := store.ListCheckpoints(t.Context(), workflow.CheckpointHistoryRequest{RunID: current.RunID})
-	if err != nil || len(history) != 5 {
-		t.Fatalf("ListCheckpoints() = %d records, %v, want 5", len(history), err)
+	if err != nil || len(history) != 3 {
+		t.Fatalf("ListCheckpoints() = %d records, %v, want 3", len(history), err)
 	}
 }
 

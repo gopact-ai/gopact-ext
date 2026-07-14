@@ -43,7 +43,7 @@ func TestAgentReducesConcurrentBranchResultsInDeclaredOrder(t *testing.T) {
 			results[0].Response.Message.Parts[0].Text = "caller-mutation"
 			return agent.Response{Message: gopact.UserMessage("done")}, nil
 		},
-	), WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)))
+	), WithWorkflowOptions(workflow.WithStore(store)))
 	if err != nil {
 		t.Fatal(err)
 	}

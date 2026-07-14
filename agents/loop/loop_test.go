@@ -31,7 +31,7 @@ func TestAgentLoopsUntilConditionStops(t *testing.T) {
 	store := workflow.NewMemoryStore()
 	target, err := New(
 		testIdentity(), child, condition, WithMaxIterations(5),
-		WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)),
+		WithWorkflowOptions(workflow.WithStore(store)),
 	)
 	if err != nil {
 		t.Fatal(err)

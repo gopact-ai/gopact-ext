@@ -139,8 +139,7 @@ func runCombinedStoreWorkflow(t *testing.T, store persistence, runID string) int
 	t.Helper()
 	wf := workflow.New[string, string](
 		"fenced-history",
-		workflow.WithStrictCheckpointer(store),
-		workflow.WithStrictJournal(store),
+		workflow.WithStore(store),
 	)
 	node := wf.Node("work", func(ctx context.Context, input string) (string, error) {
 		if err := workflow.Emit(ctx, gopact.Event{Type: "audit.custom"}); err != nil {

@@ -183,7 +183,7 @@ func providerPersistenceWorkflow(model gopact.Model, interrupt *bool, options ..
 }
 
 func sqliteWorkflowOptions(store *storesqlite.Store) []workflow.BuildOption {
-	return []workflow.BuildOption{workflow.WithStrictCheckpointer(store), workflow.WithStrictJournal(store)}
+	return []workflow.BuildOption{workflow.WithStore(store)}
 }
 
 func assertProviderPersistenceFacts(t *testing.T, records []runlog.Record, prompt, marker string) {

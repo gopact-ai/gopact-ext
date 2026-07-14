@@ -43,6 +43,8 @@ type Store struct {
 	now     func() time.Time
 }
 
+var _ workflow.Store = (*Store)(nil)
+
 type checkpointRow struct {
 	RunID      string `gorm:"column:run_id;not null;primaryKey;size:191"`
 	Version    int64  `gorm:"column:version;not null;primaryKey;autoIncrement:false"`

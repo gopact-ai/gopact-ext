@@ -289,14 +289,6 @@ func TestRunHeadTracksCheckpointWritesAndIgnoresLeaseRenewal(t *testing.T) {
 	if current.OwnerID != "" || !current.LeaseExpiresAt.IsZero() {
 		t.Fatalf("Load() = owner %q expiry %v, want cleared terminal lease", current.OwnerID, current.LeaseExpiresAt)
 	}
-	current.Status = workflow.CheckpointRunning
-	current.UpdatedAt = base.Add(4 * time.Minute)
-	if err := store.Reopen(ctx, current, current.Version); err != nil {
-		t.Fatalf("Reopen() error = %v", err)
-	}
-	assertRunHead(t, store, runHeadExpectation{
-		runID: record.RunID, status: workflow.CheckpointRunning, version: 5, updatedAt: base.Add(4 * time.Minute),
-	})
 }
 
 func TestOpenBackfillsRunHeadsInBatches(t *testing.T) {
@@ -409,111 +401,6 @@ func TestOpenDoesNotRewriteCurrentRunHeads(t *testing.T) {
 	assertRunHead(t, store, runHeadExpectation{
 		runID: record.RunID, status: record.Status, version: record.Version, updatedAt: record.UpdatedAt,
 	})
-}
-
-type reopenRaceOutcome struct {
-	iteration   int
-	store       *Store
-	loaded      workflow.CheckpointRecord
-	terminal    workflow.CheckpointRecord
-	purgeResult PurgeResult
-	purgeErr    error
-	reopenErr   error
-}
-
-func TestPurgeTerminalRunsRacingReopenLeavesNoPartialRun(t *testing.T) {
-	for iteration := range 20 {
-		path := filepath.Join(t.TempDir(), fmt.Sprintf("race-%d.db", iteration))
-		if err := Migrate(path); err != nil {
-			t.Fatal(err)
-		}
-		purger, err := Open(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writer, err := Open(path)
-		if err != nil {
-			_ = purger.Close()
-			t.Fatal(err)
-		}
-		before := time.Now().UTC()
-		createTerminalRun(t, purger, "race", workflow.CheckpointCompleted, before.Add(-time.Hour))
-		terminal, err := writer.Load(context.Background(), "race")
-		if err != nil {
-			t.Fatal(err)
-		}
-		reopened := terminal
-		reopened.Status = workflow.CheckpointRunning
-		reopened.UpdatedAt = before.Add(time.Hour)
-
-		start := make(chan struct{})
-		var wait sync.WaitGroup
-		wait.Add(2)
-		var purgeResult PurgeResult
-		var purgeErr, reopenErr error
-		go func() {
-			defer wait.Done()
-			<-start
-			purgeResult, purgeErr = purger.PurgeTerminalRuns(context.Background(), PurgeRequest{Before: before})
-		}()
-		go func() {
-			defer wait.Done()
-			<-start
-			reopenErr = writer.Reopen(context.Background(), reopened, terminal.Version)
-		}()
-		close(start)
-		wait.Wait()
-
-		loaded, loadErr := purger.Load(context.Background(), "race")
-		outcome := reopenRaceOutcome{
-			iteration: iteration, store: purger, loaded: loaded, terminal: terminal,
-			purgeResult: purgeResult, purgeErr: purgeErr, reopenErr: reopenErr,
-		}
-		switch {
-		case loadErr == nil:
-			assertRetainedReopenRace(t, outcome)
-		case errors.Is(loadErr, workflow.ErrCheckpointNotFound):
-			assertPurgedReopenRace(t, outcome)
-		default:
-			t.Fatalf("iteration %d: Load() error = %v", iteration, loadErr)
-		}
-		if purgeErr != nil && !databaseBusy(purgeErr) {
-			t.Fatalf("iteration %d: PurgeTerminalRuns() error = %v", iteration, purgeErr)
-		}
-		_ = writer.Close()
-		_ = purger.Close()
-	}
-}
-
-func assertRetainedReopenRace(t *testing.T, outcome reopenRaceOutcome) {
-	t.Helper()
-	if outcome.loaded.Status != workflow.CheckpointRunning || outcome.loaded.Version != outcome.terminal.Version+1 {
-		t.Fatalf("iteration %d: Load() = %+v after race", outcome.iteration, outcome.loaded)
-	}
-	if outcome.reopenErr != nil {
-		t.Fatalf("iteration %d: retained run but Reopen() error = %v", outcome.iteration, outcome.reopenErr)
-	}
-	if outcome.purgeResult.Runs != 0 {
-		t.Fatalf("iteration %d: retained run but purge result = %+v", outcome.iteration, outcome.purgeResult)
-	}
-	assertRunStorageCounts(t, outcome.store, "race", runStorageCounts{checkpoints: 3, events: 1, heads: 1})
-}
-
-func assertPurgedReopenRace(t *testing.T, outcome reopenRaceOutcome) {
-	t.Helper()
-	expected := PurgeResult{Runs: 1, Checkpoints: 2, Events: 1}
-	if outcome.purgeErr != nil || outcome.purgeResult != expected {
-		t.Fatalf(
-			"iteration %d: purged run result = %+v, error = %v",
-			outcome.iteration,
-			outcome.purgeResult,
-			outcome.purgeErr,
-		)
-	}
-	if outcome.reopenErr == nil {
-		t.Fatalf("iteration %d: Reopen() succeeded after the run was purged", outcome.iteration)
-	}
-	assertRunStorageCounts(t, outcome.store, "race", runStorageCounts{})
 }
 
 func TestPurgeTerminalRunsRacingClaimRetainsInterruptedRun(t *testing.T) {

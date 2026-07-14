@@ -40,7 +40,7 @@ func TestAgentInvokesChildrenInDeclaredOrder(t *testing.T) {
 	directory := compileDirectory(t, first, second)
 	store := workflow.NewMemoryStore()
 	target, err := New(testIdentity(), directory, []string{"first", "second"}, WithWorkflowOptions(
-		workflow.WithCheckpointer(store), workflow.WithJournal(store),
+		workflow.WithStore(store),
 	))
 	if err != nil {
 		t.Fatal(err)

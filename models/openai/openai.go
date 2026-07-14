@@ -29,6 +29,7 @@ const (
 	defaultMaxBackoff     = 2 * time.Second
 	maximumRetryAfter     = 30 * time.Second
 	backoffFactor         = 2
+	defaultMaxRedirects   = 10
 )
 
 // RetryPolicy configures bounded retries for transient provider failures.
@@ -357,14 +358,15 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 				terminal = true
 			}
 			text := chunk.Choices[0].Delta.Content
-			if text != "" {
-				if err := c.emitDelta(callCtx, cfg.ModelEventSinks, text); err != nil {
-					yield(gopact.ModelOutputChunk{}, err)
-					return
-				}
-				if !yield(gopact.ModelOutputChunk{Text: text}, nil) {
-					return
-				}
+			if text == "" {
+				continue
+			}
+			if err := c.emitDelta(callCtx, cfg.ModelEventSinks, text); err != nil {
+				yield(gopact.ModelOutputChunk{}, err)
+				return
+			}
+			if !yield(gopact.ModelOutputChunk{Text: text}, nil) {
+				return
 			}
 			if terminal {
 				return
@@ -422,8 +424,8 @@ func (c *Model) doAttempt(req *http.Request, attempt int) (*http.Response, error
 			if err := checkRedirect(next, via); err != nil {
 				return err
 			}
-		} else if len(via) >= 10 {
-			return errors.New("stopped after 10 redirects")
+		} else if len(via) >= defaultMaxRedirects {
+			return fmt.Errorf("stopped after %d redirects", defaultMaxRedirects)
 		}
 		if c.apiKey != "" && !c.allowHTTP && len(via) > 0 &&
 			via[len(via)-1].URL.Scheme == "https" && next.URL.Scheme == "http" {

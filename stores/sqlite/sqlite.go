@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/gopact-ext/stores/dbstore"
+	"github.com/gopact-ai/gopact/workflow"
 	gormsqlite "github.com/libtnb/sqlite"
 )
 
@@ -25,6 +26,8 @@ type Store struct {
 	*dbstore.Store
 	db *sql.DB
 }
+
+var _ workflow.Store = (*Store)(nil)
 
 // PurgeRequest selects terminal workflow runs for deletion.
 type PurgeRequest = dbstore.PurgeRequest

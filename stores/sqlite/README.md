@@ -7,7 +7,7 @@
 - Persist Workflow checkpoints and execution history in local or single-service deployments.
 - Exercise durable resume and run-log behavior in tests without an external database.
 
-The store directly implements `workflow.Checkpointer`, `workflow.CheckpointHistory`, `workflow.CheckpointController`, `runlog.Log`, and `runlog.FencedLog`.
+The store directly implements `workflow.Store`.
 
 ## Example
 
@@ -23,8 +23,7 @@ defer store.Close()
 
 wf := workflow.New[Input, Output](
 	"example",
-	workflow.WithCheckpointer(store),
-	workflow.WithJournal(store),
+	workflow.WithStore(store),
 	workflow.WithCheckpointLease(3*time.Minute, time.Minute),
 )
 ```
@@ -33,9 +32,9 @@ The complete runnable version is in [`example_test.go`](./example_test.go).
 
 ## Advantages
 
-The same `*sqlite.Store` is passed directly to each consumer-owned interface. Other persistent backends can implement those same interfaces without a repository or service abstraction. Configured persistence is authoritative: a checkpoint, journal, or lease-renewal failure stops the invocation.
+The same `*sqlite.Store` provides checkpoints, history, journal queries, and fenced appends through one consumer-owned interface. Other persistent backends can implement `workflow.Store` without a repository or service abstraction. Configured persistence is authoritative: a checkpoint, journal, or lease-renewal failure stops the invocation.
 
-When the same Store is passed to `WithCheckpointer` and `WithJournal`, observed and custom events validate the current running owner, claim sequence, and unexpired lease in the same SQLite transaction that appends the RunLog record. This closes the claim-to-append window and avoids adding two checkpoint history versions for each observed event.
+Observed and custom events validate the current running owner, claim sequence, and unexpired lease in the same SQLite transaction that appends the RunLog record. This closes the claim-to-append window and avoids extra checkpoint history versions for each observed event.
 
 The store solves durable execution persistence. It does not provide semantic Agent Memory or Session state; those remain separate domain capabilities.
 

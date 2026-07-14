@@ -68,8 +68,7 @@ if err != nil {
 defer store.Close()
 
 target, err := react.New(identity, model, react.WithWorkflowOptions(
-	workflow.WithCheckpointer(store),
-	workflow.WithJournal(store),
+	workflow.WithStore(store),
 	workflow.WithCheckpointLease(3*time.Minute, time.Minute),
 ))
 if err != nil {

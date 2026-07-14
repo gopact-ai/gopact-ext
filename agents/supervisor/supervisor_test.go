@@ -27,7 +27,7 @@ func TestSupervisorDelegatesThenFinalizesThroughWorkflowFacts(t *testing.T) {
 			}, nil
 		}
 		return Decision{Kind: DecisionFinal, Response: &input.Results[0].Response}, nil
-	}), WithWorkflowOptions(workflow.WithCheckpointer(store), workflow.WithJournal(store)))
+	}), WithWorkflowOptions(workflow.WithStore(store)))
 	var nodes []string
 	response, err := target.Invoke(
 		context.Background(),

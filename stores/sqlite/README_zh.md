@@ -7,7 +7,7 @@
 - 在本地或单服务部署中持久化 Workflow checkpoint 与执行历史；
 - 无需外部数据库即可测试持久化恢复和 runlog 行为。
 
-Store 直接实现 `workflow.Checkpointer`、`workflow.CheckpointHistory`、`workflow.CheckpointController`、`runlog.Log` 与 `runlog.FencedLog`。
+Store 直接实现 `workflow.Store`。
 
 ## 示例
 
@@ -23,8 +23,7 @@ defer store.Close()
 
 wf := workflow.New[Input, Output](
 	"example",
-	workflow.WithCheckpointer(store),
-	workflow.WithJournal(store),
+	workflow.WithStore(store),
 	workflow.WithCheckpointLease(3*time.Minute, time.Minute),
 )
 ```
@@ -33,9 +32,9 @@ wf := workflow.New[Input, Output](
 
 ## 优点
 
-同一个 `*sqlite.Store` 直接传给各个 consumer-owned interface，不需要 repository 或 service 抽象。其他持久化后端也可以实现同一组 consumer-owned interface。配置后的持久化是权威数据源：checkpoint、journal 或租约续期失败都会终止本次调用。
+同一个 `*sqlite.Store` 通过一个 consumer-owned interface 提供 checkpoint、history、journal query 与 fenced append，不需要 repository 或 service 抽象。其他持久化后端也可以实现 `workflow.Store`。配置后的持久化是权威数据源：checkpoint、journal 或租约续期失败都会终止本次调用。
 
-同一个 Store 同时传给 `WithCheckpointer` 与 `WithJournal` 时，observed/custom event 会在追加 RunLog 记录的同一个 SQLite 事务中校验当前 head 是否仍为 running、owner 与 claim sequence 是否匹配，以及租约是否尚未过期。这样可以关闭 claim→append 窗口，也不会再为每个 observed event 额外产生两份 checkpoint history version。
+Observed/custom event 会在追加 RunLog 记录的同一个 SQLite 事务中校验当前 head 是否仍为 running、owner 与 claim sequence 是否匹配，以及租约是否尚未过期。这样可以关闭 claim→append 窗口，也不会再为每个 observed event 额外产生 checkpoint history version。
 
 该 Store 解决的是执行数据持久化，不提供语义层的 Agent Memory 或 Session state；这些仍是独立的领域能力。
 
