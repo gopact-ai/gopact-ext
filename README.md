@@ -24,7 +24,7 @@ The release order is `gopact` → `gopact-ext` → `gopact-ext/stores` → `gopa
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
-The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. Until the exact versions are approved and published, the provisional manifest and a failed tag lookup are not release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
+The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. During staged publication, only a successful prefix is release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
 
 ## Extension catalog
 

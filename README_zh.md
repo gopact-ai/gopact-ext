@@ -23,7 +23,7 @@
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
-脚本从空 consumer 开始，校验实际选择的精确版本，并拒绝缺失模块、consumer 或 tagged module 中的 `replace`、pseudo-version 和 `v0.0.0`。`--validate-only` 只检查 manifest 结构，不下载 tag。精确版本获批并发布前，临时 manifest 与失败的 tag 查询都不能作为发布证据。只有 Go 1.27 stable 门禁与 RC burn-in 通过后，才能称为 production-ready。
+脚本从空 consumer 开始，校验实际选择的精确版本，并拒绝缺失模块、consumer 或 tagged module 中的 `replace`、pseudo-version 和 `v0.0.0`。`--validate-only` 只检查 manifest 结构，不下载 tag。分阶段发布时，只有成功通过的 prefix 才能作为发布证据。只有 Go 1.27 stable 门禁与 RC burn-in 通过后，才能称为 production-ready。
 
 ## 扩展目录
 

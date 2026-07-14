@@ -2,25 +2,7 @@ go 1.27
 
 use (
 	../gopact
-	./agents/agenttool
-	./agents/deep
-	./agents/deepresearch
-	./agents/internal
-	./agents/loop
-	./agents/parallel
-	./agents/planexec
-	./agents/react
-	./agents/router
-	./agents/sequential
-	./agents/supervisor
-	./models/agnes
-	./models/fake
-	./models/glm
-	./models/openai
-	./stores/dbstore
-	./stores/mariadb
-	./stores/mysql
-	./stores/postgres
-	./stores/sqlite
+	.
+	./stores
 	./tests/workflow
 )
