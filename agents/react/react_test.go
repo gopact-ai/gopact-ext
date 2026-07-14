@@ -182,9 +182,9 @@ func TestAgentConsumesOnlyPendingObservations(t *testing.T) {
 	if len(requests) != 3 || len(prepareOutputs) != 3 {
 		t.Fatalf("model requests/prepare outputs = %d/%d, want 3/3", len(requests), len(prepareOutputs))
 	}
-	for index, output := range prepareOutputs {
-		if output.Output == nil || output.Output.Type != "gopact.ModelRequest" {
-			t.Fatalf("prepare output[%d] = %+v, want gopact.ModelRequest", index, output.Output)
+	for index, metadata := range prepareOutputs {
+		if metadata.NodeName != "prepare" || metadata.ActivationID == "" || metadata.Status != "completed" || metadata.Error != "" {
+			t.Fatalf("prepare metadata[%d] = %+v, want completed node", index, metadata)
 		}
 	}
 	wantCounts := [][2]int{{0, 0}, {1, 0}, {1, 1}}

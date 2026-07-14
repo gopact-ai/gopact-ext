@@ -133,6 +133,12 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 		buildOptions,
 		workflow.WithTopologyVersion(identity.Version),
 		workflow.WithMaxParallelism(configuration.limits.MaxParallelTools),
+		workflow.WithCheckpointTypes(
+			gopact.ToolResultOutcome{},
+			gopact.ToolRejectedOutcome{},
+			gopact.ToolErrorOutcome{},
+			gopact.ToolInterruptOutcome{},
+		),
 	)
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State {

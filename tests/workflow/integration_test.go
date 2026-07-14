@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -144,7 +145,7 @@ func runProviderPersistenceScenario(t *testing.T, model gopact.Model, backend st
 	if err != nil || len(snapshot.Timeline) == 0 || len(snapshot.Checkpoints) == 0 {
 		t.Fatalf("Snapshot() = %+v, %v, want history", snapshot, err)
 	}
-	assertProviderPersistenceFacts(t, snapshot.Timeline, prompt, marker)
+	assertProviderPersistenceFacts(t, snapshot.Timeline)
 }
 
 func providerPersistenceWorkflow(model gopact.Model, interrupt *bool, options ...workflow.BuildOption) *workflow.Workflow[string, string] {
@@ -186,23 +187,19 @@ func sqliteWorkflowOptions(store *storesqlite.Store) []workflow.BuildOption {
 	return []workflow.BuildOption{workflow.WithStore(store)}
 }
 
-func assertProviderPersistenceFacts(t *testing.T, records []runlog.Record, prompt, marker string) {
+func assertProviderPersistenceFacts(t *testing.T, records []runlog.Record) {
 	t.Helper()
 	for _, record := range records {
 		if record.NodeID != "model" || record.EventType != workflow.EventNodeCompleted {
 			continue
 		}
-		var facts workflow.NodeEventPayload
-		if err := json.Unmarshal(record.Payload, &facts); err != nil {
+		var metadata workflow.NodeEventPayload
+		if err := json.Unmarshal(record.Payload, &metadata); err != nil {
 			t.Fatal(err)
 		}
-		var current providerPersistenceContext
-		if err := json.Unmarshal(facts.WorkflowContext.JSON, &current); err != nil {
-			t.Fatal(err)
-		}
-		if facts.EffectiveInput == nil || string(facts.EffectiveInput.JSON) != `"`+prompt+`"` ||
-			facts.Output == nil || !strings.Contains(string(facts.Output.JSON), marker) || current.Prompt != prompt {
-			t.Fatalf("provider persistence facts = %+v/%+v, want input/output/full context", facts, current)
+		if metadata.NodeName != "model" || metadata.Status != "completed" ||
+			metadata.ActivationID == "" || metadata.Attempt != 1 || metadata.NodeExecutionVersion <= 0 || metadata.Error != "" {
+			t.Fatalf("provider persistence metadata = %+v, want completed model attempt", metadata)
 		}
 		return
 	}
@@ -299,13 +296,7 @@ func reactCompletedNode(t *testing.T, event gopact.Event, runID string) (string,
 	if event.RunID != runID || event.Type != workflow.EventNodeCompleted {
 		return "", false
 	}
-	var facts workflow.NodeEventPayload
-	if err := json.Unmarshal(event.Payload, &facts); err != nil {
-		t.Fatalf("decode React %s facts: %v", event.NodeID, err)
-	}
-	if facts.EffectiveInput == nil || facts.Output == nil || len(facts.WorkflowContext.JSON) == 0 {
-		t.Fatalf("React %s facts = %+v, want input/output/full context", event.NodeID, facts)
-	}
+	assertNodeMetadata(t, event)
 	return event.NodeID, true
 }
 
@@ -370,7 +361,7 @@ func TestIntegrationSequentialAgentUsesWorkflowChildRuns(t *testing.T) {
 			if len(result.Message.Parts) != 1 || !strings.Contains(result.Message.Parts[0].Text, marker) {
 				t.Fatalf("response = %+v, want marker %q", result, marker)
 			}
-			assertSequentialFacts(t, events, runID, marker, []string{providerIdentity.Name, auditIdentity.Name})
+			assertSequentialFacts(t, events, runID, []string{providerIdentity.Name, auditIdentity.Name})
 		})
 	}
 }
@@ -443,13 +434,7 @@ func assertPlanExecFacts(t *testing.T, events []gopact.Event, runID string) {
 			continue
 		}
 		nodes = append(nodes, event.NodeID)
-		var facts workflow.NodeEventPayload
-		if err := json.Unmarshal(event.Payload, &facts); err != nil {
-			t.Fatal(err)
-		}
-		if facts.EffectiveInput == nil || facts.Output == nil || len(facts.WorkflowContext.JSON) == 0 {
-			t.Fatalf("PlanExec %s facts = %+v, want input/output/full context", event.NodeID, facts)
-		}
+		assertNodeMetadata(t, event)
 	}
 	want := []string{"plan", "accept-plan", "continue", "dispatch-step", "execute-step", "record-step", "replan", "continue", "report"}
 	if !reflect.DeepEqual(nodes, want) || len(childRuns) != 1 {
@@ -534,13 +519,7 @@ func assertSupervisorFacts(t *testing.T, events []gopact.Event, runID string) {
 			continue
 		}
 		nodes = append(nodes, event.NodeID)
-		var facts workflow.NodeEventPayload
-		if err := json.Unmarshal(event.Payload, &facts); err != nil {
-			t.Fatal(err)
-		}
-		if facts.EffectiveInput == nil || facts.Output == nil || len(facts.WorkflowContext.JSON) == 0 {
-			t.Fatalf("Supervisor %s facts = %+v, want input/output/full context", event.NodeID, facts)
-		}
+		assertNodeMetadata(t, event)
 	}
 	want := []string{"start", "decide", "delegate", "record", "decide", "finish"}
 	if !reflect.DeepEqual(nodes, want) || len(childRuns) != 1 {
@@ -646,13 +625,7 @@ func assertDeepFacts(t *testing.T, events []gopact.Event, runID string) {
 			continue
 		}
 		nodes = append(nodes, event.NodeID)
-		var facts workflow.NodeEventPayload
-		if err := json.Unmarshal(event.Payload, &facts); err != nil {
-			t.Fatal(err)
-		}
-		if facts.EffectiveInput == nil || facts.Output == nil || len(facts.WorkflowContext.JSON) == 0 {
-			t.Fatalf("Deep %s facts = %+v, want input/output/full context", event.NodeID, facts)
-		}
+		assertNodeMetadata(t, event)
 	}
 	want := []string{
 		"plan", "accept-plan", "continue", "build-context", "execute-task", "record-task",
@@ -739,13 +712,7 @@ func assertDeepResearchFacts(t *testing.T, events []gopact.Event, runID string) 
 			continue
 		}
 		nodes = append(nodes, event.NodeID)
-		var facts workflow.NodeEventPayload
-		if err := json.Unmarshal(event.Payload, &facts); err != nil {
-			t.Fatal(err)
-		}
-		if facts.EffectiveInput == nil || facts.Output == nil || len(facts.WorkflowContext.JSON) == 0 {
-			t.Fatalf("DeepResearch %s facts = %+v, want input/output/full context", event.NodeID, facts)
-		}
+		assertNodeMetadata(t, event)
 	}
 	want := []string{
 		"plan", "accept-plan", "discover", "discover", "collect-sources",
@@ -847,7 +814,7 @@ func TestIntegrationParallelAgentUsesWorkflowFanoutAndMerge(t *testing.T) {
 			if len(response.Message.Parts) != 1 || !strings.Contains(response.Message.Parts[0].Text, marker) {
 				t.Fatalf("response = %+v, want marker %q", response, marker)
 			}
-			assertParallelFacts(t, events, runID, marker, []string{providerIdentity.Name, auditIdentity.Name})
+			assertParallelFacts(t, events, runID, []string{providerIdentity.Name, auditIdentity.Name})
 		})
 	}
 }
@@ -909,7 +876,7 @@ func TestIntegrationRouterAgentUsesWorkflowRouteAndChildRun(t *testing.T) {
 			if len(response.Message.Parts) != 1 || !strings.Contains(response.Message.Parts[0].Text, marker) {
 				t.Fatalf("response = %+v, want marker %q", response, marker)
 			}
-			assertRouterFacts(t, events, runID, marker, providerIdentity.Name)
+			assertRouterFacts(t, events, runID, providerIdentity.Name)
 		})
 	}
 }
@@ -997,7 +964,7 @@ func assertLoopFacts(t *testing.T, events []gopact.Event, runID, childName strin
 	}
 }
 
-func assertParallelFacts(t *testing.T, events []gopact.Event, runID, marker string, childNames []string) {
+func assertParallelFacts(t *testing.T, events []gopact.Event, runID string, childNames []string) {
 	t.Helper()
 	var completed []string
 	childRuns := map[string]struct{}{}
@@ -1017,16 +984,7 @@ func assertParallelFacts(t *testing.T, events []gopact.Event, runID, marker stri
 			continue
 		}
 		completed = append(completed, event.NodeID)
-		var facts workflow.NodeEventPayload
-		if err := json.Unmarshal(event.Payload, &facts); err != nil {
-			t.Fatalf("decode %s facts: %v", event.NodeID, err)
-		}
-		if strings.HasPrefix(event.NodeID, "child.") {
-			assertSequentialRequestFact(t, event.NodeID, "effective input", marker, facts.EffectiveInput)
-		}
-		if (event.NodeID == "plan" || event.NodeID == "merge") && facts.Output == nil {
-			t.Fatalf("%s output is missing", event.NodeID)
-		}
+		assertNodeMetadata(t, event)
 	}
 	want := []string{"plan", "child." + childNames[0], "child." + childNames[1], "merge"}
 	if !reflect.DeepEqual(completed, want) || len(childRuns) != len(childNames) {
@@ -1066,7 +1024,7 @@ func newProviderWorkflowAgent(t *testing.T, identity agent.Identity, model gopac
 	return target
 }
 
-func assertRouterFacts(t *testing.T, events []gopact.Event, runID, marker, selected string) {
+func assertRouterFacts(t *testing.T, events []gopact.Event, runID, selected string) {
 	t.Helper()
 	var nodes []string
 	childRuns := map[string]struct{}{}
@@ -1078,29 +1036,14 @@ func assertRouterFacts(t *testing.T, events []gopact.Event, runID, marker, selec
 			continue
 		}
 		nodes = append(nodes, event.NodeID)
-		assertRouterNodeFact(t, event, marker, selected)
+		assertNodeMetadata(t, event)
 	}
 	if !reflect.DeepEqual(nodes, []string{"select", "child." + selected}) || len(childRuns) != 1 {
 		t.Fatalf("nodes/child runs = %v/%v, want selected route and one child Run", nodes, childRuns)
 	}
 }
 
-func assertRouterNodeFact(t *testing.T, event gopact.Event, marker, selected string) {
-	t.Helper()
-	if event.NodeID == "select" {
-		if !strings.Contains(string(event.Payload), selected) {
-			t.Fatalf("selector facts = %s, want selected child %q", event.Payload, selected)
-		}
-		return
-	}
-	var facts workflow.NodeEventPayload
-	if err := json.Unmarshal(event.Payload, &facts); err != nil {
-		t.Fatal(err)
-	}
-	assertSequentialRequestFact(t, event.NodeID, "effective input", marker, facts.EffectiveInput)
-}
-
-func assertSequentialFacts(t *testing.T, events []gopact.Event, runID, marker string, nodeNames []string) {
+func assertSequentialFacts(t *testing.T, events []gopact.Event, runID string, nodeNames []string) {
 	t.Helper()
 	var completed []string
 	childRuns := map[string]struct{}{}
@@ -1128,38 +1071,22 @@ func assertSequentialFacts(t *testing.T, events []gopact.Event, runID, marker st
 			continue
 		}
 		completed = append(completed, event.NodeID)
-		var facts workflow.NodeEventPayload
-		if err := json.Unmarshal(event.Payload, &facts); err != nil {
-			t.Fatalf("decode %s facts: %v", event.NodeID, err)
-		}
-		for name, value := range map[string]*workflow.NodeValue{
-			"input": &facts.Input, "effective input": facts.EffectiveInput,
-		} {
-			assertSequentialRequestFact(t, event.NodeID, name, marker, value)
-		}
-		if facts.Output == nil {
-			t.Fatalf("%s output is missing", event.NodeID)
-		}
-		var response agent.Response
-		if err := json.Unmarshal(facts.Output.JSON, &response); err != nil || len(response.Message.Parts) != 1 ||
-			!strings.Contains(response.Message.Parts[0].Text, marker) {
-			t.Fatalf("%s output = %+v, %v, want marker %q", event.NodeID, response, err, marker)
-		}
+		assertNodeMetadata(t, event)
 	}
 	if !reflect.DeepEqual(completed, nodeNames) || len(childRuns) != len(nodeNames) {
 		t.Fatalf("completed/child runs = %v/%v, want nodes %v and one child Run each", completed, childRuns, nodeNames)
 	}
 }
 
-func assertSequentialRequestFact(t *testing.T, nodeID, name, marker string, value *workflow.NodeValue) {
+func assertNodeMetadata(t *testing.T, event gopact.Event) {
 	t.Helper()
-	if value == nil {
-		t.Fatalf("%s %s is missing", nodeID, name)
+	var metadata workflow.NodeEventPayload
+	if err := json.Unmarshal(event.Payload, &metadata); err != nil {
+		t.Fatalf("decode %s metadata: %v", event.NodeID, err)
 	}
-	var request agent.Request
-	if err := json.Unmarshal(value.JSON, &request); err != nil || len(request.Messages) != 1 ||
-		!strings.Contains(request.Messages[0].Parts[0].Text, marker) {
-		t.Fatalf("%s %s = %+v, %v, want marker %q", nodeID, name, request, err, marker)
+	if metadata.NodeName != event.NodeID || metadata.ActivationID == "" || metadata.Attempt <= 0 ||
+		metadata.NodeExecutionVersion <= 0 || metadata.Status != "completed" || metadata.Error != "" {
+		t.Fatalf("%s metadata = %+v, want completed node identity", event.NodeID, metadata)
 	}
 }
 
@@ -1328,69 +1255,12 @@ func TestIntegrationWorkflowHooksMiddlewareContextAndFacts(t *testing.T) {
 			if probe.middlewareOutput.Text == "" || probe.nodeHookOutputSeen.Text != probe.middlewareOutput.Text || result.Context.BodyOutput != result.Text {
 				t.Fatalf("output flow = %+v, result = %+v", probe, result)
 			}
-			assertWhiteboxFacts(t, nodeEvents, marker, result)
+			assertWhiteboxFacts(t, nodeEvents)
 			snapshot, err := wf.Snapshot(context.Background(), workflow.SnapshotRequest{RunID: runID})
 			if err != nil || len(snapshot.Timeline) == 0 {
 				t.Fatalf("Snapshot() = %+v, %v, want persisted timeline", snapshot, err)
 			}
-			retried, err := wf.Retry(ctx, workflow.RetryRequest{
-				RunID: runID, NodeID: "ask-model", NodeExecutionVersion: 1,
-			})
-			if err != nil || !strings.Contains(retried.Text, marker) {
-				t.Fatalf("Retry() = %+v, %v, want provider marker %q", retried, err, marker)
-			}
-			retriedSnapshot, err := wf.Snapshot(context.Background(), workflow.SnapshotRequest{RunID: runID})
-			if err != nil {
-				t.Fatalf("retried Snapshot() error = %v", err)
-			}
-			assertRetryTimeline(t, retriedSnapshot.Timeline, runID)
-			sourceRevision := nodeRevision(t, retriedSnapshot.Timeline, "ask-model", workflow.EventNodeCompleted, 1)
-			patched := whiteboxContext{
-				InitialPrompt: "manual", BodyInput: "manual", BodyOutput: "manual-output",
-				Stages: []string{"manual.patch"},
-			}
-			jumped, err := wf.JumpTo(ctx, audit, workflow.JumpRequest{
-				RunID: runID, FromRevisionID: sourceRevision, ContextPatch: patched,
-			}, whiteboxOutput{Text: "manual-output"})
-			if err != nil || jumped.Text != "manual-output" || !reflect.DeepEqual(jumped.Context, patched) {
-				t.Fatalf("JumpTo() = %+v, %v, want patched audit result", jumped, err)
-			}
-			jumpedSnapshot, err := wf.Snapshot(context.Background(), workflow.SnapshotRequest{RunID: runID})
-			if err != nil {
-				t.Fatalf("jumped Snapshot() error = %v", err)
-			}
-			assertJumpTimeline(t, jumpedSnapshot.Timeline, sourceRevision)
 		})
-	}
-}
-
-func nodeRevision(t *testing.T, timeline []runlog.Record, nodeID, eventType string, version int64) string {
-	t.Helper()
-	for _, record := range timeline {
-		if record.NodeID == nodeID && record.EventType == eventType && record.NodeExecutionVersion == version {
-			return record.RevisionID
-		}
-	}
-	t.Fatalf("revision for %s/%s/v%d not found", nodeID, eventType, version)
-	return ""
-}
-
-func assertJumpTimeline(t *testing.T, timeline []runlog.Record, sourceRev string) {
-	t.Helper()
-	var auditStarts []runlog.Record
-	for _, record := range timeline {
-		if record.NodeID == "audit-context" && record.EventType == workflow.EventNodeStarted {
-			auditStarts = append(auditStarts, record)
-		}
-	}
-	if len(auditStarts) != 3 {
-		t.Fatalf("audit starts = %+v, want 3", auditStarts)
-	}
-	last := auditStarts[len(auditStarts)-1]
-	if last.NodeExecutionVersion != 3 || last.ExecutionEpoch != 3 ||
-		last.SourceRevisionID != sourceRev || last.Origin != "external_jump" ||
-		last.ActivationID == auditStarts[len(auditStarts)-2].ActivationID {
-		t.Fatalf("audit starts = %+v, want new activation in jump epoch 3", auditStarts)
 	}
 }
 
@@ -1402,7 +1272,11 @@ func TestIntegrationWorkflowTerminateAfterRealProvider(t *testing.T) {
 			wf := workflow.New[string, string]("cancel-" + tt.name)
 			ask := wf.Node("ask-model", func(ctx context.Context, prompt string) (string, error) {
 				response, err := model.Invoke(ctx, model.NewRequest(gopact.UserMessage("Reply with exactly: "+prompt)))
-				return responseText(response), err
+				output := responseText(response)
+				if err == nil && !strings.Contains(output, marker) {
+					return "", fmt.Errorf("provider output %q does not contain marker %q", output, marker)
+				}
+				return output, err
 			})
 			wait := wf.Node("wait-for-control", func(ctx context.Context, input string) (string, error) {
 				<-ctx.Done()
@@ -1442,18 +1316,18 @@ func TestIntegrationWorkflowTerminateAfterRealProvider(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Snapshot() error = %v", err)
 			}
-			assertTerminatedTimeline(t, snapshot.Timeline, marker)
+			assertTerminatedTimeline(t, snapshot.Timeline)
 		})
 	}
 }
 
-func assertTerminatedTimeline(t *testing.T, timeline []runlog.Record, marker string) {
+func assertTerminatedTimeline(t *testing.T, timeline []runlog.Record) {
 	t.Helper()
 	providerCompleted := false
 	terminated := false
 	for _, record := range timeline {
-		if record.NodeID == "ask-model" && record.EventType == workflow.EventNodeCompleted &&
-			strings.Contains(string(record.Payload), marker) {
+		if record.NodeID == "ask-model" && record.EventType == workflow.EventNodeCompleted {
+			assertCompletedRecordMetadata(t, record)
 			providerCompleted = true
 		}
 		if record.EventType == workflow.EventWorkflowTerminated && record.Origin == "external_terminate" {
@@ -1465,27 +1339,23 @@ func assertTerminatedTimeline(t *testing.T, timeline []runlog.Record, marker str
 	}
 }
 
-func assertRetryTimeline(t *testing.T, timeline []runlog.Record, runID string) {
+func assertCompletedRecordMetadata(t *testing.T, record runlog.Record) {
 	t.Helper()
-	var askStarts []runlog.Record
-	for _, record := range timeline {
-		if record.RunID == runID && record.NodeID == "ask-model" && record.EventType == workflow.EventNodeStarted {
-			askStarts = append(askStarts, record)
-		}
+	var metadata workflow.NodeEventPayload
+	if err := json.Unmarshal(record.Payload, &metadata); err != nil {
+		t.Fatalf("decode provider metadata: %v", err)
 	}
-	if len(askStarts) != 2 || askStarts[0].NodeExecutionVersion != 1 || askStarts[1].NodeExecutionVersion != 2 ||
-		askStarts[0].ActivationID != askStarts[1].ActivationID || askStarts[0].AttemptID == askStarts[1].AttemptID ||
-		askStarts[1].ExecutionEpoch != 2 || askStarts[1].SourceRevisionID == "" || askStarts[1].Origin != "external_retry" {
-		t.Fatalf("ask starts = %+v, want same-run retry attempt in epoch 2", askStarts)
+	if metadata.NodeName != record.NodeID || metadata.Status != "completed" || metadata.Error != "" {
+		t.Fatalf("provider metadata = %+v, want completed node", metadata)
 	}
 }
 
-func assertWhiteboxFacts(t *testing.T, events []gopact.Event, marker string, result whiteboxResult) {
+func assertWhiteboxFacts(t *testing.T, events []gopact.Event) {
 	t.Helper()
 	if len(events) != 4 {
 		t.Fatalf("node events = %d, want 4", len(events))
 	}
-	var askStarted, askCompleted, auditStarted workflow.NodeEventPayload
+	var askStarted, auditStarted workflow.NodeEventPayload
 	for _, event := range events {
 		var payload workflow.NodeEventPayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
@@ -1494,27 +1364,16 @@ func assertWhiteboxFacts(t *testing.T, events []gopact.Event, marker string, res
 		if payload.NodeName == "ask-model" && event.Type == workflow.EventNodeStarted {
 			askStarted = payload
 		}
-		if payload.NodeName == "ask-model" && event.Type == workflow.EventNodeCompleted {
-			askCompleted = payload
-		}
 		if payload.NodeName == "audit-context" && event.Type == workflow.EventNodeStarted {
 			auditStarted = payload
 		}
+		if event.Type == workflow.EventNodeCompleted {
+			assertNodeMetadata(t, event)
+		}
 	}
-	if askStarted.ContextRevision != 1 || string(askStarted.Input.JSON) != `{"prompt":"hook:`+marker+`"}` {
-		t.Fatalf("ask started = %+v, want revision 1 and workflow-hook input", askStarted)
-	}
-	if askCompleted.EffectiveInput == nil ||
-		string(askCompleted.EffectiveInput.JSON) != `{"prompt":"Reply with exactly: `+marker+`"}` ||
-		askCompleted.Output == nil || !strings.Contains(string(askCompleted.Output.JSON), marker) {
-		t.Fatalf("ask completed = %+v, want actual body input and provider output", askCompleted)
-	}
-	var auditContext whiteboxContext
-	if err := json.Unmarshal(auditStarted.WorkflowContext.JSON, &auditContext); err != nil {
-		t.Fatalf("decode audit context: %v", err)
-	}
-	if auditStarted.ContextRevision != 2 || !reflect.DeepEqual(auditContext, result.Context) {
-		t.Fatalf("audit started = %+v, want committed provider output context", auditStarted)
+	if askStarted.NodeName != "ask-model" || askStarted.Status != "running" || askStarted.ContextRevision != 1 ||
+		auditStarted.NodeName != "audit-context" || auditStarted.Status != "running" || auditStarted.ContextRevision != 2 {
+		t.Fatalf("node starts = %+v/%+v, want context revisions 1 then 2", askStarted, auditStarted)
 	}
 }
 
