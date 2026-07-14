@@ -427,6 +427,7 @@ func (dispatcher toolDispatcher) Invoke(ctx context.Context, call gopact.ToolCal
 	if err != nil {
 		return nil, fmt.Errorf("react: execute tool %q: %w", call.Name, err)
 	}
+	outcome = normalizeToolOutcome(outcome)
 	if outcome == nil || outcome.ToolCallID() != call.ID || outcome.ToolName() != call.Name {
 		return nil, fmt.Errorf("react: tool %q returned mismatched outcome identity", call.Name)
 	}
@@ -434,6 +435,30 @@ func (dispatcher toolDispatcher) Invoke(ctx context.Context, call gopact.ToolCal
 		return nil, fmt.Errorf("react: tool %q returned an interrupt without a Workflow continuation", call.Name)
 	}
 	return outcome, nil
+}
+
+func normalizeToolOutcome(outcome gopact.ToolOutcome) gopact.ToolOutcome {
+	switch value := outcome.(type) {
+	case *gopact.ToolResultOutcome:
+		if value != nil {
+			return *value
+		}
+	case *gopact.ToolRejectedOutcome:
+		if value != nil {
+			return *value
+		}
+	case *gopact.ToolErrorOutcome:
+		if value != nil {
+			return *value
+		}
+	case *gopact.ToolInterruptOutcome:
+		if value != nil {
+			return *value
+		}
+	default:
+		return outcome
+	}
+	return nil
 }
 
 func unknownToolOutcome(call gopact.ToolCall) gopact.ToolOutcome {

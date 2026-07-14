@@ -150,7 +150,9 @@ func TestAgentConsumesOnlyPendingObservations(t *testing.T) {
 		finalResponse("done"),
 	}}
 	tool := directTool("lookup", func(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
-		return resultOutcome(call, call.ID), nil
+		return &gopact.ToolResultOutcome{
+			CallID: call.ID, Name: call.Name, Result: gopact.ToolResult{Preview: call.ID},
+		}, nil
 	}).(testTool)
 	tool.spec.Description = "look up evidence"
 	tool.spec.Schema = []byte(`{"type":"object","properties":{"query":{"type":"string"}}}`)
@@ -201,6 +203,59 @@ func TestAgentConsumesOnlyPendingObservations(t *testing.T) {
 	wantTools := []gopact.ToolSpec{tool.spec}
 	if !reflect.DeepEqual(requests[2].Tools, wantTools) {
 		t.Fatalf("final request tools = %+v, want %+v", requests[2].Tools, wantTools)
+	}
+}
+
+func TestToolDispatcherNormalizesPointerOutcomes(t *testing.T) {
+	call := gopact.ToolCall{ID: "call-1", Name: "lookup"}
+	tests := []struct {
+		name    string
+		outcome gopact.ToolOutcome
+		want    gopact.ToolOutcome
+	}{
+		{
+			name:    "result",
+			outcome: &gopact.ToolResultOutcome{CallID: call.ID, Name: call.Name},
+			want:    gopact.ToolResultOutcome{CallID: call.ID, Name: call.Name},
+		},
+		{
+			name:    "rejected",
+			outcome: &gopact.ToolRejectedOutcome{CallID: call.ID, Name: call.Name},
+			want:    gopact.ToolRejectedOutcome{CallID: call.ID, Name: call.Name},
+		},
+		{
+			name:    "error",
+			outcome: &gopact.ToolErrorOutcome{CallID: call.ID, Name: call.Name},
+			want:    gopact.ToolErrorOutcome{CallID: call.ID, Name: call.Name},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dispatcher := toolDispatcher{registry: map[string]agent.Tool{
+				call.Name: directTool(call.Name, func(context.Context, gopact.ToolCall) (gopact.ToolOutcome, error) {
+					return test.outcome, nil
+				}),
+			}}
+			got, err := dispatcher.Invoke(t.Context(), call)
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("Invoke() = %#v, %v, want canonical %#v", got, err, test.want)
+			}
+		})
+	}
+	interrupt := &gopact.ToolInterruptOutcome{CallID: call.ID, Name: call.Name}
+	wantInterrupt := gopact.ToolInterruptOutcome{CallID: call.ID, Name: call.Name}
+	if got := normalizeToolOutcome(interrupt); !reflect.DeepEqual(got, wantInterrupt) {
+		t.Fatalf("normalize interrupt = %#v, want %#v", got, wantInterrupt)
+	}
+
+	var nilResult *gopact.ToolResultOutcome
+	dispatcher := toolDispatcher{registry: map[string]agent.Tool{
+		call.Name: directTool(call.Name, func(context.Context, gopact.ToolCall) (gopact.ToolOutcome, error) {
+			return nilResult, nil
+		}),
+	}}
+	if _, err := dispatcher.Invoke(t.Context(), call); err == nil {
+		t.Fatal("Invoke() error = nil, want typed nil rejection")
 	}
 }
 
