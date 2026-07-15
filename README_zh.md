@@ -14,16 +14,18 @@
 
 ## 发布验证
 
-发布顺序固定为 `gopact` → `gopact-ext` → `gopact-ext/stores` → `gopact-examples`。tag 前，三个仓库通过 Go workspace 对协调源码 checkout 做联调。每个获批 tag 可见后递增 prefix；最终默认门禁仍严格检查全部四个版本：
+发布顺序由 manifest 定义；每行声明 module、精确 tag，以及要在 clean consumer 中编译的包。模块拆分期间的顺序为 `gopact` → `gopact-ext/models/openai` → 旧根模块 `gopact-ext` → `gopact-ext/stores` → `gopact-examples`；各领域拥有独立 module 后会移除旧根模块条目。每个获批 tag 可见后递增 prefix；省略 prefix 时检查完整 manifest：
 
 ```bash
+./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 1 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 4 scripts/release-versions.txt
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
-脚本从空 consumer 开始，校验实际选择的精确版本，并拒绝缺失模块、consumer 或 tagged module 中的 `replace`、pseudo-version 和 `v0.0.0`。`--validate-only` 只检查 manifest 结构，不下载 tag。分阶段发布时，只有成功通过的 prefix 才能作为发布证据。只有 Go 1.27 stable 门禁与 RC burn-in 通过后，才能称为 production-ready。
+脚本从空 consumer 开始，校验实际选择的精确版本，并拒绝缺失或重复模块、越出所属 module 的检查包、consumer 或 tagged module 中的 `replace`、pseudo-version 和 `v0.0.0`。`--validate-only` 只检查 manifest 结构，不下载 tag。分阶段发布时，只有成功通过的 prefix 才能作为发布证据。只有 Go 1.27 stable 门禁与 RC burn-in 通过后，才能称为 production-ready。
 
 ## 扩展目录
 

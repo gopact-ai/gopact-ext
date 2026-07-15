@@ -15,16 +15,18 @@ supported only after the corresponding tagged modules have passed clean-consumer
 
 ## Release verification
 
-The release order is `gopact` → `gopact-ext` → `gopact-ext/stores` → `gopact-examples`. Before tags exist, the three repositories are tested from coordinated source checkouts through Go workspaces. Increase the prefix after each approved tag; the final default remains strict over all four:
+The manifest defines the release order. Each row names a module, its exact tag, and a package to compile from a clean consumer. During the module extraction the order is `gopact` → `gopact-ext/models/openai` → legacy `gopact-ext` → `gopact-ext/stores` → `gopact-examples`; the legacy root entry will disappear after its domains have standalone modules. Increase the prefix after each approved tag; omitting it checks the full manifest:
 
 ```bash
+./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 1 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 4 scripts/release-versions.txt
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
-The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. During staged publication, only a successful prefix is release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
+The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, duplicate modules, packages outside their module, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. During staged publication, only a successful prefix is release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
 
 ## Extension catalog
 
