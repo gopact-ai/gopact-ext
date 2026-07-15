@@ -379,7 +379,7 @@ func plainMessageText(message gopact.Message) (string, error) {
 }
 
 func validateModelRequest(request gopact.ModelRequest, required bool) error {
-	if request.Model == "" {
+	if required && request.Model == "" {
 		return errors.New("codex: request model is required")
 	}
 	if required && len(request.Messages) == 0 {

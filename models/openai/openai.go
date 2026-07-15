@@ -52,6 +52,12 @@ type Model struct {
 	configErr      error
 }
 
+var (
+	_ gopact.StreamingModel = (*Model)(nil)
+	_ gopact.Embedder       = (*Model)(nil)
+	_ gopact.ModelCatalog   = (*Model)(nil)
+)
+
 // Option configures a Model.
 type Option func(*Model)
 
@@ -143,9 +149,6 @@ func New(provider, baseURL, apiKey, model string, opts ...Option) (*Model, error
 func (c *Model) validate() error {
 	if c.configErr != nil {
 		return c.configErr
-	}
-	if c.defaultRequest.Model == "" {
-		return errors.New("openai: model is required")
 	}
 	if c.httpClient == nil {
 		return errors.New("openai: http client is nil")
@@ -343,7 +346,6 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
-				terminal = true
 				return
 			}
 			var chunk chatStreamChunk
@@ -427,13 +429,24 @@ func (c *Model) doAttempt(req *http.Request, attempt int) (*http.Response, error
 		} else if len(via) >= defaultMaxRedirects {
 			return fmt.Errorf("stopped after %d redirects", defaultMaxRedirects)
 		}
-		if c.apiKey != "" && !c.allowHTTP && len(via) > 0 &&
-			via[len(via)-1].URL.Scheme == "https" && next.URL.Scheme == "http" {
-			return errors.New("openai: refusing HTTPS to HTTP redirect")
+		if c.apiKey != "" && len(via) > 0 {
+			previous := via[len(via)-1].URL
+			if !sameOrigin(previous, next.URL) {
+				return errors.New("openai: refusing cross-origin redirect")
+			}
+			if !c.allowHTTP && previous.Scheme == "https" && next.URL.Scheme == "http" {
+				return errors.New("openai: refusing HTTPS to HTTP redirect")
+			}
 		}
 		return nil
 	}
 	return client.Do(req)
+}
+
+func sameOrigin(left, right *url.URL) bool {
+	return left != nil && right != nil &&
+		strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Host, right.Host)
 }
 
 func (c *Model) shouldRetry(ctx context.Context, resp *http.Response, err error, attempt int) bool {
@@ -581,7 +594,7 @@ func (c *Model) newChatRequest(req gopact.ModelRequest, stream bool) (chatReques
 }
 
 func validateModelRequest(req gopact.ModelRequest, required bool) error {
-	if req.Model == "" {
+	if required && req.Model == "" {
 		return errors.New("openai: request model is required")
 	}
 	if required && len(req.Messages) == 0 {

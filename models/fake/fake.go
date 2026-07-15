@@ -15,6 +15,12 @@ type Model struct {
 	response       string
 }
 
+var (
+	_ gopact.Model        = (*Model)(nil)
+	_ gopact.Embedder     = (*Model)(nil)
+	_ gopact.ModelCatalog = (*Model)(nil)
+)
+
 // Option configures a Model.
 type Option func(*Model)
 
@@ -102,4 +108,60 @@ func (m *Model) Invoke(ctx context.Context, req gopact.ModelRequest, opts ...gop
 		Intent:       gopact.FinalIntent{},
 		FinishReason: "stop",
 	}, nil
+}
+
+// Embed returns deterministic vectors for tests.
+func (m *Model) Embed(ctx context.Context, request gopact.EmbeddingRequest) (gopact.EmbeddingResponse, error) {
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	if err := ctx.Err(); err != nil {
+		return gopact.EmbeddingResponse{}, err
+	}
+	if len(request.Input) == 0 {
+		return gopact.EmbeddingResponse{}, errors.New("fake: embedding input is required")
+	}
+	dimensions := request.Dimensions
+	if dimensions == 0 {
+		dimensions = 1
+	}
+	if dimensions < 0 {
+		return gopact.EmbeddingResponse{}, errors.New("fake: embedding dimensions must not be negative")
+	}
+	model := request.Model
+	if model == "" {
+		model = m.modelName()
+	}
+	embeddings := make([]gopact.Embedding, len(request.Input))
+	for index, input := range request.Input {
+		vector := make([]float32, dimensions)
+		for dimension := range vector {
+			vector[dimension] = float32(len(input) + dimension)
+		}
+		embeddings[index] = gopact.Embedding{Index: index, Vector: vector}
+	}
+	return gopact.EmbeddingResponse{Model: model, Embeddings: embeddings}, nil
+}
+
+// ListModels returns the deterministic fake model.
+func (m *Model) ListModels(ctx context.Context) (gopact.ModelList, error) {
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	if err := ctx.Err(); err != nil {
+		return gopact.ModelList{}, err
+	}
+	return gopact.ModelList{Models: []gopact.ModelInfo{{
+		ID:               m.modelName(),
+		DisplayName:      "Fake",
+		InputModalities:  []gopact.Modality{gopact.ModalityText},
+		OutputModalities: []gopact.Modality{gopact.ModalityText},
+	}}}, nil
+}
+
+func (m *Model) modelName() string {
+	if m.defaultRequest.Model != "" {
+		return m.defaultRequest.Model
+	}
+	return "fake"
 }
