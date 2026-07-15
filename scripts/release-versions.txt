@@ -1,5 +1,5 @@
 # Coordinated release candidates. Publish in the listed order.
 github.com/gopact-ai/gopact v0.1.0-rc.2
-github.com/gopact-ai/gopact-ext v0.6.0-rc.2
+github.com/gopact-ai/gopact-ext v0.6.0-rc.3
 github.com/gopact-ai/gopact-ext/stores v0.1.0-rc.2
 github.com/gopact-ai/gopact-examples v0.1.0-rc.2
