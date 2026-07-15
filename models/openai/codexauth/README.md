@@ -4,7 +4,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 `codexauth` implements the device-code login used by OpenAI Codex for ChatGPT plans. It requests a user code, waits for browser authorization, exchanges the authorization code for OAuth tokens, and refreshes those tokens when required.
 
-This package is authentication-only. It does not treat the private ChatGPT Codex backend as a generic OpenAI-compatible model API, and it does not read or write credentials owned by Codex CLI.
+This package is authentication-only. Pair it with [`models/openai/codex`](../codex) for model calls. It does not treat the implementation-level ChatGPT Codex backend as a generic OpenAI-compatible API, and it does not read or write credentials owned by Codex CLI.
 
 ## Login
 
@@ -52,6 +52,14 @@ if err := secretStore.Save(ctx, tokens); err != nil {
 ```
 
 Persist the replacement atomically when the secret store supports it. The package does not coordinate with `~/.codex/auth.json`; sharing that file with another process can race token refresh and overwrite rotated credentials.
+
+For a long-running model provider, wrap the client and a `Store` in a refreshing `Source`:
+
+```go
+source, err := codexauth.NewSource(auth, secretStore)
+```
+
+`Source.Token` refreshes credentials shortly before expiry, while `Source.Refresh` forces a rotation after an unauthorized model response. Both persist the complete replacement before returning it. One `Source` serializes refreshes inside its process; a store shared across processes must provide its own cross-process coordination.
 
 ## Security boundaries
 

@@ -4,7 +4,7 @@ English documentation: [README.md](README.md)
 
 `codexauth` 实现 OpenAI Codex 面向 ChatGPT plan 的设备码登录：申请 user code、等待浏览器授权、用 authorization code 换取 OAuth token，并在需要时刷新 token。
 
-本包只负责认证。它不会把 ChatGPT Codex 私有 backend 当作通用 OpenAI-compatible 模型 API，也不会读取或写入 Codex CLI 管理的凭据。
+本包只负责认证；模型调用请与 [`models/openai/codex`](../codex) 配合使用。它不会把实现级 ChatGPT Codex backend 当作通用 OpenAI-compatible API，也不会读取或写入 Codex CLI 管理的凭据。
 
 ## 登录
 
@@ -52,6 +52,14 @@ if err := secretStore.Save(ctx, tokens); err != nil {
 ```
 
 secret store 支持时应原子替换。该包不会与 `~/.codex/auth.json` 协调；让多个进程共享这个文件可能造成 refresh 竞争，并覆盖轮换后的凭据。
+
+长期运行的模型 provider 可以用 `Source` 包装 client 和 `Store`：
+
+```go
+source, err := codexauth.NewSource(auth, secretStore)
+```
+
+`Source.Token` 会在凭据临近过期时刷新；模型收到 unauthorized 响应后可以调用 `Source.Refresh` 强制轮换。两者都会先持久化完整替换值再返回。一个 `Source` 会串行化本进程内的 refresh；多进程共享的 store 必须自行提供跨进程协调。
 
 ## 安全边界
 
