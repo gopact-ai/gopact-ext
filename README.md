@@ -37,6 +37,12 @@ The script starts from an empty consumer, checks exact selected versions, and re
 | [`models/glm`](./models/glm) | GLM/Zhipu through its OpenAI-compatible API |
 | [`models/fake`](./models/fake) | Deterministic offline tests and examples |
 
+### Authentication
+
+| Package | Use it for |
+| --- | --- |
+| [`models/openai/codexauth`](./models/openai/codexauth) | OpenAI Codex device-code login and OAuth token refresh |
+
 ### Agent compositions
 
 | Package | Use it for |

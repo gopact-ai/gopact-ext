@@ -36,6 +36,12 @@
 | [`models/glm`](./models/glm) | 通过 OpenAI-compatible API 使用 GLM/Zhipu |
 | [`models/fake`](./models/fake) | 确定性的离线测试与示例 |
 
+### 认证
+
+| 包 | 适用场景 |
+| --- | --- |
+| [`models/openai/codexauth`](./models/openai/codexauth) | OpenAI Codex 设备码登录与 OAuth token 刷新 |
+
 ### Agent 组合
 
 | 包 | 适用场景 |
