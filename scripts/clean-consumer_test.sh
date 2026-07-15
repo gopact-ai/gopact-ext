@@ -6,15 +6,18 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
 cat > "${tmp}/valid.txt" <<'EOF'
-github.com/gopact-ai/gopact v0.1.0-rc.1
-github.com/gopact-ai/gopact-ext v0.6.0-rc.1
-github.com/gopact-ai/gopact-ext/stores v0.1.0-rc.1
-github.com/gopact-ai/gopact-examples v0.1.0-rc.1
+github.com/gopact-ai/gopact v0.1.0-rc.1 github.com/gopact-ai/gopact
+github.com/gopact-ai/gopact-ext/models/openai v0.6.0-rc.1 github.com/gopact-ai/gopact-ext/models/openai/codex
+github.com/gopact-ai/gopact-ext v0.6.0-rc.1 github.com/gopact-ai/gopact-ext/models/fake
+github.com/gopact-ai/gopact-ext/stores v0.1.0-rc.1 github.com/gopact-ai/gopact-ext/stores/sqlite
+github.com/gopact-ai/gopact-examples v0.1.0-rc.1 github.com/gopact-ai/gopact-examples/quickstart/model-basic
 EOF
 
-for count in 1 2 3 4; do
+for count in 1 2 3 4 5; do
 	"${script_dir}/clean-consumer.sh" --validate-only --prefix-count "${count}" "${tmp}/valid.txt" >/dev/null
 done
+head -n 2 "${tmp}/valid.txt" > "${tmp}/short.txt"
+"${script_dir}/clean-consumer.sh" --validate-only "${tmp}/short.txt" >/dev/null
 
 expect_rejection() {
 	if "${script_dir}/clean-consumer.sh" --validate-only "$@" >/dev/null 2>&1; then
@@ -39,6 +42,14 @@ sed '1s/v0.1.0-rc.1/v0.1.0-release.20260714120000-0123456789ab/' \
 "${script_dir}/clean-consumer.sh" --validate-only "${tmp}/valid-timestamped-semver.txt" >/dev/null
 
 expect_rejection --prefix-count 0 "${tmp}/valid.txt"
+expect_rejection --prefix-count 6 "${tmp}/valid.txt"
+
+sed '2s#github.com/gopact-ai/gopact-ext/models/openai/codex$#example.com/outside#' \
+	"${tmp}/valid.txt" > "${tmp}/outside-package.txt"
+expect_rejection "${tmp}/outside-package.txt"
+
+sed -n '1p;1p' "${tmp}/valid.txt" > "${tmp}/duplicate.txt"
+expect_rejection "${tmp}/duplicate.txt"
 
 mkdir "${tmp}/fake-bin"
 cat > "${tmp}/tagged.mod" <<'EOF'

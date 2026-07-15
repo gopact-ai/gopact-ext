@@ -1,10 +1,13 @@
-PUBLIC_MODULES := . stores
-WORKSPACE_PACKAGES := ./... ./stores/... ./tests/workflow/...
+# The root is source-only while its domains move into independently tagged modules.
+STANDALONE_MODULES := models/openai stores
+SECURITY_MODULES := . $(STANDALONE_MODULES)
+WORKSPACE_PACKAGES := ./... ./models/openai/... ./stores/... ./tests/workflow/...
 
 .PHONY: test integration capability fmt-check tidy race vet security dbintegration benchmark
 
 test:
 	GOTOOLCHAIN=local go test -count=1 $(WORKSPACE_PACKAGES)
+	./scripts/clean-consumer_test.sh
 
 integration:
 	@set -a; [ ! -f .env ] || . ./.env; set +a; \
@@ -18,7 +21,7 @@ fmt-check:
 	test -z "$$(gofmt -l .)"
 
 tidy:
-	@set -e; for dir in $(PUBLIC_MODULES); do \
+	@set -e; for dir in $(STANDALONE_MODULES); do \
 		(cd $$dir && GOWORK=off GOTOOLCHAIN=local go mod tidy -diff); \
 	done
 
@@ -30,7 +33,7 @@ vet:
 
 security:
 	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found; install golang.org/x/vuln/cmd/govulncheck@v1.5.0"; exit 1; }
-	@set -e; for dir in $(PUBLIC_MODULES); do \
+	@set -e; for dir in $(SECURITY_MODULES); do \
 		echo "govulncheck $$dir"; \
 		(cd $$dir && GOTOOLCHAIN=local govulncheck ./...); \
 	done
