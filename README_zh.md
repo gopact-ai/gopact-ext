@@ -33,11 +33,23 @@
 
 | 包 | 适用场景 |
 | --- | --- |
-| [`models/openai`](./models/openai) | OpenAI-compatible 对话与流式 API |
-| [`models/openai/codex`](./models/openai/codex) | 通过 Responses SSE backend 使用 ChatGPT plan 的 Codex 模型 |
-| [`models/agnes`](./models/agnes) | 通过 OpenAI-compatible API 使用 Agnes |
-| [`models/glm`](./models/glm) | 通过 OpenAI-compatible API 使用 GLM/Zhipu |
+| [`models/openai`](./models/openai) | OpenAI 对话、Responses、embedding、审核、媒体、文件与分片上传 API |
+| [`models/openai/codex`](./models/openai/codex) | ChatGPT plan 的 Codex 调用、账号模型发现与订阅用量 |
+| [`models/agnes`](./models/agnes) | Agnes 对话、模型发现、图像生成/编辑与异步视频 |
+| [`models/glm`](./models/glm) | GLM Coding Plan 对话与用量，以及通用 embedding、媒体、工具、文件与 Agent API |
 | [`models/fake`](./models/fake) | 确定性的离线测试与示例 |
+
+各 provider 的能力以其公开上游契约为准，不虚构一个最低公共能力集：
+
+| Provider | 生成与 runtime API | 模型发现 | 用量与配额 |
+| --- | --- | --- | --- |
+| OpenAI API key | Chat/Completions/Responses、embedding、审核、图像、语音、视频、文件与分片上传 | 列出和读取模型 | 使用独立 `AdminClient` 与 Admin API key 查询组织用量和成本 |
+| ChatGPT Codex OAuth | Responses SSE 模型调用 | 当前 ChatGPT 账号可用模型 | ChatGPT plan 窗口、credits、消费控制与附加限制 |
+| GLM/Z.AI API key | Coding Plan 对话；异步对话、embedding、审核、图像/视频、语音/转写、工具、文件/文档解析、OCR 与专用 Agent | 列出和读取通用 API 模型 | Coding Plan 配额，以及模型和工具用量 |
+| Agnes API key | 对话、图像生成/编辑与异步视频 | API 模型列表 | 不提供：Agnes 没有文档化的公开 API-key 订阅用量 endpoint |
+| Fake | 确定性对话与 embedding | 一个确定性模型 | 不适用 |
+
+OpenAI 组织用量属于 API 平台计量，不等同于 ChatGPT/Codex 订阅用量。Agnes 没有公开的 embedding 契约，因此不实现 `gopact.Embedder`。
 
 ### 认证
 

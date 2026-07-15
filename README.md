@@ -34,11 +34,23 @@ The script starts from an empty consumer, checks exact selected versions, and re
 
 | Package | Use it for |
 | --- | --- |
-| [`models/openai`](./models/openai) | OpenAI-compatible chat and streaming APIs |
-| [`models/openai/codex`](./models/openai/codex) | ChatGPT-plan Codex model calls through the Responses SSE backend |
-| [`models/agnes`](./models/agnes) | Agnes through its OpenAI-compatible API |
-| [`models/glm`](./models/glm) | GLM/Zhipu through its OpenAI-compatible API |
+| [`models/openai`](./models/openai) | OpenAI chat, Responses, embeddings, moderation, media, files, and multipart uploads |
+| [`models/openai/codex`](./models/openai/codex) | ChatGPT-plan Codex calls, account model discovery, and subscription usage |
+| [`models/agnes`](./models/agnes) | Agnes chat, model discovery, image generation/editing, and asynchronous video |
+| [`models/glm`](./models/glm) | GLM Coding Plan chat and usage plus general embeddings, media, tools, files, and agents |
 | [`models/fake`](./models/fake) | Deterministic offline tests and examples |
+
+Provider capabilities reflect public upstream contracts rather than a fabricated lowest common denominator:
+
+| Provider | Generation and runtime APIs | Model discovery | Usage and quota |
+| --- | --- | --- | --- |
+| OpenAI API key | Chat/Completions/Responses, embeddings, moderation, images, audio, videos, files, and multipart uploads | List and retrieve models | Organization usage and costs through a separate `AdminClient` and Admin API key |
+| ChatGPT Codex OAuth | Responses SSE model calls | Models enabled for the signed-in ChatGPT account | ChatGPT plan windows, credits, spending control, and additional limits |
+| GLM/Z.AI API key | Coding Plan chat; async chat, embeddings, moderation, image/video, speech/transcription, tools, files/document parsing, OCR, and specialized agents | List and retrieve general API models | Coding Plan quota plus model and tool usage |
+| Agnes API key | Chat, image generation/editing, and asynchronous video | API model list | Not exposed: Agnes has no documented public API-key subscription-usage endpoint |
+| Fake | Deterministic chat and embeddings | One deterministic model | Not applicable |
+
+OpenAI organization usage is API-platform metering and is not the same thing as ChatGPT/Codex subscription usage. Agnes does not implement `gopact.Embedder` because no public Agnes embedding contract is documented.
 
 ### Authentication
 

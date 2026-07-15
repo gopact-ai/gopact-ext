@@ -23,7 +23,6 @@ func TestNewValidatesConfiguration(t *testing.T) {
 		name string
 		new  func() (*Model, error)
 	}{
-		{name: "model", new: func() (*Model, error) { return New("", validSource) }},
 		{name: "token source", new: func() (*Model, error) { return New("gpt-test", nil) }},
 		{name: "http client", new: func() (*Model, error) { return New("gpt-test", validSource, WithHTTPClient(nil)) }},
 		{name: "http base url", new: func() (*Model, error) { return New("gpt-test", validSource, WithBaseURL("http://example.com")) }},
@@ -37,6 +36,19 @@ func TestNewValidatesConfiguration(t *testing.T) {
 				t.Fatal("New() error = nil, want validation error")
 			}
 		})
+	}
+}
+
+func TestNewAllowsAccountDiscoveryBeforeModelSelection(t *testing.T) {
+	model, err := New("", StaticTokenSource(codexauth.Tokens{AccessToken: "access"}))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if model.NewRequest().Model != "" {
+		t.Fatalf("NewRequest().Model = %q, want empty", model.NewRequest().Model)
+	}
+	if _, err := model.Invoke(context.Background(), model.NewRequest(gopact.UserMessage("hello"))); err == nil {
+		t.Fatal("Invoke() error = nil, want missing model error")
 	}
 }
 

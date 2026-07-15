@@ -25,7 +25,6 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 		{name: "provider", new: func() (*Model, error) { return New("", "https://example.com", "key", "model") }},
 		{name: "base url", new: func() (*Model, error) { return New("test", "://bad", "key", "model") }},
 		{name: "api key", new: func() (*Model, error) { return New("test", "https://example.com", "", "model") }},
-		{name: "model", new: func() (*Model, error) { return New("test", "https://example.com", "key", "") }},
 		{name: "nil http client", new: func() (*Model, error) { return New("test", "https://example.com", "key", "model", WithHTTPClient(nil)) }},
 		{name: "attempts", new: func() (*Model, error) { return New("test", "https://example.com", "key", "model", WithMaxAttempts(0)) }},
 		{name: "retry policy", new: func() (*Model, error) {
@@ -45,6 +44,19 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 				t.Fatal("New() error = nil, want configuration error")
 			}
 		})
+	}
+}
+
+func TestNewAllowsModelDiscoveryBeforeSelection(t *testing.T) {
+	model, err := New("test", "https://example.com", "key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if model.NewRequest().Model != "" {
+		t.Fatalf("NewRequest().Model = %q, want empty", model.NewRequest().Model)
+	}
+	if _, err := model.Invoke(context.Background(), model.NewRequest(gopact.UserMessage("hello"))); err == nil {
+		t.Fatal("Invoke() error = nil, want missing model error")
 	}
 }
 
@@ -89,6 +101,31 @@ func TestModelInvokeRejectsHTTPSDowngradeRedirectWithoutSendingCredentials(t *te
 	}
 }
 
+func TestModelInvokeRejectsCrossOriginRedirectWithoutSendingCredentials(t *testing.T) {
+	reached := make(chan string, 1)
+	target := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		reached <- r.Header.Get("Authorization")
+	}))
+	defer target.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/chat/completions", http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	model, err := New("test", source.URL, "test-key", "test-model", WithHTTPClient(source.Client()), WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := model.Invoke(t.Context(), model.NewRequest(gopact.UserMessage("ping"))); err == nil {
+		t.Fatal("Invoke() error = nil, want cross-origin redirect rejection")
+	}
+	select {
+	case authorization := <-reached:
+		t.Fatalf("cross-origin target received Authorization %q", authorization)
+	default:
+	}
+}
+
 func TestModelInvokeAllowsSafeHTTPSRedirect(t *testing.T) {
 	var redirected atomic.Bool
 	var server *httptest.Server
@@ -117,30 +154,23 @@ func TestModelInvokeAllowsSafeHTTPSRedirect(t *testing.T) {
 	}
 }
 
-func TestModelInvokeAllowsDowngradeRedirectWithInsecureHTTP(t *testing.T) {
-	reached := make(chan string, 1)
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached <- r.Header.Get("Authorization")
+func TestModelInvokeAllowsDirectHTTPWithInsecureHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer test-key" {
+			t.Errorf("Authorization = %q", authorization)
+		}
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}]}`)
 	}))
-	defer target.Close()
-	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
-	}))
-	defer source.Close()
+	defer server.Close()
 
 	model, err := New(
-		"test", source.URL, "test-key", "test-model",
-		WithHTTPClient(source.Client()), WithInsecureHTTP(),
+		"test", server.URL, "test-key", "test-model", WithInsecureHTTP(),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := model.Invoke(t.Context(), model.NewRequest(gopact.UserMessage("ping"))); err != nil {
 		t.Fatalf("Invoke() error = %v", err)
-	}
-	if authorization := <-reached; authorization != "Bearer test-key" {
-		t.Fatalf("downgrade Authorization = %q, want bearer token", authorization)
 	}
 }
 

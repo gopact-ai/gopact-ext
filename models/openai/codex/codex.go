@@ -33,6 +33,7 @@ const (
 	providerName          = "openai.codex"
 	defaultOriginator     = "gopact-ext"
 	defaultUserAgent      = "gopact-ext/openai-codex"
+	defaultClientVersion  = "0.144.0"
 	defaultRequestTimeout = 5 * time.Minute
 	defaultMaxAttempts    = 3
 	defaultMaxRedirects   = 10
@@ -93,12 +94,14 @@ type Model struct {
 	timeout        time.Duration
 	maxAttempts    int
 	originator     string
+	clientVersion  string
 	allowHTTP      bool
 	configErr      error
 }
 
 var (
 	_ gopact.StreamingModel = (*Model)(nil)
+	_ gopact.ModelCatalog   = (*Model)(nil)
 	_ TokenSource           = (*codexauth.Source)(nil)
 	_ RefreshingTokenSource = (*codexauth.Source)(nil)
 )
@@ -155,6 +158,13 @@ func WithOriginator(originator string) Option {
 	}
 }
 
+// WithClientVersion sets the semantic client version sent to model discovery.
+func WithClientVersion(version string) Option {
+	return func(model *Model) {
+		model.clientVersion = version
+	}
+}
+
 // WithInsecureHTTP permits an HTTP base URL for local tests and development.
 func WithInsecureHTTP() Option {
 	return func(model *Model) {
@@ -172,6 +182,7 @@ func New(modelName string, source TokenSource, opts ...Option) (*Model, error) {
 		timeout:        defaultRequestTimeout,
 		maxAttempts:    defaultMaxAttempts,
 		originator:     defaultOriginator,
+		clientVersion:  defaultClientVersion,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -207,6 +218,9 @@ func (model *Model) validate() (*url.URL, error) {
 	}
 	if !validHeaderValue(model.originator) {
 		return nil, errors.New("codex: originator is invalid")
+	}
+	if !validHeaderValue(model.clientVersion) {
+		return nil, errors.New("codex: client version is invalid")
 	}
 	base, err := validateBaseURL(model.baseURL, model.allowHTTP)
 	if err != nil {
