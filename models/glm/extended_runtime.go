@@ -207,10 +207,10 @@ func (model *Model) Speech(ctx context.Context, request SpeechRequest) (Media, e
 	if err != nil {
 		return Media{}, fmt.Errorf("glm: encode speech request: %w", err)
 	}
-	return model.runtimeMedia(
-		ctx, http.MethodPost, model.apiBaseURL+"/audio/speech",
-		bytes.NewReader(encoded), "application/json", "application/octet-stream",
-	)
+	return model.runtimeMedia(ctx, runtimeCall{
+		method: http.MethodPost, endpoint: model.apiBaseURL + "/audio/speech",
+		body: bytes.NewReader(encoded), contentType: "application/json", accept: "application/octet-stream",
+	})
 }
 
 // StreamSpeech streams encoded GLM text-to-speech chunks.
@@ -275,10 +275,10 @@ func (model *Model) CustomizeSpeech(ctx context.Context, request CustomSpeechReq
 	if err != nil {
 		return Media{}, err
 	}
-	return model.runtimeMedia(
-		ctx, http.MethodPost, model.apiBaseURL+"/audio/customization",
-		bytes.NewReader(body), contentType, "application/octet-stream",
-	)
+	return model.runtimeMedia(ctx, runtimeCall{
+		method: http.MethodPost, endpoint: model.apiBaseURL + "/audio/customization",
+		body: bytes.NewReader(body), contentType: contentType, accept: "application/octet-stream",
+	})
 }
 
 // CreateAsyncChat starts an asynchronous GLM chat completion.
@@ -346,14 +346,11 @@ func (model *Model) DownloadFile(ctx context.Context, fileID string) (Media, err
 		return Media{}, errors.New("glm: file id is required")
 	}
 	endpoint := model.apiBaseURL + "/files/" + url.PathEscape(fileID) + "/content"
-	return model.runtimeMedia(ctx, http.MethodGet, endpoint, nil, "", "application/binary")
+	return model.runtimeMedia(ctx, runtimeCall{method: http.MethodGet, endpoint: endpoint, accept: "application/binary"})
 }
 
 // CreateFileParserTask starts asynchronous document parsing.
-func (model *Model) CreateFileParserTask(
-	ctx context.Context,
-	request FileParserRequest,
-) (FileParserTask, error) {
+func (model *Model) CreateFileParserTask(ctx context.Context, request FileParserRequest) (FileParserTask, error) {
 	if model == nil {
 		return FileParserTask{}, errors.New("glm: model is nil")
 	}
@@ -367,10 +364,10 @@ func (model *Model) CreateFileParserTask(
 		return FileParserTask{}, err
 	}
 	var response FileParserTask
-	err = model.runtimeResponse(
-		ctx, http.MethodPost, model.apiBaseURL+"/files/parser/create",
-		bytes.NewReader(body), contentType, &response,
-	)
+	err = model.runtimeResponse(ctx, runtimeCall{
+		method: http.MethodPost, endpoint: model.apiBaseURL + "/files/parser/create",
+		body: bytes.NewReader(body), contentType: contentType,
+	}, &response)
 	return response, err
 }
 
@@ -389,10 +386,10 @@ func (model *Model) ParseFile(ctx context.Context, request FileParserRequest) (F
 		return FileParserResponse{}, err
 	}
 	var response FileParserResponse
-	err = model.runtimeResponse(
-		ctx, http.MethodPost, model.apiBaseURL+"/files/parser/sync",
-		bytes.NewReader(body), contentType, &response,
-	)
+	err = model.runtimeResponse(ctx, runtimeCall{
+		method: http.MethodPost, endpoint: model.apiBaseURL + "/files/parser/sync",
+		body: bytes.NewReader(body), contentType: contentType,
+	}, &response)
 	return response, err
 }
 
@@ -408,14 +405,11 @@ func (model *Model) FileParserResult(ctx context.Context, taskID, format string)
 		return Media{}, errors.New("glm: file parser format must be text or download_link")
 	}
 	endpoint := model.apiBaseURL + "/files/parser/result/" + url.PathEscape(taskID) + "/" + format
-	return model.runtimeMedia(ctx, http.MethodGet, endpoint, nil, "", "application/binary")
+	return model.runtimeMedia(ctx, runtimeCall{method: http.MethodGet, endpoint: endpoint, accept: "application/binary"})
 }
 
 // RecognizeHandwriting runs Z.AI handwriting OCR on an uploaded image.
-func (model *Model) RecognizeHandwriting(
-	ctx context.Context,
-	request HandwritingRequest,
-) (HandwritingResponse, error) {
+func (model *Model) RecognizeHandwriting(ctx context.Context, request HandwritingRequest) (HandwritingResponse, error) {
 	if model == nil {
 		return HandwritingResponse{}, errors.New("glm: model is nil")
 	}
@@ -439,10 +433,10 @@ func (model *Model) RecognizeHandwriting(
 		return HandwritingResponse{}, err
 	}
 	var response HandwritingResponse
-	err = model.runtimeResponse(
-		ctx, http.MethodPost, model.apiBaseURL+"/files/ocr",
-		bytes.NewReader(body), contentType, &response,
-	)
+	err = model.runtimeResponse(ctx, runtimeCall{
+		method: http.MethodPost, endpoint: model.apiBaseURL + "/files/ocr",
+		body: bytes.NewReader(body), contentType: contentType,
+	}, &response)
 	return response, err
 }
 
@@ -450,10 +444,10 @@ func validateSpeechRequest(request SpeechRequest) error {
 	if strings.TrimSpace(request.Model) == "" || strings.TrimSpace(request.Input) == "" || strings.TrimSpace(request.Voice) == "" {
 		return errors.New("glm: speech model, input, and voice are required")
 	}
-	if request.Speed != nil && (*request.Speed < 0.5 || *request.Speed > 2) {
+	if request.Speed != nil && (*request.Speed < minSpeechSpeed || *request.Speed > maxSpeechSpeed) {
 		return errors.New("glm: speech speed must be between 0.5 and 2")
 	}
-	if request.Volume != nil && (*request.Volume <= 0 || *request.Volume > 10) {
+	if request.Volume != nil && (*request.Volume <= 0 || *request.Volume > maxSpeechVolume) {
 		return errors.New("glm: speech volume must be greater than 0 and at most 10")
 	}
 	return nil
@@ -490,11 +484,14 @@ func appendSensitiveWordFields(fields []multipartField, policy *SensitiveWordChe
 	)
 }
 
-func encodeMultipartFile(
-	field string,
-	file FileContent,
-	fields []multipartField,
-) ([]byte, string, error) {
+func writeOptionalMultipartField(writer *multipart.Writer, field multipartField) error {
+	if field.value == "" {
+		return nil
+	}
+	return writer.WriteField(field.name, field.value)
+}
+
+func encodeMultipartFile(field string, file FileContent, fields []multipartField) ([]byte, string, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile(field, file.Filename)
@@ -518,12 +515,7 @@ func encodeMultipartFile(
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func (model *Model) runtimeMedia(
-	ctx context.Context,
-	method, endpoint string,
-	body io.Reader,
-	contentType, accept string,
-) (Media, error) {
+func (model *Model) runtimeMedia(ctx context.Context, call runtimeCall) (Media, error) {
 	if model == nil {
 		return Media{}, errors.New("glm: model is nil")
 	}
@@ -534,15 +526,15 @@ func (model *Model) runtimeMedia(
 		ctx = context.TODO()
 	}
 	callCtx, cancel := context.WithTimeout(ctx, model.timeout)
-	request, err := http.NewRequestWithContext(callCtx, method, endpoint, body)
+	request, err := http.NewRequestWithContext(callCtx, call.method, call.endpoint, call.body)
 	if err != nil {
 		cancel()
 		return Media{}, fmt.Errorf("glm: create media request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+model.apiKey)
-	request.Header.Set("Accept", accept)
-	if contentType != "" {
-		request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Accept", call.accept)
+	if call.contentType != "" {
+		request.Header.Set("Content-Type", call.contentType)
 	}
 	client := *model.httpClient
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -554,7 +546,7 @@ func (model *Model) runtimeMedia(
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		defer func() { _ = response.Body.Close() }()
 		defer cancel()
-		data, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		data, _ := io.ReadAll(io.LimitReader(response.Body, maxRuntimeErrorBytes))
 		return Media{}, fmt.Errorf("glm: status %d: %s", response.StatusCode, model.redactRuntimeError(data))
 	}
 	return Media{
@@ -564,23 +556,19 @@ func (model *Model) runtimeMedia(
 	}, nil
 }
 
-func (model *Model) runtimeEventStream(
-	ctx context.Context,
-	endpoint string,
-	body []byte,
-	contentType string,
-) iter.Seq2[json.RawMessage, error] {
+func (model *Model) runtimeEventStream(ctx context.Context, endpoint string, body []byte, contentType string) iter.Seq2[json.RawMessage, error] {
 	return func(yield func(json.RawMessage, error) bool) {
-		media, err := model.runtimeMedia(
-			ctx, http.MethodPost, endpoint, bytes.NewReader(body), contentType, "text/event-stream",
-		)
+		media, err := model.runtimeMedia(ctx, runtimeCall{
+			method: http.MethodPost, endpoint: endpoint, body: bytes.NewReader(body),
+			contentType: contentType, accept: "text/event-stream",
+		})
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 		defer func() { _ = media.Body.Close() }()
 		scanner := bufio.NewScanner(media.Body)
-		scanner.Buffer(make([]byte, 64<<10), maxRuntimeStreamEventBytes)
+		scanner.Buffer(make([]byte, runtimeReadBufferBytes), maxRuntimeStreamEventBytes)
 		var data strings.Builder
 		emit := func() bool {
 			payload := strings.TrimSpace(data.String())
@@ -599,17 +587,8 @@ func (model *Model) runtimeEventStream(
 			return yield(raw, nil)
 		}
 		for scanner.Scan() {
-			line := scanner.Text()
-			switch {
-			case line == "":
-				if !emit() {
-					return
-				}
-			case strings.HasPrefix(line, "data:"):
-				if data.Len() > 0 {
-					data.WriteByte('\n')
-				}
-				data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			if !consumeRuntimeEventLine(scanner.Text(), &data, emit) {
+				return
 			}
 		}
 		if err := scanner.Err(); err != nil {
@@ -620,6 +599,20 @@ func (model *Model) runtimeEventStream(
 			emit()
 		}
 	}
+}
+
+func consumeRuntimeEventLine(line string, data *strings.Builder, emit func() bool) bool {
+	if line == "" {
+		return emit()
+	}
+	if !strings.HasPrefix(line, "data:") {
+		return true
+	}
+	if data.Len() > 0 {
+		data.WriteByte('\n')
+	}
+	data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+	return true
 }
 
 func withRuntimeQuery(path string, values url.Values) string {

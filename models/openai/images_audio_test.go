@@ -9,9 +9,8 @@ import (
 )
 
 func TestImageRuntime(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/images/generations":
+	routes := map[string]http.HandlerFunc{
+		"POST /images/generations": func(w http.ResponseWriter, r *http.Request) {
 			var request ImageRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode image request: %v", err)
@@ -20,7 +19,8 @@ func TestImageRuntime(t *testing.T) {
 				t.Errorf("image request = %+v", request)
 			}
 			_, _ = io.WriteString(w, `{"created":1,"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}`)
-		case "/images/edits":
+		},
+		"POST /images/edits": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse multipart: %v", err)
 			}
@@ -28,7 +28,8 @@ func TestImageRuntime(t *testing.T) {
 				t.Errorf("edit form = %#v / %#v", r.MultipartForm.Value, r.MultipartForm.File)
 			}
 			_, _ = io.WriteString(w, `{"created":2,"data":[{"b64_json":"ZWRpdA=="}]}`)
-		case "/images/variations":
+		},
+		"POST /images/variations": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse multipart: %v", err)
 			}
@@ -36,9 +37,10 @@ func TestImageRuntime(t *testing.T) {
 				t.Errorf("variation image: %v", err)
 			}
 			_, _ = io.WriteString(w, `{"created":3,"data":[{"url":"https://example.com/image.png"}]}`)
-		default:
-			http.Error(w, "unexpected", http.StatusNotFound)
-		}
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 
@@ -89,15 +91,15 @@ func TestImageStream(t *testing.T) {
 }
 
 func TestAudioRuntime(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/audio/speech":
+	routes := map[string]http.HandlerFunc{
+		"POST /audio/speech": func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Content-Type") != "application/json" {
 				t.Errorf("speech content type = %q", r.Header.Get("Content-Type"))
 			}
 			w.Header().Set("Content-Type", "audio/mpeg")
 			_, _ = w.Write([]byte("mp3"))
-		case "/audio/transcriptions":
+		},
+		"POST /audio/transcriptions": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse transcription: %v", err)
 			}
@@ -105,15 +107,17 @@ func TestAudioRuntime(t *testing.T) {
 				t.Errorf("transcription model = %q", r.FormValue("model"))
 			}
 			_, _ = io.WriteString(w, `{"text":"hello","usage":{"type":"tokens","input_tokens":2,"output_tokens":1,"total_tokens":3}}`)
-		case "/audio/translations":
+		},
+		"POST /audio/translations": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse translation: %v", err)
 			}
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = io.WriteString(w, "hello in English")
-		default:
-			http.Error(w, "unexpected", http.StatusNotFound)
-		}
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 

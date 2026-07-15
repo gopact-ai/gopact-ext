@@ -86,6 +86,13 @@ type ResetCreditsSummary struct {
 	Available int64 `json:"available_count"`
 }
 
+type refreshAttempt struct {
+	response  *http.Response
+	sendErr   error
+	tokens    codexauth.Tokens
+	refreshed bool
+}
+
 // ListModels returns the Codex models available to the ChatGPT account.
 func (model *Model) ListModels(ctx context.Context) (gopact.ModelList, error) {
 	if model == nil {
@@ -163,19 +170,16 @@ func (model *Model) getJSON(ctx context.Context, endpoint string, output any) (h
 	refreshed := false
 	for attempt := 1; attempt <= model.maxAttempts; {
 		response, sendErr := model.sendGET(callCtx, endpoint, tokens)
-		if sendErr == nil && response != nil && response.StatusCode == http.StatusUnauthorized && !refreshed {
-			if source, ok := model.tokenSource.(RefreshingTokenSource); ok {
-				closeResponse(response)
-				tokens, err = source.Refresh(callCtx)
-				if err != nil {
-					return nil, fmt.Errorf("codex: refresh after unauthorized: %w", err)
-				}
-				if err := validateTokens(tokens); err != nil {
-					return nil, err
-				}
-				refreshed = true
-				continue
-			}
+		nextTokens, didRefresh, refreshErr := model.refreshUnauthorized(callCtx, refreshAttempt{
+			response: response, sendErr: sendErr, tokens: tokens, refreshed: refreshed,
+		})
+		if refreshErr != nil {
+			return nil, refreshErr
+		}
+		if didRefresh {
+			tokens = nextTokens
+			refreshed = true
+			continue
 		}
 		if sendErr == nil && response != nil && successfulStatus(response.StatusCode) {
 			return decodeJSONResponse(response, output)
@@ -194,6 +198,28 @@ func (model *Model) getJSON(ctx context.Context, endpoint string, output any) (h
 		attempt++
 	}
 	return nil, errors.New("codex: request attempts exhausted")
+}
+
+func (model *Model) refreshUnauthorized(ctx context.Context, attempt refreshAttempt) (codexauth.Tokens, bool, error) {
+	if attempt.sendErr != nil || attempt.response == nil || attempt.refreshed {
+		return attempt.tokens, false, nil
+	}
+	if attempt.response.StatusCode != http.StatusUnauthorized {
+		return attempt.tokens, false, nil
+	}
+	source, ok := model.tokenSource.(RefreshingTokenSource)
+	if !ok {
+		return attempt.tokens, false, nil
+	}
+	closeResponse(attempt.response)
+	tokens, err := source.Refresh(ctx)
+	if err != nil {
+		return codexauth.Tokens{}, false, fmt.Errorf("codex: refresh after unauthorized: %w", err)
+	}
+	if err := validateTokens(tokens); err != nil {
+		return codexauth.Tokens{}, false, err
+	}
+	return tokens, true, nil
 }
 
 func (model *Model) sendGET(ctx context.Context, endpoint string, tokens codexauth.Tokens) (*http.Response, error) {

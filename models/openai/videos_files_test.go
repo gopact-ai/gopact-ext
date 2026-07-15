@@ -8,9 +8,8 @@ import (
 )
 
 func TestVideoRuntime(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/videos":
+	routes := map[string]http.HandlerFunc{
+		"POST /videos": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse video request: %v", err)
 			}
@@ -19,16 +18,20 @@ func TestVideoRuntime(t *testing.T) {
 				t.Errorf("video request = %#v", r.MultipartForm.Value)
 			}
 			_, _ = io.WriteString(w, `{"id":"video_1","object":"video","model":"sora-2","status":"queued","progress":0}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/videos":
+		},
+		"GET /videos": func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("limit") != "5" || r.URL.Query().Get("order") != "desc" {
 				t.Errorf("video query = %q", r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"video_1","status":"completed"}],"has_more":false}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/videos/video_1":
+		},
+		"GET /videos/video_1": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"video_1","status":"completed","progress":100}`)
-		case r.Method == http.MethodDelete && r.URL.Path == "/videos/video_1":
+		},
+		"DELETE /videos/video_1": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"video_1","object":"video.deleted","deleted":true}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/videos/video_1/content":
+		},
+		"GET /videos/video_1/content": func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Accept") != "application/binary" {
 				t.Errorf("Accept = %q", r.Header.Get("Accept"))
 			}
@@ -37,9 +40,11 @@ func TestVideoRuntime(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "image/webp")
 			_, _ = w.Write([]byte("thumb"))
-		case r.Method == http.MethodPost && r.URL.Path == "/videos/video_1/remix":
+		},
+		"POST /videos/video_1/remix": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"video_2","status":"queued","remixed_from_video_id":"video_1"}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/videos/edits":
+		},
+		"POST /videos/edits": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse edit: %v", err)
 			}
@@ -50,7 +55,8 @@ func TestVideoRuntime(t *testing.T) {
 				t.Errorf("edit source = %#v / %#v", r.MultipartForm.Value, r.MultipartForm.File)
 			}
 			_, _ = io.WriteString(w, `{"id":"video_3","status":"queued"}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/videos/extensions":
+		},
+		"POST /videos/extensions": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse extension: %v", err)
 			}
@@ -61,7 +67,8 @@ func TestVideoRuntime(t *testing.T) {
 				t.Errorf("extension source = %#v / %#v", r.MultipartForm.Value, r.MultipartForm.File)
 			}
 			_, _ = io.WriteString(w, `{"id":"video_4","status":"queued"}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/videos/characters":
+		},
+		"POST /videos/characters": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse character: %v", err)
 			}
@@ -69,11 +76,13 @@ func TestVideoRuntime(t *testing.T) {
 				t.Errorf("character name = %q", r.FormValue("name"))
 			}
 			_, _ = io.WriteString(w, `{"id":"char_1","name":"Milo","created_at":1}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/videos/characters/char_1":
+		},
+		"GET /videos/characters/char_1": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"char_1","name":"Milo","created_at":1}`)
-		default:
-			http.Error(w, "unexpected", http.StatusNotFound)
-		}
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 
@@ -146,9 +155,8 @@ func TestVideoRuntime(t *testing.T) {
 }
 
 func TestFileRuntime(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/files":
+	routes := map[string]http.HandlerFunc{
+		"POST /files": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse upload: %v", err)
 			}
@@ -156,24 +164,29 @@ func TestFileRuntime(t *testing.T) {
 				t.Errorf("purpose = %q", r.FormValue("purpose"))
 			}
 			_, _ = io.WriteString(w, `{"id":"file_1","object":"file","bytes":3,"filename":"notes.txt","purpose":"user_data","status":"processed"}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/files":
+		},
+		"GET /files": func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("purpose") != "user_data" {
 				t.Errorf("file query = %q", r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"file_1","filename":"notes.txt"}],"has_more":false}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/files/file_1":
+		},
+		"GET /files/file_1": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"file_1","filename":"notes.txt","purpose":"user_data"}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/files/file_1/content":
+		},
+		"GET /files/file_1/content": func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Accept") != "application/binary" {
 				t.Errorf("Accept = %q", r.Header.Get("Accept"))
 			}
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = io.WriteString(w, "abc")
-		case r.Method == http.MethodDelete && r.URL.Path == "/files/file_1":
+		},
+		"DELETE /files/file_1": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"file_1","object":"file","deleted":true}`)
-		default:
-			http.Error(w, "unexpected", http.StatusNotFound)
-		}
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 

@@ -11,13 +11,8 @@ import (
 
 func TestResponsesRuntime(t *testing.T) {
 	var calls []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.Method+" "+r.URL.RequestURI())
-		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
-			t.Errorf("Authorization = %q", got)
-		}
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses":
+	routes := map[string]http.HandlerFunc{
+		"POST /v1/responses": func(w http.ResponseWriter, r *http.Request) {
 			var request ResponseRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode response request: %v", err)
@@ -26,19 +21,23 @@ func TestResponsesRuntime(t *testing.T) {
 				t.Errorf("response request = %+v", request)
 			}
 			_, _ = io.WriteString(w, `{"id":"resp_1","object":"response","status":"completed","model":"default-model","output":[{"type":"message"}],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/responses/resp_1":
+		},
+		"GET /v1/responses/resp_1": func(w http.ResponseWriter, r *http.Request) {
 			if got := r.URL.Query()["include[]"]; !slices.Equal(got, []string{"reasoning.encrypted_content"}) {
 				t.Errorf("include = %v", got)
 			}
 			_, _ = io.WriteString(w, `{"id":"resp_1","status":"completed"}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses/resp_1/cancel":
+		},
+		"POST /v1/responses/resp_1/cancel": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"resp_1","status":"cancelled"}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/responses/resp_1/input_items":
+		},
+		"GET /v1/responses/resp_1/input_items": func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("limit") != "10" || r.URL.Query().Get("order") != "asc" {
 				t.Errorf("input item query = %q", r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"object":"list","data":[{"type":"message"}],"first_id":"item_1","last_id":"item_1","has_more":false}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses/input_tokens":
+		},
+		"POST /v1/responses/input_tokens": func(w http.ResponseWriter, r *http.Request) {
 			var request ResponseInputTokenRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode input-token request: %v", err)
@@ -47,13 +46,20 @@ func TestResponsesRuntime(t *testing.T) {
 				t.Errorf("personality = %q", request.Personality)
 			}
 			_, _ = io.WriteString(w, `{"object":"response.input_tokens","input_tokens":17}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses/compact":
+		},
+		"POST /v1/responses/compact": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"cmp_1","object":"response.compaction","output":[{"type":"compaction"}],"usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11}}`)
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/responses/resp_1":
+		},
+		"DELETE /v1/responses/resp_1": func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "unexpected request", http.StatusNotFound)
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("Authorization = %q", got)
 		}
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 

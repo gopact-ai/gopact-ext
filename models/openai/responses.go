@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+const maxResponseInputItems = 100
+
 // ResponseRequest configures a call to the OpenAI Responses API. Provider
 // unions such as input, tools, reasoning, and text stay as JSON-shaped values so
 // new OpenAI variants do not require this adapter to mirror the full schema.
@@ -206,11 +208,7 @@ func (c *Model) GetResponse(ctx context.Context, responseID string, query Respon
 }
 
 // StreamStoredResponse resumes SSE delivery for a stored background response.
-func (c *Model) StreamStoredResponse(
-	ctx context.Context,
-	responseID string,
-	query ResponseQuery,
-) iter.Seq2[ResponseEvent, error] {
+func (c *Model) StreamStoredResponse(ctx context.Context, responseID string, query ResponseQuery) iter.Seq2[ResponseEvent, error] {
 	return func(yield func(ResponseEvent, error) bool) {
 		if strings.TrimSpace(responseID) == "" {
 			yield(ResponseEvent{}, errors.New("openai: response id is required"))
@@ -223,7 +221,8 @@ func (c *Model) StreamStoredResponse(
 		}
 		body := []byte(`{"stream":true}`)
 		path := withQuery("/responses/"+url.PathEscape(responseID), values)
-		for event, err := range c.streamEncodedJSON(ctx, http.MethodGet, path, body, "application/json") {
+		call := runtimeCall{method: http.MethodGet, path: path, body: body, contentType: "application/json"}
+		for event, err := range c.streamEncodedJSON(ctx, call) {
 			if !yield(ResponseEvent(event), err) {
 				return
 			}
@@ -250,15 +249,11 @@ func (c *Model) DeleteResponse(ctx context.Context, responseID string) error {
 }
 
 // ResponseInputItems returns one page of a response's input items.
-func (c *Model) ResponseInputItems(
-	ctx context.Context,
-	responseID string,
-	query ResponseInputItemQuery,
-) (ResponseInputItemList, error) {
+func (c *Model) ResponseInputItems(ctx context.Context, responseID string, query ResponseInputItemQuery) (ResponseInputItemList, error) {
 	if strings.TrimSpace(responseID) == "" {
 		return ResponseInputItemList{}, errors.New("openai: response id is required")
 	}
-	if query.Limit < 0 || query.Limit > 100 {
+	if query.Limit < 0 || query.Limit > maxResponseInputItems {
 		return ResponseInputItemList{}, errors.New("openai: response input item limit must be between 1 and 100")
 	}
 	if query.Order != "" && query.Order != "asc" && query.Order != "desc" {
@@ -282,10 +277,7 @@ func (c *Model) ResponseInputItems(
 }
 
 // CountResponseInputTokens counts input tokens without creating a response.
-func (c *Model) CountResponseInputTokens(
-	ctx context.Context,
-	request ResponseInputTokenRequest,
-) (ResponseInputTokenCount, error) {
+func (c *Model) CountResponseInputTokens(ctx context.Context, request ResponseInputTokenRequest) (ResponseInputTokenCount, error) {
 	if c == nil {
 		return ResponseInputTokenCount{}, errors.New("openai: model is nil")
 	}
@@ -348,7 +340,7 @@ func responseQueryValues(query ResponseQuery) (url.Values, error) {
 		values.Set("include_obfuscation", strconv.FormatBool(*query.IncludeObfuscation))
 	}
 	if query.StartingAfter > 0 {
-		values.Set("starting_after", strconv.FormatInt(query.StartingAfter, 10))
+		values.Set("starting_after", strconv.FormatInt(query.StartingAfter, decimalRadix))
 	}
 	return values, nil
 }

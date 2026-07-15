@@ -9,12 +9,8 @@ import (
 )
 
 func TestSpeechAPIs(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer key" {
-			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
-		}
-		switch r.URL.Path {
-		case "/api/audio/speech":
+	routes := map[string]http.HandlerFunc{
+		"POST /api/audio/speech": func(w http.ResponseWriter, r *http.Request) {
 			var request map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode speech request: %v", err)
@@ -36,7 +32,8 @@ func TestSpeechAPIs(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "audio/wav")
 			_, _ = io.WriteString(w, "speech")
-		case "/api/audio/customization":
+		},
+		"POST /api/audio/customization": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse customization: %v", err)
 				return
@@ -58,9 +55,13 @@ func TestSpeechAPIs(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "audio/wav")
 			_, _ = io.WriteString(w, "custom")
-		default:
-			http.NotFound(w, r)
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer key" {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 		}
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 
@@ -119,15 +120,8 @@ func TestSpeechAPIs(t *testing.T) {
 }
 
 func TestAsyncChatFilesParsingOCRAndModeration(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer key" {
-			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
-		}
-		switch r.URL.Path {
-		case "/api/async/chat/completions":
-			if r.Method != http.MethodPost {
-				t.Errorf("method = %s", r.Method)
-			}
+	routes := map[string]http.HandlerFunc{
+		"POST /api/async/chat/completions": func(w http.ResponseWriter, r *http.Request) {
 			var request AsyncChatRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode async chat request: %v", err)
@@ -136,39 +130,41 @@ func TestAsyncChatFilesParsingOCRAndModeration(t *testing.T) {
 				t.Errorf("async chat request = %+v", request)
 			}
 			_, _ = io.WriteString(w, `{"id":"chat-task","task_status":"PROCESSING"}`)
-		case "/api/async-result/chat-task":
-			if r.Method != http.MethodGet {
-				t.Errorf("method = %s", r.Method)
-			}
+		},
+		"GET /api/async-result/chat-task": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"chat-task","task_status":"SUCCESS","choices":[{}],"usage":{"total_tokens":3}}`)
-		case "/api/files":
-			if r.Method != http.MethodGet || r.URL.Query().Get("purpose") != "retrieval" ||
-				r.URL.Query().Get("limit") != "2" || r.URL.Query().Get("after") != "cursor" {
+		},
+		"GET /api/files": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("purpose") != "retrieval" || r.URL.Query().Get("limit") != "2" ||
+				r.URL.Query().Get("after") != "cursor" {
 				t.Errorf("file list request = %s %s", r.Method, r.URL.String())
 			}
 			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"file-1","filename":"doc.txt"}],"has_more":false}`)
-		case "/api/files/file-1":
-			if r.Method != http.MethodDelete {
-				t.Errorf("method = %s", r.Method)
-			}
+		},
+		"DELETE /api/files/file-1": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"id":"file-1","object":"file","deleted":true}`)
-		case "/api/files/file-1/content":
-			if r.Method != http.MethodGet || r.Header.Get("Accept") != "application/binary" {
-				t.Errorf("file content request = %s, Accept %q", r.Method, r.Header.Get("Accept"))
+		},
+		"GET /api/files/file-1/content": func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Accept") != "application/binary" {
+				t.Errorf("file content Accept = %q", r.Header.Get("Accept"))
 			}
 			_, _ = io.WriteString(w, "document")
-		case "/api/files/parser/create":
+		},
+		"POST /api/files/parser/create": func(w http.ResponseWriter, r *http.Request) {
 			checkParserForm(t, r, "prime")
 			_, _ = io.WriteString(w, `{"task_id":"parser-task","success":true}`)
-		case "/api/files/parser/sync":
+		},
+		"POST /api/files/parser/sync": func(w http.ResponseWriter, r *http.Request) {
 			checkParserForm(t, r, "prime-sync")
 			_, _ = io.WriteString(w, `{"task_id":"sync-task","status":true,"content":"parsed"}`)
-		case "/api/files/parser/result/parser-task/text":
-			if r.Method != http.MethodGet || r.Header.Get("Accept") != "application/binary" {
-				t.Errorf("parser result request = %s, Accept %q", r.Method, r.Header.Get("Accept"))
+		},
+		"GET /api/files/parser/result/parser-task/text": func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Accept") != "application/binary" {
+				t.Errorf("parser result Accept = %q", r.Header.Get("Accept"))
 			}
 			_, _ = io.WriteString(w, "parsed")
-		case "/api/files/ocr":
+		},
+		"POST /api/files/ocr": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse OCR form: %v", err)
 				return
@@ -177,7 +173,8 @@ func TestAsyncChatFilesParsingOCRAndModeration(t *testing.T) {
 				t.Errorf("OCR form = %#v", r.MultipartForm.Value)
 			}
 			_, _ = io.WriteString(w, `{"task_id":"ocr-task","status":"SUCCESS","words_result_num":1,"words_result":[{"words":"hello","location":{},"probability":{}}]}`)
-		case "/api/moderations":
+		},
+		"POST /api/moderations": func(w http.ResponseWriter, r *http.Request) {
 			var request ModerationRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode moderation request: %v", err)
@@ -186,9 +183,13 @@ func TestAsyncChatFilesParsingOCRAndModeration(t *testing.T) {
 				t.Errorf("moderation request = %+v", request)
 			}
 			_, _ = io.WriteString(w, `{"model":"moderation","input":{"type":"text","safe":true}}`)
-		default:
-			http.NotFound(w, r)
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer key" {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 		}
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 

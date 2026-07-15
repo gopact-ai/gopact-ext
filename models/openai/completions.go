@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const maxCompletionLogprobs = 5
+
 // CompletionRequest configures the legacy text Completions API. Prompt may be a
 // string, string array, token array, or token-array list.
 type CompletionRequest struct {
@@ -73,10 +75,7 @@ func (c *Model) Complete(ctx context.Context, request CompletionRequest) (Comple
 }
 
 // StreamCompletion calls the streaming legacy Completions API.
-func (c *Model) StreamCompletion(
-	ctx context.Context,
-	request CompletionRequest,
-) iter.Seq2[CompletionEvent, error] {
+func (c *Model) StreamCompletion(ctx context.Context, request CompletionRequest) iter.Seq2[CompletionEvent, error] {
 	return func(yield func(CompletionEvent, error) bool) {
 		if err := c.prepareCompletionRequest(&request); err != nil {
 			yield(CompletionEvent{}, err)
@@ -127,7 +126,7 @@ func (c *Model) prepareCompletionRequest(request *CompletionRequest) error {
 	if request.BestOf < 0 || request.MaxTokens < 0 || request.N < 0 {
 		return errors.New("openai: completion counts must not be negative")
 	}
-	if request.Logprobs != nil && (*request.Logprobs < 0 || *request.Logprobs > 5) {
+	if request.Logprobs != nil && (*request.Logprobs < 0 || *request.Logprobs > maxCompletionLogprobs) {
 		return errors.New("openai: completion logprobs must be between 0 and 5")
 	}
 	return nil

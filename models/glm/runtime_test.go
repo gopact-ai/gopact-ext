@@ -8,12 +8,8 @@ import (
 )
 
 func TestRuntimeAPIs(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if authorization := r.Header.Get("Authorization"); authorization != "Bearer key" {
-			t.Errorf("Authorization = %q", authorization)
-		}
-		switch r.URL.Path {
-		case "/api/images/generations":
+	routes := map[string]http.HandlerFunc{
+		"POST /api/images/generations": func(w http.ResponseWriter, r *http.Request) {
 			var request ImageRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode image request: %v", err)
@@ -22,7 +18,8 @@ func TestRuntimeAPIs(t *testing.T) {
 				t.Errorf("image request = %+v", request)
 			}
 			_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://example.com/image.png"}]}`))
-		case "/api/async/images/generations":
+		},
+		"POST /api/async/images/generations": func(w http.ResponseWriter, r *http.Request) {
 			var request AsyncImageRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode async image request: %v", err)
@@ -31,7 +28,8 @@ func TestRuntimeAPIs(t *testing.T) {
 				t.Errorf("async image request = %+v", request)
 			}
 			_, _ = w.Write([]byte(`{"model":"glm-image","id":"image-task","task_status":"PROCESSING"}`))
-		case "/api/videos/generations":
+		},
+		"POST /api/videos/generations": func(w http.ResponseWriter, r *http.Request) {
 			var request CogVideoRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode video request: %v", err)
@@ -41,9 +39,11 @@ func TestRuntimeAPIs(t *testing.T) {
 				t.Errorf("video request = %+v", request)
 			}
 			_, _ = w.Write([]byte(`{"model":"cogvideox-3","id":"video-task","task_status":"PROCESSING"}`))
-		case "/api/async-result/video-task":
+		},
+		"GET /api/async-result/video-task": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"model":"cogvideox-3","task_status":"SUCCESS","video_result":[{"url":"https://example.com/video.mp4"}]}`))
-		case "/api/web_search":
+		},
+		"POST /api/web_search": func(w http.ResponseWriter, r *http.Request) {
 			var request SearchRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode search request: %v", err)
@@ -52,13 +52,17 @@ func TestRuntimeAPIs(t *testing.T) {
 				t.Errorf("search request = %+v", request)
 			}
 			_, _ = w.Write([]byte(`{"id":"search-1","search_result":[{"title":"Result","link":"https://example.com"}]}`))
-		case "/api/reader":
+		},
+		"POST /api/reader": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"id":"reader-1","reader_result":{"title":"Page","content":"body","url":"https://example.com"}}`))
-		case "/api/layout_parsing":
+		},
+		"POST /api/layout_parsing": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"id":"ocr-1","model":"glm-ocr","md_results":"# Title"}`))
-		case "/api/tokenizer":
+		},
+		"POST /api/tokenizer": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"id":"tokens-1","usage":{"prompt_tokens":3,"total_tokens":3}}`))
-		case "/api/audio/transcriptions":
+		},
+		"POST /api/audio/transcriptions": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse transcription: %v", err)
 			}
@@ -67,7 +71,8 @@ func TestRuntimeAPIs(t *testing.T) {
 				t.Errorf("transcription form = %#v", r.MultipartForm.Value)
 			}
 			_, _ = w.Write([]byte(`{"id":"audio-1","model":"glm-asr-2512","text":"hello"}`))
-		case "/api/files":
+		},
+		"POST /api/files": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Errorf("parse multipart: %v", err)
 			}
@@ -75,15 +80,22 @@ func TestRuntimeAPIs(t *testing.T) {
 				t.Errorf("purpose = %q", r.FormValue("purpose"))
 			}
 			_, _ = w.Write([]byte(`{"id":"file-1","object":"file","bytes":3,"filename":"terms.txt","purpose":"agent","created_at":1}`))
-		case "/api/v1/agents":
+		},
+		"POST /api/v1/agents": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"id":"agent-1","agent_id":"general_translation","status":"success","choices":[{"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3,"total_calls":1}}`))
-		case "/api/v1/agents/async-result":
+		},
+		"POST /api/v1/agents/async-result": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"status":"success","agent_id":"vidu_template_agent","async_id":"async-1","choices":[{"index":0}]}`))
-		case "/api/v1/agents/conversation":
+		},
+		"POST /api/v1/agents/conversation": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"conversation_id":"conversation-1","agent_id":"slides_glm_agent","choices":[{"index":0}]}`))
-		default:
-			http.NotFound(w, r)
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer key" {
+			t.Errorf("Authorization = %q", authorization)
 		}
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 

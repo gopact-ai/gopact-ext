@@ -112,10 +112,7 @@ func (model *Model) SearchTool(ctx context.Context, request ToolSearchRequest) (
 }
 
 // StreamSearchTool streams Z.AI model-driven web-search events.
-func (model *Model) StreamSearchTool(
-	ctx context.Context,
-	request ToolSearchRequest,
-) iter.Seq2[ToolSearchChunk, error] {
+func (model *Model) StreamSearchTool(ctx context.Context, request ToolSearchRequest) iter.Seq2[ToolSearchChunk, error] {
 	return func(yield func(ToolSearchChunk, error) bool) {
 		if model == nil {
 			yield(ToolSearchChunk{}, errors.New("glm: model is nil"))
@@ -162,7 +159,7 @@ func prepareToolSearchRequest(request *ToolSearchRequest) error {
 	if text, ok := request.Messages.(string); ok && strings.TrimSpace(text) == "" {
 		return errors.New("glm: search tool messages are required")
 	}
-	if request.RecentDays < 0 || request.RecentDays > 30 {
+	if request.RecentDays < 0 || request.RecentDays > maxToolRecentDays {
 		return errors.New("glm: search tool recent days must be between 1 and 30")
 	}
 	return nil

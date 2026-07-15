@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const maxVideoListLimit = 100
+
 // VideoRequest configures a Sora video generation job. InputFile and
 // InputReference are mutually exclusive.
 type VideoRequest struct {
@@ -138,7 +140,7 @@ func (c *Model) GetVideo(ctx context.Context, videoID string) (Video, error) {
 
 // ListVideos returns one page of video jobs for the current project.
 func (c *Model) ListVideos(ctx context.Context, query VideoListQuery) (VideoList, error) {
-	if query.Limit < 0 || query.Limit > 100 {
+	if query.Limit < 0 || query.Limit > maxVideoListLimit {
 		return VideoList{}, errors.New("openai: video list limit must be between 1 and 100")
 	}
 	if query.Order != "" && query.Order != "asc" && query.Order != "desc" {
@@ -183,7 +185,8 @@ func (c *Model) DownloadVideo(ctx context.Context, videoID, variant string) (Med
 		values.Set("variant", variant)
 	}
 	path := "/videos/" + url.PathEscape(videoID) + "/content"
-	return c.requestMedia(ctx, http.MethodGet, withQuery(path, values), nil, "", "application/binary")
+	call := runtimeCall{method: http.MethodGet, path: withQuery(path, values), accept: "application/binary"}
+	return c.requestMedia(ctx, call)
 }
 
 // RemixVideo creates a new video job from a completed video and updated prompt.
@@ -245,10 +248,7 @@ func (c *Model) ExtendVideo(ctx context.Context, request VideoExtendRequest) (Vi
 }
 
 // CreateVideoCharacter creates a reusable video character from an upload.
-func (c *Model) CreateVideoCharacter(
-	ctx context.Context,
-	request VideoCharacterRequest,
-) (VideoCharacter, error) {
+func (c *Model) CreateVideoCharacter(ctx context.Context, request VideoCharacterRequest) (VideoCharacter, error) {
 	if strings.TrimSpace(request.Name) == "" {
 		return VideoCharacter{}, errors.New("openai: video character name is required")
 	}

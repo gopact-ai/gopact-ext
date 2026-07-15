@@ -23,7 +23,28 @@ const (
 	DefaultSearchEngine        = "search-prime"
 	maxRuntimeResponseBytes    = 64 << 20
 	maxRuntimeStreamEventBytes = 1 << 20
+	runtimeReadBufferBytes     = 64 << 10
+	maxRuntimeErrorBytes       = 4 << 10
+	maxUploadFileBytes         = 100 << 20
+	maxSearchCount             = 50
+	maxViduFrameImages         = 2
+	maxViduReferenceImages     = 3
+	maxTranscriptionFileBytes  = 25 << 20
+	maxTranscriptionBase64     = maxTranscriptionFileBytes*4/3 + 4
+	maxTranscriptionHotwords   = 100
+	minSpeechSpeed             = 0.5
+	maxSpeechSpeed             = 2
+	maxSpeechVolume            = 10
+	maxToolRecentDays          = 30
 )
+
+type runtimeCall struct {
+	method      string
+	endpoint    string
+	body        io.Reader
+	contentType string
+	accept      string
+}
 
 // SensitiveWordCheck configures Z.AI's provider-side content filtering.
 type SensitiveWordCheck struct {
@@ -447,18 +468,15 @@ func (model *Model) Transcribe(ctx context.Context, request TranscriptionRequest
 		return TranscriptionResponse{}, err
 	}
 	var response TranscriptionResponse
-	err = model.runtimeResponse(
-		ctx, http.MethodPost, model.apiBaseURL+"/audio/transcriptions",
-		bytes.NewReader(body), contentType, &response,
-	)
+	err = model.runtimeResponse(ctx, runtimeCall{
+		method: http.MethodPost, endpoint: model.apiBaseURL + "/audio/transcriptions",
+		body: bytes.NewReader(body), contentType: contentType,
+	}, &response)
 	return response, err
 }
 
 // StreamTranscription streams GLM speech-to-text delta and completion events.
-func (model *Model) StreamTranscription(
-	ctx context.Context,
-	request TranscriptionRequest,
-) iter.Seq2[TranscriptionEvent, error] {
+func (model *Model) StreamTranscription(ctx context.Context, request TranscriptionRequest) iter.Seq2[TranscriptionEvent, error] {
 	return func(yield func(TranscriptionEvent, error) bool) {
 		if model == nil {
 			yield(TranscriptionEvent{}, errors.New("glm: model is nil"))
@@ -488,7 +506,7 @@ func (model *Model) UploadFile(ctx context.Context, filename string, data []byte
 	if len(data) == 0 {
 		return UploadedFile{}, errors.New("glm: upload file is empty")
 	}
-	if len(data) > 100<<20 {
+	if len(data) > maxUploadFileBytes {
 		return UploadedFile{}, errors.New("glm: upload file exceeds 100 MB")
 	}
 	var body bytes.Buffer
@@ -507,7 +525,10 @@ func (model *Model) UploadFile(ctx context.Context, filename string, data []byte
 		return UploadedFile{}, fmt.Errorf("glm: close upload: %w", err)
 	}
 	var response UploadedFile
-	err = model.runtimeResponse(ctx, http.MethodPost, model.apiBaseURL+"/files", &body, writer.FormDataContentType(), &response)
+	err = model.runtimeResponse(ctx, runtimeCall{
+		method: http.MethodPost, endpoint: model.apiBaseURL + "/files",
+		body: &body, contentType: writer.FormDataContentType(),
+	}, &response)
 	return response, err
 }
 
@@ -548,7 +569,7 @@ func (model *Model) Search(ctx context.Context, request SearchRequest) (SearchRe
 	if strings.TrimSpace(request.Query) == "" {
 		return SearchResponse{}, errors.New("glm: search query is required")
 	}
-	if request.Count < 0 || request.Count > 50 {
+	if request.Count < 0 || request.Count > maxSearchCount {
 		return SearchResponse{}, errors.New("glm: search count must be between 1 and 50")
 	}
 	var response SearchResponse
@@ -584,11 +605,11 @@ func validateVideoRequest(request VideoRequest) error {
 			return errors.New("glm: vidu image video model and prompt or image are required")
 		}
 	case ViduFramesVideoRequest:
-		if value.Model == "" || len(value.Images) == 0 || len(value.Images) > 2 {
+		if value.Model == "" || len(value.Images) == 0 || len(value.Images) > maxViduFrameImages {
 			return errors.New("glm: vidu frame video requires a model and one or two images")
 		}
 	case ViduReferenceVideoRequest:
-		if value.Model == "" || len(value.Images) == 0 || len(value.Images) > 3 {
+		if value.Model == "" || len(value.Images) == 0 || len(value.Images) > maxViduReferenceImages {
 			return errors.New("glm: vidu reference video requires a model and one to three images")
 		}
 	default:
@@ -613,7 +634,10 @@ func (model *Model) runtimeJSON(ctx context.Context, method, path string, input,
 	if input != nil {
 		contentType = "application/json"
 	}
-	return model.runtimeResponse(ctx, method, model.apiBaseURL+path, body, contentType, output)
+	return model.runtimeResponse(ctx, runtimeCall{
+		method: method, endpoint: model.apiBaseURL + path,
+		body: body, contentType: contentType,
+	}, output)
 }
 
 func prepareTranscriptionRequest(request *TranscriptionRequest) error {
@@ -629,14 +653,14 @@ func prepareTranscriptionRequest(request *TranscriptionRequest) error {
 		if strings.TrimSpace(request.File.Filename) == "" || len(request.File.Data) == 0 {
 			return errors.New("glm: transcription audio file is required")
 		}
-		if len(request.File.Data) > 25<<20 {
+		if len(request.File.Data) > maxTranscriptionFileBytes {
 			return errors.New("glm: transcription audio file exceeds 25 MB")
 		}
 	}
-	if len(request.FileBase64) > (25<<20)*4/3+4 {
+	if len(request.FileBase64) > maxTranscriptionBase64 {
 		return errors.New("glm: transcription base64 audio exceeds 25 MB")
 	}
-	if len(request.Hotwords) > 100 {
+	if len(request.Hotwords) > maxTranscriptionHotwords {
 		return errors.New("glm: transcription accepts at most 100 hotwords")
 	}
 	return nil
@@ -656,34 +680,19 @@ func encodeTranscriptionRequest(request TranscriptionRequest, stream bool) ([]by
 	} else if err := writer.WriteField("file_base64", request.FileBase64); err != nil {
 		return nil, "", fmt.Errorf("glm: write transcription base64 audio: %w", err)
 	}
-	fields := []struct{ name, value string }{
+	fields := []multipartField{
 		{"model", request.Model}, {"prompt", request.Prompt},
 		{"request_id", request.RequestID}, {"user_id", request.UserID},
 	}
+	fields = appendSensitiveWordFields(fields, request.SensitiveWordCheck)
 	for _, field := range fields {
-		if field.value != "" {
-			if err := writer.WriteField(field.name, field.value); err != nil {
-				return nil, "", fmt.Errorf("glm: write transcription field: %w", err)
-			}
+		if err := writeOptionalMultipartField(writer, field); err != nil {
+			return nil, "", fmt.Errorf("glm: write transcription field: %w", err)
 		}
 	}
 	for _, hotword := range request.Hotwords {
 		if err := writer.WriteField("hotwords[]", hotword); err != nil {
 			return nil, "", fmt.Errorf("glm: write transcription hotword: %w", err)
-		}
-	}
-	if request.SensitiveWordCheck != nil {
-		fields := []struct{ name, value string }{
-			{"sensitive_word_check[type]", request.SensitiveWordCheck.Type},
-			{"sensitive_word_check[status]", request.SensitiveWordCheck.Status},
-		}
-		for _, field := range fields {
-			if field.value == "" {
-				continue
-			}
-			if err := writer.WriteField(field.name, field.value); err != nil {
-				return nil, "", fmt.Errorf("glm: write transcription sensitive-word policy: %w", err)
-			}
 		}
 	}
 	if stream {
@@ -697,12 +706,7 @@ func encodeTranscriptionRequest(request TranscriptionRequest, stream bool) ([]by
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func (model *Model) streamTranscription(
-	ctx context.Context,
-	body []byte,
-	contentType string,
-	yield func(TranscriptionEvent, error) bool,
-) {
+func (model *Model) streamTranscription(ctx context.Context, body []byte, contentType string, yield func(TranscriptionEvent, error) bool) {
 	if ctx == nil {
 		ctx = context.TODO()
 	}
@@ -727,12 +731,12 @@ func (model *Model) streamTranscription(
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		data, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		data, _ := io.ReadAll(io.LimitReader(response.Body, maxRuntimeErrorBytes))
 		yield(TranscriptionEvent{}, fmt.Errorf("glm: status %d: %s", response.StatusCode, model.redactRuntimeError(data)))
 		return
 	}
 	scanner := bufio.NewScanner(response.Body)
-	scanner.Buffer(make([]byte, 64<<10), maxRuntimeStreamEventBytes)
+	scanner.Buffer(make([]byte, runtimeReadBufferBytes), maxRuntimeStreamEventBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -759,7 +763,7 @@ func (model *Model) streamTranscription(
 	}
 }
 
-func (model *Model) runtimeResponse(ctx context.Context, method, endpoint string, body io.Reader, contentType string, output any) error {
+func (model *Model) runtimeResponse(ctx context.Context, call runtimeCall, output any) error {
 	if model == nil {
 		return errors.New("glm: model is nil")
 	}
@@ -768,14 +772,14 @@ func (model *Model) runtimeResponse(ctx context.Context, method, endpoint string
 	}
 	callCtx, cancel := context.WithTimeout(ctx, model.timeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(callCtx, method, endpoint, body)
+	request, err := http.NewRequestWithContext(callCtx, call.method, call.endpoint, call.body)
 	if err != nil {
 		return fmt.Errorf("glm: create request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+model.apiKey)
 	request.Header.Set("Accept", "application/json")
-	if contentType != "" {
-		request.Header.Set("Content-Type", contentType)
+	if call.contentType != "" {
+		request.Header.Set("Content-Type", call.contentType)
 	}
 	client := *model.httpClient
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -801,9 +805,8 @@ func (model *Model) runtimeResponse(ctx context.Context, method, endpoint string
 }
 
 func (model *Model) redactRuntimeError(encoded []byte) string {
-	const limit = 4 << 10
-	if len(encoded) > limit {
-		encoded = encoded[:limit]
+	if len(encoded) > maxRuntimeErrorBytes {
+		encoded = encoded[:maxRuntimeErrorBytes]
 	}
 	return strings.ReplaceAll(string(encoded), model.apiKey, "[redacted]")
 }

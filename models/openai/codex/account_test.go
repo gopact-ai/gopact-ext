@@ -10,15 +10,8 @@ import (
 )
 
 func TestModelDiscoveryAndSubscriptionUsage(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if authorization := r.Header.Get("Authorization"); authorization != "Bearer access" {
-			t.Errorf("Authorization = %q", authorization)
-		}
-		if accountID := r.Header.Get("ChatGPT-Account-ID"); accountID != "account" {
-			t.Errorf("ChatGPT-Account-ID = %q", accountID)
-		}
-		switch r.URL.Path {
-		case "/backend-api/codex/models":
+	routes := map[string]http.HandlerFunc{
+		"GET /backend-api/codex/models": func(w http.ResponseWriter, r *http.Request) {
 			if version := r.URL.Query().Get("client_version"); version != "1.2.3" {
 				t.Errorf("client_version = %q", version)
 			}
@@ -34,7 +27,8 @@ func TestModelDiscoveryAndSubscriptionUsage(t *testing.T) {
 					"context_window": 272000, "future_capability": "preserved",
 				}},
 			})
-		case "/backend-api/wham/usage":
+		},
+		"GET /backend-api/wham/usage": func(w http.ResponseWriter, _ *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"plan_type": "plus",
 				"rate_limit": map[string]any{
@@ -50,9 +44,16 @@ func TestModelDiscoveryAndSubscriptionUsage(t *testing.T) {
 					"rate_limit": map[string]any{"allowed": true, "limit_reached": false},
 				}},
 			})
-		default:
-			http.NotFound(w, r)
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer access" {
+			t.Errorf("Authorization = %q", authorization)
 		}
+		if accountID := r.Header.Get("ChatGPT-Account-ID"); accountID != "account" {
+			t.Errorf("ChatGPT-Account-ID = %q", accountID)
+		}
+		dispatchAccountTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 

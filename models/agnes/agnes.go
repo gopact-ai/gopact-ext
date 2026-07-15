@@ -19,6 +19,7 @@ const (
 	DefaultModel      = "agnes-2.0-flash"
 	DefaultImageModel = "agnes-image-2.1-flash"
 	DefaultVideoModel = "agnes-video-v2.0"
+	defaultTimeout    = 2 * time.Minute
 )
 
 type config struct {
@@ -51,7 +52,7 @@ type RetryPolicy = openai.RetryPolicy
 
 // New creates an Agnes model adapter.
 func New(apiKey string, opts ...Option) (*Model, error) {
-	cfg := config{baseURL: DefaultBaseURL, httpClient: http.DefaultClient, timeout: 2 * time.Minute}
+	cfg := config{baseURL: DefaultBaseURL, httpClient: http.DefaultClient, timeout: defaultTimeout}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)

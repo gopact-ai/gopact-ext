@@ -20,6 +20,7 @@ const (
 	DefaultMonitorBaseURL = "https://api.z.ai/api/monitor/usage"
 	DefaultModel          = "glm-5-turbo"
 	DefaultEmbeddingModel = "embedding-3"
+	defaultTimeout        = 2 * time.Minute
 )
 
 type config struct {
@@ -76,7 +77,7 @@ func New(apiKey string, opts ...Option) (*Model, error) {
 		apiBaseURL:  DefaultAPIBaseURL,
 		monitorURL:  DefaultMonitorBaseURL,
 		httpClient:  http.DefaultClient,
-		timeout:     2 * time.Minute,
+		timeout:     defaultTimeout,
 	}
 	for _, opt := range opts {
 		if opt != nil {

@@ -227,9 +227,8 @@ func requestUsage[T any](model *Model, ctx context.Context, path string, query u
 }
 
 func boundedUsageError(encoded []byte, secret string) string {
-	const limit = 4 << 10
-	if len(encoded) > limit {
-		encoded = encoded[:limit]
+	if len(encoded) > maxRuntimeErrorBytes {
+		encoded = encoded[:maxRuntimeErrorBytes]
 	}
 	return strings.ReplaceAll(string(encoded), secret, "[redacted]")
 }

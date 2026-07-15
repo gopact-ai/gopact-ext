@@ -10,6 +10,12 @@ import (
 	"strings"
 )
 
+const (
+	minFileExpirySeconds = 3_600
+	maxFileExpirySeconds = 2_592_000
+	maxFileListLimit     = 10_000
+)
+
 // FileUploadRequest uploads a file for Responses, vision, evals, or another
 // OpenAI file-backed runtime. ExpiresAfterSeconds is optional.
 type FileUploadRequest struct {
@@ -57,7 +63,7 @@ func (c *Model) UploadFile(ctx context.Context, request FileUploadRequest) (File
 		return FileObject{}, errors.New("openai: upload file is required")
 	}
 	if request.ExpiresAfterSeconds != 0 &&
-		(request.ExpiresAfterSeconds < 3600 || request.ExpiresAfterSeconds > 2_592_000) {
+		(request.ExpiresAfterSeconds < minFileExpirySeconds || request.ExpiresAfterSeconds > maxFileExpirySeconds) {
 		return FileObject{}, errors.New("openai: file expiry must be between 3600 and 2592000 seconds")
 	}
 	var response FileObject
@@ -91,7 +97,7 @@ func (c *Model) GetFile(ctx context.Context, fileID string) (FileObject, error) 
 
 // ListFiles returns one page of uploaded files.
 func (c *Model) ListFiles(ctx context.Context, query FileListQuery) (FileList, error) {
-	if query.Limit < 0 || query.Limit > 10_000 {
+	if query.Limit < 0 || query.Limit > maxFileListLimit {
 		return FileList{}, errors.New("openai: file list limit must be between 1 and 10000")
 	}
 	if query.Order != "" && query.Order != "asc" && query.Order != "desc" {
@@ -130,12 +136,9 @@ func (c *Model) DownloadFile(ctx context.Context, fileID string) (Media, error) 
 	if strings.TrimSpace(fileID) == "" {
 		return Media{}, errors.New("openai: file id is required")
 	}
-	return c.requestMedia(
-		ctx,
-		http.MethodGet,
-		"/files/"+url.PathEscape(fileID)+"/content",
-		nil,
-		"",
-		"application/binary",
-	)
+	call := runtimeCall{
+		method: http.MethodGet, path: "/files/" + url.PathEscape(fileID) + "/content",
+		accept: "application/binary",
+	}
+	return c.requestMedia(ctx, call)
 }

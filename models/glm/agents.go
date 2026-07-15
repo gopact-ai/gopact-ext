@@ -147,10 +147,7 @@ func (model *Model) AgentResult(ctx context.Context, request AgentResultRequest)
 }
 
 // AgentConversation queries slide/poster assets from an agent conversation.
-func (model *Model) AgentConversation(
-	ctx context.Context,
-	request AgentConversationRequest,
-) (AgentResponse, error) {
+func (model *Model) AgentConversation(ctx context.Context, request AgentConversationRequest) (AgentResponse, error) {
 	if strings.TrimSpace(request.AgentID) == "" || strings.TrimSpace(request.ConversationID) == "" {
 		return AgentResponse{}, errors.New("glm: agent id and conversation id are required")
 	}
@@ -177,18 +174,34 @@ func validateAgentRequest(request AgentRequest) error {
 		return errors.New("glm: agent messages are required")
 	}
 	for _, message := range messages {
-		if strings.TrimSpace(message.Role) == "" || len(message.Content) == 0 {
-			return errors.New("glm: agent message role and content are required")
-		}
-		for _, content := range message.Content {
-			if content.Type == "text" && content.Text == "" ||
-				content.Type == "image_url" && content.ImageURL == "" ||
-				content.Type != "text" && content.Type != "image_url" {
-				return errors.New("glm: agent content must be non-empty text or image_url")
-			}
+		if err := validateAgentMessage(message); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validateAgentMessage(message AgentMessage) error {
+	if strings.TrimSpace(message.Role) == "" || len(message.Content) == 0 {
+		return errors.New("glm: agent message role and content are required")
+	}
+	for _, content := range message.Content {
+		if !validAgentContent(content) {
+			return errors.New("glm: agent content must be non-empty text or image_url")
+		}
+	}
+	return nil
+}
+
+func validAgentContent(content AgentContent) bool {
+	switch content.Type {
+	case "text":
+		return content.Text != ""
+	case "image_url":
+		return content.ImageURL != ""
+	default:
+		return false
+	}
 }
 
 func (model *Model) agentJSON(ctx context.Context, path, language string, input, output any) error {
@@ -218,12 +231,7 @@ func (model *Model) agentJSON(ctx context.Context, path, language string, input,
 	return nil
 }
 
-func (model *Model) streamAgent(
-	ctx context.Context,
-	language string,
-	body []byte,
-	yield func(AgentEvent, error) bool,
-) {
+func (model *Model) streamAgent(ctx context.Context, language string, body []byte, yield func(AgentEvent, error) bool) {
 	response, cancel, err := model.sendAgentRequest(ctx, "/v1/agents", language, body, "text/event-stream")
 	if err != nil {
 		yield(AgentEvent{}, err)
@@ -232,22 +240,22 @@ func (model *Model) streamAgent(
 	defer cancel()
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		data, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		data, _ := io.ReadAll(io.LimitReader(response.Body, maxRuntimeErrorBytes))
 		yield(AgentEvent{}, fmt.Errorf("glm: status %d: %s", response.StatusCode, model.redactRuntimeError(data)))
 		return
 	}
 	scanner := bufio.NewScanner(response.Body)
-	scanner.Buffer(make([]byte, 64<<10), maxAgentStreamEventBytes)
+	scanner.Buffer(make([]byte, runtimeReadBufferBytes), maxAgentStreamEventBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
-			if data == "[DONE]" {
-				return
-			}
+		if data == "[DONE]" {
+			return
+		}
+		if data == "" {
 			continue
 		}
 		raw := json.RawMessage(append([]byte(nil), data...))
@@ -266,12 +274,7 @@ func (model *Model) streamAgent(
 	}
 }
 
-func (model *Model) sendAgentRequest(
-	ctx context.Context,
-	path, language string,
-	body []byte,
-	accept string,
-) (*http.Response, context.CancelFunc, error) {
+func (model *Model) sendAgentRequest(ctx context.Context, path, language string, body []byte, accept string) (*http.Response, context.CancelFunc, error) {
 	if model == nil {
 		return nil, nil, errors.New("glm: model is nil")
 	}

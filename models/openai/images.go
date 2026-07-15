@@ -12,6 +12,13 @@ import (
 	"strings"
 )
 
+const (
+	maxImageCount       = 10
+	maxImageEditInputs  = 16
+	maxImageCompression = 100
+	maxPartialImages    = 3
+)
+
 // ImageRequest configures text-to-image generation.
 type ImageRequest struct {
 	Model             string `json:"model,omitempty"`
@@ -163,14 +170,11 @@ func (c *Model) StreamImageEdit(ctx context.Context, request ImageEditRequest) i
 }
 
 // CreateImageVariation creates DALL-E 2 variations of one uploaded PNG.
-func (c *Model) CreateImageVariation(
-	ctx context.Context,
-	request ImageVariationRequest,
-) (ImageResponse, error) {
+func (c *Model) CreateImageVariation(ctx context.Context, request ImageVariationRequest) (ImageResponse, error) {
 	if len(request.Image.Data) == 0 || strings.TrimSpace(request.Image.Filename) == "" {
 		return ImageResponse{}, errors.New("openai: variation image is required")
 	}
-	if request.N < 0 || request.N > 10 {
+	if request.N < 0 || request.N > maxImageCount {
 		return ImageResponse{}, errors.New("openai: image count must be between 1 and 10")
 	}
 	var response ImageResponse
@@ -204,20 +208,20 @@ func validateImageEditRequest(request ImageEditRequest) error {
 	if len(request.Images) == 0 {
 		return errors.New("openai: image edit requires at least one image")
 	}
-	if len(request.Images) > 16 {
+	if len(request.Images) > maxImageEditInputs {
 		return errors.New("openai: image edit accepts at most 16 images")
 	}
 	return validateImageOptions(request.N, request.OutputCompression, request.PartialImages)
 }
 
-func validateImageOptions(count int, compression, partialImages *int) error {
-	if count < 0 || count > 10 {
+func validateImageOptions(count int, compression, partial *int) error {
+	if count < 0 || count > maxImageCount {
 		return errors.New("openai: image count must be between 1 and 10")
 	}
-	if compression != nil && (*compression < 0 || *compression > 100) {
+	if compression != nil && (*compression < 0 || *compression > maxImageCompression) {
 		return errors.New("openai: image compression must be between 0 and 100")
 	}
-	if partialImages != nil && (*partialImages < 0 || *partialImages > 3) {
+	if partial != nil && (*partial < 0 || *partial > maxPartialImages) {
 		return errors.New("openai: partial image count must be between 0 and 3")
 	}
 	return nil

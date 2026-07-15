@@ -10,12 +10,8 @@ import (
 )
 
 func TestMultipartUploadLifecycle(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q", r.Method)
-		}
-		switch r.URL.Path {
-		case "/uploads":
+	routes := map[string]http.HandlerFunc{
+		"POST /uploads": func(w http.ResponseWriter, r *http.Request) {
 			var request map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode create request: %v", err)
@@ -28,7 +24,8 @@ func TestMultipartUploadLifecycle(t *testing.T) {
 				t.Errorf("expires_after = %+v", expires)
 			}
 			_, _ = w.Write([]byte(`{"id":"upload-1","status":"pending","bytes":4}`))
-		case "/uploads/upload-1/parts":
+		},
+		"POST /uploads/upload-1/parts": func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseMultipartForm(maxUploadPartBytes + 1); err != nil {
 				t.Errorf("parse multipart: %v", err)
 			}
@@ -43,7 +40,8 @@ func TestMultipartUploadLifecycle(t *testing.T) {
 				t.Errorf("part data = %q", data)
 			}
 			_, _ = w.Write([]byte(`{"id":"part-1","object":"upload.part","upload_id":"upload-1"}`))
-		case "/uploads/upload-1/complete":
+		},
+		"POST /uploads/upload-1/complete": func(w http.ResponseWriter, r *http.Request) {
 			var request UploadCompleteRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode complete request: %v", err)
@@ -52,11 +50,16 @@ func TestMultipartUploadLifecycle(t *testing.T) {
 				t.Errorf("complete request = %+v", request)
 			}
 			_, _ = w.Write([]byte(`{"id":"upload-1","status":"completed","file":{"id":"file-1"}}`))
-		case "/uploads/upload-2/cancel":
+		},
+		"POST /uploads/upload-2/cancel": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"id":"upload-2","status":"cancelled"}`))
-		default:
-			http.NotFound(w, r)
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q", r.Method)
 		}
+		dispatchRuntimeTestRoute(t, routes, w, r)
 	}))
 	defer server.Close()
 

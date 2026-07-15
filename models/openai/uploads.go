@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-const maxUploadPartBytes = 64 << 20
+const (
+	maxUploadBytes     = 8 << 30
+	maxUploadPartBytes = 64 << 20
+)
 
 // UploadRequest starts a temporary multipart upload for a large file.
 type UploadRequest struct {
@@ -81,11 +84,11 @@ func (c *Model) CreateUpload(ctx context.Context, request UploadRequest) (Upload
 	if strings.TrimSpace(request.Purpose) == "" {
 		return Upload{}, errors.New("openai: upload purpose is required")
 	}
-	if request.Bytes < 0 || request.Bytes > 8<<30 {
+	if request.Bytes < 0 || request.Bytes > maxUploadBytes {
 		return Upload{}, errors.New("openai: upload bytes must be between 0 and 8 gb")
 	}
 	if request.ExpiresAfterSeconds != 0 &&
-		(request.ExpiresAfterSeconds < 3600 || request.ExpiresAfterSeconds > 2_592_000) {
+		(request.ExpiresAfterSeconds < minFileExpirySeconds || request.ExpiresAfterSeconds > maxFileExpirySeconds) {
 		return Upload{}, errors.New("openai: upload expiry must be between 3600 and 2592000 seconds")
 	}
 	var response Upload
@@ -112,11 +115,7 @@ func (c *Model) AddUploadPart(ctx context.Context, uploadID string, data []byte)
 }
 
 // CompleteUpload assembles uploaded parts in the supplied order and creates a File.
-func (c *Model) CompleteUpload(
-	ctx context.Context,
-	uploadID string,
-	request UploadCompleteRequest,
-) (Upload, error) {
+func (c *Model) CompleteUpload(ctx context.Context, uploadID string, request UploadCompleteRequest) (Upload, error) {
 	if strings.TrimSpace(uploadID) == "" {
 		return Upload{}, errors.New("openai: upload id is required")
 	}

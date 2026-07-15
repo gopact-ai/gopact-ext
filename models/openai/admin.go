@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const DefaultAPIBaseURL = "https://api.openai.com/v1"
+const (
+	DefaultAPIBaseURL = "https://api.openai.com/v1"
+	decimalRadix      = 10
+)
 
 // OrganizationUsageKind selects one OpenAI organization usage endpoint.
 type OrganizationUsageKind string
@@ -149,6 +152,16 @@ type adminConfig struct {
 	options []Option
 }
 
+type organizationFilters struct {
+	start       time.Time
+	end         time.Time
+	bucketWidth string
+	projectIDs  []string
+	groupBy     []string
+	limit       int
+	page        string
+}
+
 // AdminOption configures an AdminClient.
 type AdminOption func(*adminConfig)
 
@@ -221,10 +234,11 @@ func (client *AdminClient) Costs(ctx context.Context, query OrganizationCostsQue
 	if client == nil || client.transport == nil {
 		return OrganizationCostsPage{}, errors.New("openai: admin client is nil")
 	}
-	values, err := commonOrganizationQuery(
-		query.StartTime, query.EndTime, query.BucketWidth,
-		query.ProjectIDs, query.GroupBy, query.Limit, query.Page,
-	)
+	filters := organizationFilters{
+		start: query.StartTime, end: query.EndTime, bucketWidth: query.BucketWidth,
+		projectIDs: query.ProjectIDs, groupBy: query.GroupBy, limit: query.Limit, page: query.Page,
+	}
+	values, err := commonOrganizationQuery(filters)
 	if err != nil {
 		return OrganizationCostsPage{}, err
 	}
@@ -235,10 +249,11 @@ func (client *AdminClient) Costs(ctx context.Context, query OrganizationCostsQue
 }
 
 func usageQueryValues(query OrganizationUsageQuery) (url.Values, error) {
-	values, err := commonOrganizationQuery(
-		query.StartTime, query.EndTime, query.BucketWidth,
-		query.ProjectIDs, query.GroupBy, query.Limit, query.Page,
-	)
+	filters := organizationFilters{
+		start: query.StartTime, end: query.EndTime, bucketWidth: query.BucketWidth,
+		projectIDs: query.ProjectIDs, groupBy: query.GroupBy, limit: query.Limit, page: query.Page,
+	}
+	values, err := commonOrganizationQuery(filters)
 	if err != nil {
 		return nil, err
 	}
@@ -251,36 +266,30 @@ func usageQueryValues(query OrganizationUsageQuery) (url.Values, error) {
 	return values, nil
 }
 
-func commonOrganizationQuery(
-	start, end time.Time,
-	bucketWidth string,
-	projectIDs, groupBy []string,
-	limit int,
-	page string,
-) (url.Values, error) {
-	if start.IsZero() {
+func commonOrganizationQuery(filters organizationFilters) (url.Values, error) {
+	if filters.start.IsZero() {
 		return nil, errors.New("openai: organization usage start time is required")
 	}
-	if !end.IsZero() && end.Before(start) {
+	if !filters.end.IsZero() && filters.end.Before(filters.start) {
 		return nil, errors.New("openai: organization usage end time precedes start time")
 	}
-	if limit < 0 {
+	if filters.limit < 0 {
 		return nil, errors.New("openai: organization usage limit must not be negative")
 	}
-	values := url.Values{"start_time": {strconv.FormatInt(start.Unix(), 10)}}
-	if !end.IsZero() {
-		values.Set("end_time", strconv.FormatInt(end.Unix(), 10))
+	values := url.Values{"start_time": {strconv.FormatInt(filters.start.Unix(), decimalRadix)}}
+	if !filters.end.IsZero() {
+		values.Set("end_time", strconv.FormatInt(filters.end.Unix(), decimalRadix))
 	}
-	if bucketWidth != "" {
-		values.Set("bucket_width", bucketWidth)
+	if filters.bucketWidth != "" {
+		values.Set("bucket_width", filters.bucketWidth)
 	}
-	addStrings(values, "project_ids[]", projectIDs)
-	addStrings(values, "group_by[]", groupBy)
-	if limit != 0 {
-		values.Set("limit", strconv.Itoa(limit))
+	addStrings(values, "project_ids[]", filters.projectIDs)
+	addStrings(values, "group_by[]", filters.groupBy)
+	if filters.limit != 0 {
+		values.Set("limit", strconv.Itoa(filters.limit))
 	}
-	if page != "" {
-		values.Set("page", page)
+	if filters.page != "" {
+		values.Set("page", filters.page)
 	}
 	return values, nil
 }

@@ -12,6 +12,14 @@ import (
 	"strings"
 )
 
+const (
+	audioFloatPrecision  = -1
+	audioFloatBits       = 64
+	minSpeechSpeed       = 0.25
+	maxSpeechSpeed       = 4
+	maxKnownSpeakerCount = 4
+)
+
 // SpeechRequest configures text-to-speech generation. Voice may be a built-in
 // voice string or a custom voice object such as map[string]any{"id": "voice_1"}.
 type SpeechRequest struct {
@@ -97,7 +105,11 @@ func (c *Model) Speech(ctx context.Context, request SpeechRequest) (Media, error
 	if err != nil {
 		return Media{}, fmt.Errorf("openai: encode speech request: %w", err)
 	}
-	return c.requestMedia(ctx, http.MethodPost, "/audio/speech", encoded, "application/json", "application/octet-stream")
+	call := runtimeCall{
+		method: http.MethodPost, path: "/audio/speech", body: encoded,
+		contentType: "application/json", accept: "application/octet-stream",
+	}
+	return c.requestMedia(ctx, call)
 }
 
 // StreamSpeech streams raw text-to-speech SSE events.
@@ -139,10 +151,7 @@ func (c *Model) Transcribe(ctx context.Context, request TranscriptionRequest) (T
 }
 
 // StreamTranscription streams raw speech-to-text SSE events.
-func (c *Model) StreamTranscription(
-	ctx context.Context,
-	request TranscriptionRequest,
-) iter.Seq2[AudioEvent, error] {
+func (c *Model) StreamTranscription(ctx context.Context, request TranscriptionRequest) iter.Seq2[AudioEvent, error] {
 	return func(yield func(AudioEvent, error) bool) {
 		if err := validateTranscriptionRequest(request); err != nil {
 			yield(AudioEvent{}, err)
@@ -179,7 +188,7 @@ func (c *Model) Translate(ctx context.Context, request TranslationRequest) (Tran
 		}
 		if request.Temperature != nil {
 			fields = append(fields, struct{ name, value string }{
-				"temperature", strconv.FormatFloat(*request.Temperature, 'f', -1, 64),
+				"temperature", strconv.FormatFloat(*request.Temperature, 'f', audioFloatPrecision, audioFloatBits),
 			})
 		}
 		return writeMultipartFields(writer, fields)
@@ -210,7 +219,7 @@ func validateSpeechRequest(request SpeechRequest) error {
 	if voice, ok := request.Voice.(string); ok && strings.TrimSpace(voice) == "" {
 		return errors.New("openai: speech voice is required")
 	}
-	if request.Speed != nil && (*request.Speed < 0.25 || *request.Speed > 4) {
+	if request.Speed != nil && (*request.Speed < minSpeechSpeed || *request.Speed > maxSpeechSpeed) {
 		return errors.New("openai: speech speed must be between 0.25 and 4")
 	}
 	return nil
@@ -229,7 +238,7 @@ func validateTranscriptionRequest(request TranscriptionRequest) error {
 	if len(request.KnownSpeakerNames) != len(request.KnownSpeakerReferences) {
 		return errors.New("openai: known speaker names and references must have equal lengths")
 	}
-	if len(request.KnownSpeakerNames) > 4 {
+	if len(request.KnownSpeakerNames) > maxKnownSpeakerCount {
 		return errors.New("openai: at most four known speakers are supported")
 	}
 	return nil
@@ -245,7 +254,7 @@ func writeTranscriptionMultipart(writer *multipart.Writer, request Transcription
 	}
 	if request.Temperature != nil {
 		fields = append(fields, struct{ name, value string }{
-			"temperature", strconv.FormatFloat(*request.Temperature, 'f', -1, 64),
+			"temperature", strconv.FormatFloat(*request.Temperature, 'f', audioFloatPrecision, audioFloatBits),
 		})
 	}
 	if request.ChunkingStrategy != nil {

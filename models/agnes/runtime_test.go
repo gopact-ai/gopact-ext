@@ -8,37 +8,38 @@ import (
 )
 
 func TestImageAndVideoAPIs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
+		var request ImageRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode image request: %v", err)
+		}
+		if request.Model != DefaultImageModel || request.Extra.ResponseFormat != "url" || len(request.Extra.Images) != 1 {
+			t.Errorf("image request = %+v", request)
+		}
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://example.com/image.png"}]}`))
+	})
+	mux.HandleFunc("POST /v1/videos", func(w http.ResponseWriter, r *http.Request) {
+		var request VideoRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode video request: %v", err)
+		}
+		if request.Model != DefaultVideoModel || request.NumFrames != 121 || request.FrameRate != 24 {
+			t.Errorf("video request = %+v", request)
+		}
+		_, _ = w.Write([]byte(`{"id":"task-1","task_id":"task-1","video_id":"video-1","status":"queued"}`))
+	})
+	mux.HandleFunc("GET /agnesapi", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("video_id") != "video-1" || r.URL.Query().Get("model_name") != DefaultVideoModel {
+			t.Errorf("query = %v", r.URL.Query())
+		}
+		_, _ = w.Write([]byte(`{"id":"task-1","video_id":"video-1","status":"completed","progress":100,"url":"https://example.com/video.mp4"}`))
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authorization := r.Header.Get("Authorization"); authorization != "Bearer key" {
 			t.Errorf("Authorization = %q", authorization)
 		}
-		switch r.URL.Path {
-		case "/v1/images/generations":
-			var request ImageRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Errorf("decode image request: %v", err)
-			}
-			if request.Model != DefaultImageModel || request.Extra.ResponseFormat != "url" || len(request.Extra.Images) != 1 {
-				t.Errorf("image request = %+v", request)
-			}
-			_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://example.com/image.png"}]}`))
-		case "/v1/videos":
-			var request VideoRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Errorf("decode video request: %v", err)
-			}
-			if request.Model != DefaultVideoModel || request.NumFrames != 121 || request.FrameRate != 24 {
-				t.Errorf("video request = %+v", request)
-			}
-			_, _ = w.Write([]byte(`{"id":"task-1","task_id":"task-1","video_id":"video-1","status":"queued"}`))
-		case "/agnesapi":
-			if r.URL.Query().Get("video_id") != "video-1" || r.URL.Query().Get("model_name") != DefaultVideoModel {
-				t.Errorf("query = %v", r.URL.Query())
-			}
-			_, _ = w.Write([]byte(`{"id":"task-1","video_id":"video-1","status":"completed","progress":100,"url":"https://example.com/video.mp4"}`))
-		default:
-			http.NotFound(w, r)
-		}
+		mux.ServeHTTP(w, r)
 	}))
 	defer server.Close()
 

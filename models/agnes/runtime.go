@@ -12,7 +12,13 @@ import (
 	"strings"
 )
 
-const maxRuntimeResponseBytes = 64 << 20
+const (
+	maxRuntimeResponseBytes = 64 << 20
+	maxRuntimeErrorBytes    = 4 << 10
+	maxVideoFrames          = 441
+	videoFrameStep          = 8
+	maxVideoFrameRate       = 60
+)
 
 // ImageRequest configures Agnes text-to-image or image-to-image generation.
 type ImageRequest struct {
@@ -114,10 +120,10 @@ func (model *Model) CreateVideo(ctx context.Context, request VideoRequest) (Vide
 	if strings.TrimSpace(request.Prompt) == "" {
 		return VideoTask{}, errors.New("agnes: video prompt is required")
 	}
-	if request.NumFrames < 0 || request.NumFrames > 441 || request.NumFrames > 0 && (request.NumFrames-1)%8 != 0 {
+	if request.NumFrames < 0 || request.NumFrames > maxVideoFrames || request.NumFrames > 0 && (request.NumFrames-1)%videoFrameStep != 0 {
 		return VideoTask{}, errors.New("agnes: video frames must be at most 441 and follow 8n+1")
 	}
-	if request.FrameRate < 0 || request.FrameRate > 60 {
+	if request.FrameRate < 0 || request.FrameRate > maxVideoFrameRate {
 		return VideoTask{}, errors.New("agnes: video frame rate must be between 1 and 60")
 	}
 	if request.Height < 0 || request.Width < 0 || request.NumInferenceSteps < 0 {
@@ -218,9 +224,8 @@ func (model *Model) requestJSON(ctx context.Context, method, endpoint string, in
 }
 
 func (model *Model) redactRuntimeError(encoded []byte) string {
-	const limit = 4 << 10
-	if len(encoded) > limit {
-		encoded = encoded[:limit]
+	if len(encoded) > maxRuntimeErrorBytes {
+		encoded = encoded[:maxRuntimeErrorBytes]
 	}
 	return strings.ReplaceAll(string(encoded), model.apiKey, "[redacted]")
 }
