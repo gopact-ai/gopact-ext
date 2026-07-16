@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/go-sql-driver/mysql v1.10.0
-	github.com/gopact-ai/gopact v0.0.0-20260715175854-19c7fe707d87 // replaces the removed pre-rewrite RC tag
+	github.com/gopact-ai/gopact v0.1.0-rc.4
 	github.com/libtnb/sqlite v1.2.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0

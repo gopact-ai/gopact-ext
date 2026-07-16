@@ -31,8 +31,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: gopact-ai/gopact
-          # Source-equivalent replacement after the old RC tag was removed.
-          ref: d2f2a74a3ced052fd0210bd91ac012483e14c682
+          ref: v0.1.0-rc.4
           path: source/gopact
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -130,8 +129,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: gopact-ai/gopact
-          # Source-equivalent replacement after the old RC tag was removed.
-          ref: d2f2a74a3ced052fd0210bd91ac012483e14c682
+          ref: v0.1.0-rc.4
           path: source/gopact
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
