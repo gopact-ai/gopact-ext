@@ -10,6 +10,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -361,6 +362,38 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	}
 	if got := stringAttribute(tool.Attributes, outputAttribute); !strings.Contains(got, "tool-result") {
 		t.Fatalf("tool output = %q, want outcome payload", got)
+	}
+}
+
+func TestActiveNodeKeysMatchWorkflowEventIDs(t *testing.T) {
+	const attempt = 2
+	tests := []struct {
+		name string
+		info workflow.RunInfo
+		want []string
+	}{
+		{
+			name: "runtime run info",
+			info: workflow.RunInfo{RunID: "run-1", ActivationID: "act-1"},
+			want: []string{"run-1\x00act-1", "run-1\x00run-1/act-1"},
+		},
+		{
+			name: "retry attempt",
+			info: workflow.RunInfo{RunID: "run-1", ActivationID: "act-1", Attempt: attempt},
+			want: []string{"run-1\x00act-1/attempt-2", "run-1\x00run-1/act-1/attempt-2"},
+		},
+		{
+			name: "prefixed activation",
+			info: workflow.RunInfo{RunID: "run-1", ActivationID: "run-1/act-1"},
+			want: []string{"run-1\x00run-1/act-1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := activeNodeKeys(tt.info); !slices.Equal(got, tt.want) {
+				t.Fatalf("activeNodeKeys() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

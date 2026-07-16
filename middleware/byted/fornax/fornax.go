@@ -453,7 +453,7 @@ func fetchJWTToken(ctx context.Context, input tokenRequest) (jwtToken, error) {
 	if err != nil {
 		return jwtToken{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(input.host, "/")+authPath, strings.NewReader(string(body)))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(input.host, "/")+authPath, bytes.NewReader(body))
 	if err != nil {
 		return jwtToken{}, err
 	}
@@ -1457,16 +1457,28 @@ func (s *eventSink) EmitToolEvent(ctx context.Context, event gopact.ToolEvent) e
 
 func (s *eventSink) activeNode(ctx context.Context) (string, nodeSpanState, bool) {
 	info := workflow.RunInfoFromContext(ctx)
+	for _, key := range activeNodeKeys(info) {
+		state, ok := s.nodes[key]
+		if ok {
+			return key, state, true
+		}
+	}
+	return "", nodeSpanState{}, false
+}
+
+func activeNodeKeys(info workflow.RunInfo) []string {
 	if info.RunID == "" || info.ActivationID == "" {
-		return "", nodeSpanState{}, false
+		return nil
 	}
-	activationID := info.RunID + "/" + info.ActivationID
-	key := info.RunID + "\x00" + activationID
+	id := info.ActivationID
 	if info.Attempt > 0 {
-		key = info.RunID + "\x00" + activationID + "/attempt-" + strconv.Itoa(info.Attempt)
+		id += "/attempt-" + strconv.Itoa(info.Attempt)
 	}
-	state, ok := s.nodes[key]
-	return key, state, ok
+	keys := []string{info.RunID + "\x00" + id}
+	if !strings.HasPrefix(id, info.RunID+"/") {
+		keys = append(keys, info.RunID+"\x00"+info.RunID+"/"+id)
+	}
+	return keys
 }
 
 func setModelResponseAttributes(span trace.Span, response gopact.ModelResponse, outputCutOff *bool) {
