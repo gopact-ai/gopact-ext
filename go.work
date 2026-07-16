@@ -3,6 +3,7 @@ go 1.27
 use (
 	../gopact
 	.
+	./middleware/byted/fornax
 	./models/openai
 	./stores
 	./tests/workflow

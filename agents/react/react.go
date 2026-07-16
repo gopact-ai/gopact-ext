@@ -174,9 +174,19 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 		return request, nil
 	})
 	modelNode := wf.Node("model", func(ctx context.Context, request gopact.ModelRequest) (turnResult, error) {
-		response, err := model.Invoke(ctx, request)
-		if err != nil {
-			return turnResult{}, fmt.Errorf("react: invoke model: %w", err)
+		if err := workflow.EmitModelEvent(ctx, gopact.ModelEvent{
+			Type: gopact.ModelEventCallStarted, Request: &request,
+		}); err != nil {
+			return turnResult{}, err
+		}
+		response, invokeErr := model.Invoke(ctx, request, gopact.WithModelEventHandler(workflow.EmitModelEvent))
+		if err := workflow.EmitModelEvent(ctx, gopact.ModelEvent{
+			Type: gopact.ModelEventCallFinished, Request: &request, Response: &response, Err: invokeErr,
+		}); err != nil {
+			return turnResult{}, errors.Join(invokeErr, err)
+		}
+		if invokeErr != nil {
+			return turnResult{}, fmt.Errorf("react: invoke model: %w", invokeErr)
 		}
 		current, err := state.Get(ctx)
 		if err != nil {
@@ -409,18 +419,27 @@ type toolDispatcher struct {
 	registry map[string]agent.Tool
 }
 
-func (dispatcher toolDispatcher) Invoke(ctx context.Context, call gopact.ToolCall, options ...gopact.RunOption) (gopact.ToolOutcome, error) {
+func (dispatcher toolDispatcher) Invoke(ctx context.Context, call gopact.ToolCall, options ...gopact.RunOption) (outcome gopact.ToolOutcome, err error) {
+	call = cloneToolCall(call)
+	if err := workflow.EmitToolEvent(ctx, gopact.ToolEvent{Type: gopact.ToolEventCallStarted, Call: call}); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if eventErr := workflow.EmitToolEvent(ctx, gopact.ToolEvent{
+			Type: gopact.ToolEventCallFinished, Call: call, Outcome: outcome, Err: err,
+		}); eventErr != nil {
+			err = errors.Join(err, eventErr)
+		}
+	}()
 	tool, exists := dispatcher.registry[call.Name]
 	if !exists {
 		return unknownToolOutcome(call), nil
 	}
-	var outcome gopact.ToolOutcome
-	var err error
 	switch typed := tool.(type) {
 	case agent.InvokableTool:
-		outcome, err = typed.Invoke(ctx, cloneToolCall(call), options...)
+		outcome, err = typed.Invoke(ctx, call, options...)
 	case agent.DirectTool:
-		outcome, err = typed.ExecuteTool(ctx, cloneToolCall(call))
+		outcome, err = typed.ExecuteTool(ctx, call)
 	default:
 		return nil, fmt.Errorf("react: tool %q is not executable", call.Name)
 	}

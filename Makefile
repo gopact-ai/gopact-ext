@@ -1,7 +1,7 @@
 # The root is source-only while its domains move into independently tagged modules.
-STANDALONE_MODULES := models/openai stores
+STANDALONE_MODULES := middleware/byted/fornax models/openai stores
 SECURITY_MODULES := . $(STANDALONE_MODULES)
-WORKSPACE_PACKAGES := ./... ./models/openai/... ./stores/... ./tests/workflow/...
+WORKSPACE_PACKAGES := ./... ./middleware/byted/fornax/... ./models/openai/... ./stores/... ./tests/workflow/...
 
 .PHONY: test integration capability fmt-check tidy race vet security dbintegration benchmark
 

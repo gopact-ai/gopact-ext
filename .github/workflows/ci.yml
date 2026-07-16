@@ -31,19 +31,27 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: gopact-ai/gopact
-          ref: v0.1.0-rc.3
+          # Source-equivalent replacement after the old RC tag was removed.
+          ref: d2f2a74a3ced052fd0210bd91ac012483e14c682
           path: source/gopact
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.27.0-rc.2'
           cache-dependency-path: |
             source/gopact-ext/go.sum
+            source/gopact-ext/middleware/byted/fornax/go.sum
             source/gopact-ext/models/openai/go.sum
             source/gopact-ext/stores/go.sum
             source/gopact-ext/tests/workflow/go.sum
       - run: make fmt-check tidy test race vet
       - name: standalone OpenAI module
         working-directory: source/gopact-ext/models/openai
+        run: |
+          GOWORK=off go mod tidy -diff
+          GOWORK=off go test -race -count=1 ./...
+          GOWORK=off go vet ./...
+      - name: standalone Fornax middleware module
+        working-directory: source/gopact-ext/middleware/byted/fornax
         run: |
           GOWORK=off go mod tidy -diff
           GOWORK=off go test -race -count=1 ./...
@@ -122,7 +130,8 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: gopact-ai/gopact
-          ref: v0.1.0-rc.3
+          # Source-equivalent replacement after the old RC tag was removed.
+          ref: d2f2a74a3ced052fd0210bd91ac012483e14c682
           path: source/gopact
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
