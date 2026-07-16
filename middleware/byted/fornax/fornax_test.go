@@ -370,6 +370,55 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	}
 }
 
+func TestMiddlewareReportsDirectModelSpan(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	middleware := newMiddleware(provider, nil)
+	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+
+	response, err := middleware.Use(directModelEventAgent{}).Invoke(
+		t.Context(),
+		agent.Request{Messages: []gopact.Message{gopact.UserMessage("hello")}},
+		gopact.WithSessionID("thread-1"),
+		gopact.WithRunID("message-1"),
+	)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if got := messageText(response.Message); got != "world" {
+		t.Fatalf("Invoke() text = %q, want world", got)
+	}
+
+	spans := exporter.GetSpans()
+	model := spanNamedType(t, spans, "model", modelSpanType)
+	agentSpan := spanNamedType(t, spans, "direct", agentSpanType)
+	if model.Parent.SpanID() != agentSpan.SpanContext.SpanID() {
+		t.Fatal("model span is not a child of the direct Agent span")
+	}
+	if got := stringAttribute(model.Attributes, threadIDAttribute); got != "thread-1" {
+		t.Fatalf("model thread_id = %q, want thread-1", got)
+	}
+	if got := stringAttribute(model.Attributes, modelNameAttribute); got != "demo-model" {
+		t.Fatalf("model_name = %q, want demo-model", got)
+	}
+	if got := stringAttribute(model.Attributes, inputAttribute); !strings.Contains(got, "hello") {
+		t.Fatalf("model input = %q, want hello", got)
+	}
+	var output modelOutputPayload
+	if err := json.Unmarshal([]byte(stringAttribute(model.Attributes, outputAttribute)), &output); err != nil {
+		t.Fatalf("model output is not JSON: %v", err)
+	}
+	if len(output.Choices) != 1 || output.Choices[0].Message.Content != "world" {
+		t.Fatalf("model output = %+v, want world", output)
+	}
+	if got, ok := int64Attribute(model.Attributes, totalTokensAttribute); !ok || got != 3 {
+		t.Fatalf("tokens = %d, want 3", got)
+	}
+	if got := stringAttribute(model.Attributes, finishReasonAttribute); got != "stop" {
+		t.Fatalf("finish_reason = %q, want stop", got)
+	}
+}
+
 func TestActiveNodeKeysMatchWorkflowEventIDs(t *testing.T) {
 	const attempt = 2
 	tests := []struct {
@@ -677,6 +726,48 @@ type componentEventAgent struct{}
 
 func (componentEventAgent) Identity() agent.Identity {
 	return agent.Identity{Name: "component", Description: "component events", Version: "test"}
+}
+
+type directModelEventAgent struct{}
+
+func (directModelEventAgent) Identity() agent.Identity {
+	return agent.Identity{Name: "direct", Description: "direct model events", Version: "test"}
+}
+
+func (directModelEventAgent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
+	modelRequest := gopact.ModelRequest{Model: "demo-model", Messages: request.Messages}
+	modelResponse := gopact.ModelResponse{Message: gopact.Message{
+		Role: gopact.MessageRoleAssistant,
+		Parts: []gopact.MessagePart{{
+			Type: gopact.MessagePartTypeText,
+			Text: "world",
+		}},
+	}}
+	events := []gopact.ModelEvent{
+		{Type: gopact.ModelEventCallStarted, Request: &modelRequest},
+		{Type: gopact.ModelEventUsage, Payload: json.RawMessage(`{"input_tokens":1,"output_tokens":2,"total_tokens":3}`)},
+		{Type: gopact.ModelEventFinish, Summary: "stop"},
+		{Type: gopact.ModelEventCallFinished, Request: &modelRequest, Response: &modelResponse},
+	}
+	for _, sink := range gopact.ResolveRunOptions(options...).EventSinks {
+		modelSink, ok := sink.(gopact.ModelEventSink)
+		if !ok {
+			continue
+		}
+		if err := emitDirectModelEvents(ctx, modelSink, events); err != nil {
+			return agent.Response{}, err
+		}
+	}
+	return agent.Response{Message: modelResponse.Message}, nil
+}
+
+func emitDirectModelEvents(ctx context.Context, sink gopact.ModelEventSink, events []gopact.ModelEvent) error {
+	for _, event := range events {
+		if err := sink.EmitModelEvent(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (componentEventAgent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {

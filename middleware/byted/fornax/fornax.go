@@ -913,6 +913,12 @@ type modelOutputPayload struct {
 	Choices []modelChoicePayload `json:"choices"`
 }
 
+type modelEventUsagePayload struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
 type modelChoicePayload struct {
 	FinishReason string              `json:"finish_reason"`
 	Index        int64               `json:"index"`
@@ -1200,10 +1206,11 @@ type eventSink struct {
 	agent   trace.Span
 	tags    []attribute.KeyValue
 
-	mu        sync.Mutex
-	rootRunID string
-	runs      map[string]spanState
-	nodes     map[string]nodeSpanState
+	mu          sync.Mutex
+	rootRunID   string
+	directModel *nodeSpanState
+	runs        map[string]spanState
+	nodes       map[string]nodeSpanState
 }
 
 func newEventSink(tracer trace.Tracer, rootCtx context.Context, root, agent trace.Span, tags []attribute.KeyValue) *eventSink {
@@ -1346,6 +1353,13 @@ func (s *eventSink) finish(err error) {
 		state.span.End()
 		delete(s.runs, runID)
 	}
+	if s.directModel != nil {
+		if err != nil {
+			markError(s.directModel.span, err)
+		}
+		s.directModel.span.End()
+		s.directModel = nil
+	}
 }
 
 func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent) error {
@@ -1356,8 +1370,16 @@ func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent)
 	defer s.mu.Unlock()
 	key, state, ok := s.activeNode(ctx)
 	if !ok {
+		s.emitDirectModelEvent(event)
 		return nil
 	}
+	updateModelSpan(&state, event)
+	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
+	s.nodes[key] = state
+	return nil
+}
+
+func updateModelSpan(state *nodeSpanState, event gopact.ModelEvent) {
 	switch event.Type {
 	case gopact.ModelEventCallStarted:
 		startModelSpan(state.span, event.Request, &state.inputCutOff)
@@ -1366,13 +1388,40 @@ func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent)
 			state.failed = true
 		}
 	case gopact.ModelEventUsage:
-		if event.Response != nil {
-			setUsageAttributes(state.span, event.Response.Usage)
+		setModelEventUsage(state.span, event)
+	case gopact.ModelEventFinish:
+		if event.Summary != "" {
+			state.span.SetAttributes(attribute.String(finishReasonAttribute, event.Summary))
 		}
 	}
-	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
-	s.nodes[key] = state
-	return nil
+}
+
+func (s *eventSink) emitDirectModelEvent(event gopact.ModelEvent) {
+	if event.Type == gopact.ModelEventCallStarted {
+		if s.directModel != nil {
+			return
+		}
+		_, span := s.tracer.Start(s.rootCtx, "model", trace.WithAttributes(
+			append([]attribute.KeyValue{attribute.String(spanTypeAttribute, modelSpanType)}, s.tags...)...,
+		))
+		state := &nodeSpanState{span: span}
+		updateModelSpan(state, event)
+		s.directModel = state
+		return
+	}
+	if s.directModel == nil {
+		return
+	}
+	updateModelSpan(s.directModel, event)
+	setCutOff(s.directModel.span, s.directModel.inputCutOff, s.directModel.outputCutOff)
+	if event.Type != gopact.ModelEventCallFinished {
+		return
+	}
+	if !s.directModel.failed {
+		s.directModel.span.SetAttributes(attribute.Int(statusAttribute, 0))
+	}
+	s.directModel.span.End()
+	s.directModel = nil
 }
 
 func startModelSpan(span trace.Span, request *gopact.ModelRequest, inputCutOff *bool) {
@@ -1477,6 +1526,19 @@ func setUsageAttributes(span trace.Span, usage gopact.Usage) {
 	if usage.TotalTokens != 0 {
 		span.SetAttributes(attribute.Int(totalTokensAttribute, usage.TotalTokens))
 	}
+}
+
+func setModelEventUsage(span trace.Span, event gopact.ModelEvent) {
+	if event.Response != nil {
+		setUsageAttributes(span, event.Response.Usage)
+	}
+	var payload modelEventUsagePayload
+	if len(event.Payload) == 0 || json.Unmarshal(event.Payload, &payload) != nil {
+		return
+	}
+	setUsageAttributes(span, gopact.Usage{
+		InputTokens: payload.InputTokens, OutputTokens: payload.OutputTokens, TotalTokens: payload.TotalTokens,
+	})
 }
 
 func setTraceJSON(span trace.Span, key string, value any, cutOff *bool) {
