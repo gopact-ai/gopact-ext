@@ -44,6 +44,9 @@ const (
 	finishReasonAttribute = "finish_reason"
 	toolNameAttribute     = "tool_name"
 	toolCallIDAttribute   = "tool_call_id"
+	userIDAttribute       = "user_id"
+	deviceIDAttribute     = "device_id"
+	psmAttribute          = "psm"
 	agentSpanType         = "Agent"
 	rootSpanType          = "fornax_query"
 	modelSpanType         = "model"
@@ -72,12 +75,67 @@ type Config struct {
 	SpaceID string
 	// Endpoint optionally overrides the complete OTLP/HTTP trace URL.
 	Endpoint string
+	// PSM optionally identifies the reporting service. It is sent to Fornax
+	// authentication and attached to exported spans.
+	PSM string
+	// UserID optionally attaches the end-user identity to exported spans.
+	UserID string
+	// DeviceID optionally attaches the end-user device identity to exported spans.
+	DeviceID string
+	// Metadata attaches custom string tags to exported spans.
+	Metadata map[string]string
+}
+
+type contextConfig struct {
+	userID   string
+	deviceID string
+	metadata map[string]string
+}
+
+type contextKey struct{}
+
+// WithUserID attaches a request-scoped end-user identity to Fornax spans.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	config := traceContext(ctx)
+	config.userID = userID
+	return context.WithValue(contextOrBackground(ctx), contextKey{}, config)
+}
+
+// WithDeviceID attaches a request-scoped device identity to Fornax spans.
+func WithDeviceID(ctx context.Context, deviceID string) context.Context {
+	config := traceContext(ctx)
+	config.deviceID = deviceID
+	return context.WithValue(contextOrBackground(ctx), contextKey{}, config)
+}
+
+// WithMetadata attaches request-scoped custom string tags to Fornax spans.
+func WithMetadata(ctx context.Context, metadata map[string]string) context.Context {
+	config := traceContext(ctx)
+	config.metadata = copyMetadata(metadata)
+	return context.WithValue(contextOrBackground(ctx), contextKey{}, config)
+}
+
+func traceContext(ctx context.Context) contextConfig {
+	if ctx == nil {
+		return contextConfig{}
+	}
+	config, _ := ctx.Value(contextKey{}).(contextConfig)
+	config.metadata = copyMetadata(config.metadata)
+	return config
+}
+
+func contextOrBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // Middleware wraps Agents with Fornax tracing.
 type Middleware struct {
 	provider *sdktrace.TracerProvider
 	tracer   trace.Tracer
+	tags     []attribute.KeyValue
 
 	closeOnce sync.Once
 	closeErr  error
@@ -96,6 +154,10 @@ type authConfig struct {
 	spaceID       string
 	endpoint      string
 	authorization string
+	psm           string
+	userID        string
+	deviceID      string
+	metadata      map[string]string
 }
 
 func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
@@ -120,7 +182,7 @@ func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
 		authorization: config.authorization,
 		spaceID:       spaceID,
 	}
-	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))), nil
+	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter)), traceTags(config)), nil
 }
 
 func authenticate(ctx context.Context, config Config) (authConfig, error) {
@@ -142,7 +204,14 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	token, err := fetchJWTToken(ctx, http.DefaultClient, host, ak, sk, config.Region)
+	psm := strings.TrimSpace(config.PSM)
+	if strings.ContainsAny(psm, "\r\n") {
+		return authConfig{}, errors.New("fornax: PSM is invalid")
+	}
+	if psm == "" {
+		psm = "unknown_psm"
+	}
+	token, err := fetchJWTToken(ctx, http.DefaultClient, host, ak, sk, config.Region, psm)
 	if err != nil {
 		return authConfig{}, fmt.Errorf("fornax: get token: %w", err)
 	}
@@ -157,7 +226,15 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 	if endpoint == "" {
 		endpoint = strings.TrimRight(host, "/") + defaultTracePath
 	}
-	return authConfig{spaceID: spaceID, endpoint: endpoint, authorization: token.jwt}, nil
+	return authConfig{
+		spaceID:       spaceID,
+		endpoint:      endpoint,
+		authorization: token.jwt,
+		psm:           psm,
+		userID:        config.UserID,
+		deviceID:      config.DeviceID,
+		metadata:      copyMetadata(config.Metadata),
+	}, nil
 }
 
 type traceExporter struct {
@@ -315,12 +392,12 @@ type jwtToken struct {
 	spaceID int64
 }
 
-func fetchJWTToken(ctx context.Context, client *http.Client, host, ak, sk, region string) (jwtToken, error) {
+func fetchJWTToken(ctx context.Context, client *http.Client, host, ak, sk, region, psm string) (jwtToken, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	requestBody := authRequest{
-		PSM:     "unknown_psm",
+		PSM:     psm,
 		IsTCE:   true,
 		Env:     os.Getenv("ENV"),
 		IsBOE:   strings.EqualFold(strings.TrimSpace(region), "BOE"),
@@ -362,6 +439,61 @@ func fetchJWTToken(ctx context.Context, client *http.Client, host, ak, sk, regio
 		return jwtToken{}, err
 	}
 	return jwtToken{jwt: authResponse.JWTToken, spaceID: spaceID}, nil
+}
+
+func copyMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		copied[key] = value
+	}
+	return copied
+}
+
+func traceTags(config authConfig) []attribute.KeyValue {
+	return tagAttributes(config.psm, config.userID, config.deviceID, config.metadata)
+}
+
+func tagAttributes(psm, userID, deviceID string, metadata map[string]string) []attribute.KeyValue {
+	tags := make([]attribute.KeyValue, 0, len(metadata)+3)
+	for key, value := range metadata {
+		key = strings.TrimSpace(key)
+		if key == "" || reservedTraceAttribute(key) {
+			continue
+		}
+		tags = append(tags, attribute.String(key, value))
+	}
+	if psm := strings.TrimSpace(psm); psm != "" {
+		tags = append(tags, attribute.String(psmAttribute, psm))
+	}
+	if userID := strings.TrimSpace(userID); userID != "" {
+		tags = append(tags, attribute.String(userIDAttribute, userID))
+	}
+	if deviceID := strings.TrimSpace(deviceID); deviceID != "" {
+		tags = append(tags, attribute.String(deviceIDAttribute, deviceID))
+	}
+	return tags
+}
+
+func requestTags(ctx context.Context, defaults []attribute.KeyValue) []attribute.KeyValue {
+	config := traceContext(ctx)
+	if config.userID == "" && config.deviceID == "" && len(config.metadata) == 0 {
+		return defaults
+	}
+	tags := append([]attribute.KeyValue{}, defaults...)
+	tags = append(tags, tagAttributes("", config.userID, config.deviceID, config.metadata)...)
+	return tags
+}
+
+func reservedTraceAttribute(key string) bool {
+	switch key {
+	case spanTypeAttribute, inputAttribute, outputAttribute, statusAttribute, cutOffAttribute:
+		return true
+	default:
+		return false
+	}
 }
 
 type authRequest struct {
@@ -455,8 +587,8 @@ func validateSpaceID(spaceID string) error {
 	return nil
 }
 
-func newMiddleware(provider *sdktrace.TracerProvider) *Middleware {
-	return &Middleware{provider: provider, tracer: provider.Tracer(instrumentationName)}
+func newMiddleware(provider *sdktrace.TracerProvider, tags []attribute.KeyValue) *Middleware {
+	return &Middleware{provider: provider, tracer: provider.Tracer(instrumentationName), tags: tags}
 }
 
 // Use wraps target with Fornax tracing.
@@ -527,6 +659,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (co
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	tags := requestTags(ctx, a.middleware.tags)
 	identity := a.target.Identity()
 	name := identity.Name
 	if name == "" {
@@ -536,6 +669,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (co
 		attribute.String(spanTypeAttribute, rootSpanType),
 		attribute.String("agent_name", name),
 	}
+	attributes = append(attributes, tags...)
 	input, inputCutOff := traceJSON(fornaxQueryInput(request))
 	if input != "" {
 		attributes = append(attributes, attribute.String(inputAttribute, input))
@@ -545,11 +679,13 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (co
 	}
 	rootCtx, root := a.middleware.tracer.Start(ctx, name, trace.WithAttributes(attributes...))
 	agentCtx, agentSpan := a.middleware.tracer.Start(rootCtx, name, trace.WithAttributes(
-		attribute.String(spanTypeAttribute, agentSpanType),
-		attribute.String("agent_name", name),
+		append([]attribute.KeyValue{
+			attribute.String(spanTypeAttribute, agentSpanType),
+			attribute.String("agent_name", name),
+		}, tags...)...,
 	))
 	setTraceJSON(agentSpan, inputAttribute, agentInput(request), new(bool))
-	return agentCtx, root, agentSpan, newEventSink(a.middleware.tracer, agentCtx, root), inputCutOff, nil
+	return agentCtx, root, agentSpan, newEventSink(a.middleware.tracer, agentCtx, root, tags), inputCutOff, nil
 }
 
 func finishRoot(root trace.Span, output any, err error, inputCutOff bool) {
@@ -1030,6 +1166,7 @@ type eventSink struct {
 	tracer  trace.Tracer
 	rootCtx context.Context
 	root    trace.Span
+	tags    []attribute.KeyValue
 
 	mu        sync.Mutex
 	rootRunID string
@@ -1037,9 +1174,9 @@ type eventSink struct {
 	nodes     map[string]nodeSpanState
 }
 
-func newEventSink(tracer trace.Tracer, rootCtx context.Context, root trace.Span) *eventSink {
+func newEventSink(tracer trace.Tracer, rootCtx context.Context, root trace.Span, tags []attribute.KeyValue) *eventSink {
 	return &eventSink{
-		tracer: tracer, rootCtx: rootCtx, root: root,
+		tracer: tracer, rootCtx: rootCtx, root: root, tags: tags,
 		runs: make(map[string]spanState), nodes: make(map[string]nodeSpanState),
 	}
 }
@@ -1091,7 +1228,7 @@ func (s *eventSink) startRun(event gopact.Event) {
 	}
 	ctx, span := s.tracer.Start(parent, name,
 		trace.WithTimestamp(eventTime(event)),
-		trace.WithAttributes(runAttributes(event, agentSpanType)...),
+		trace.WithAttributes(append(runAttributes(event, agentSpanType), s.tags...)...),
 	)
 	s.runs[event.RunID] = spanState{ctx: ctx, span: span}
 }
@@ -1131,7 +1268,7 @@ func (s *eventSink) startNode(event gopact.Event) {
 	}
 	_, span := s.tracer.Start(parent, name,
 		trace.WithTimestamp(eventTime(event)),
-		trace.WithAttributes(nodeAttributes(event)...),
+		trace.WithAttributes(append(nodeAttributes(event), s.tags...)...),
 	)
 	s.nodes[key] = nodeSpanState{span: span}
 }

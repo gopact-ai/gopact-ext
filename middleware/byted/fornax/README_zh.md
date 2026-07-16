@@ -11,6 +11,11 @@ middleware, err := fornax.New(ctx, fornax.Config{
 	AK:     ak,
 	SK:     sk,
 	Region: "CN", // 可选；按需使用 SG、US、Asia-SouthEastBD 或 I18N-DEV
+	PSM:    "your.service.psm",
+	UserID: "user-123",
+	Metadata: map[string]string{
+		"tenant": "tenant-1",
+	},
 })
 if err != nil {
 	return err
@@ -18,12 +23,14 @@ if err != nil {
 defer middleware.Close(context.Background())
 
 tracedAgent := middleware.Use(target)
+ctx = fornax.WithUserID(ctx, "user-456")
+ctx = fornax.WithMetadata(ctx, map[string]string{"request_id": "req-1"})
 response, err := tracedAgent.Invoke(ctx, request)
 ```
 
 如果 target 的动态类型实现了 `agent.StreamingAgent`，`Use` 会保留 `InvokeStream`；当 target 的静态类型就是 `agent.StreamingAgent` 时，可直接使用 `UseStreaming`。两种入口都会持续追踪到流正常结束、失败或被消费者取消。
 
-`AK` 和 `SK` 是 Fornax 空间凭据。`Region` 可选，会显式用于 Fornax 鉴权和 trace endpoint 选择，不依赖 `FORNAX_CUSTOM_REGION`。`SpaceID` 可选；传入时必须与 AK/SK 鉴权得到的空间一致。`Endpoint` 是高级覆盖项，用于指定完整 Fornax trace ingest URL。
+`AK` 和 `SK` 是 Fornax 空间凭据。`Region` 可选，会显式用于 Fornax 鉴权和 trace endpoint 选择，不依赖 `FORNAX_CUSTOM_REGION`。`SpaceID` 可选；传入时必须与 AK/SK 鉴权得到的空间一致。`Endpoint` 是高级覆盖项，用于指定完整 Fornax trace ingest URL。`PSM` 会写入 Fornax 鉴权 body，并作为 span tag `psm` 上报；未传时默认 `unknown_psm`，与 Fornax SDK 的兜底行为一致。`UserID`、`DeviceID` 和 `Metadata` 会作为字符串 tag 附加到所有上报 span，也可以通过 `WithUserID`、`WithDeviceID` 和 `WithMetadata` 按请求覆盖。
 
 Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。Workflow RunID 和 SessionID 分别映射为 Fornax `message_id` 和 `thread_id`；嵌套 Workflow run 上报为 `Agent`；名为 `model` 和 `tool` 的节点分别使用对应的 Fornax span type，其他节点使用 `graph`。传给 `Invoke` 的已有 event sink 会继续生效。应用退出时调用 `Close`，以刷新尚未上报的 span。
 
@@ -35,6 +42,9 @@ Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。Workflo
 | 根 Workflow `RunID` | `messaging.message.id` 和 `gopact.run_id` | 分别作为 Fornax `message_id` 和 gopact run 标识。 |
 | 嵌套 Workflow `RunID` | `gopact.run_id` | 子 Agent run 标识，不会替换根 `message_id`。 |
 | Workflow `SessionID` | 根 span 上的 `session.id` | Fornax `thread_id`，用于归组相关消息。 |
+| `Config.PSM` | 鉴权 `psm` 和 span tag `psm` | 上报服务身份。 |
+| `Config.UserID` / `Config.DeviceID`，或 context `WithUserID` / `WithDeviceID` | span tags `user_id` / `device_id` | 终端用户维度；context 值会覆盖单次调用中的 Config 默认值。 |
+| `Config.Metadata`，或 context `WithMetadata` | span string tags | 自定义可检索元数据；context tags 会叠加 Config 默认值，保留的 trace 协议字段会被忽略。 |
 | Workflow `ParentRunID` | OTel 父子关系和 `gopact.parent_run_id` | 将嵌套 Agent span 关联到父 run。 |
 | Workflow `DefinitionID` | `agent_name`；嵌套 Agent span 名称 | 标识 Workflow/Agent 定义。 |
 | 节点 `NodeID` | 节点 span 名称和 `gopact.node_id` | `model`、`tool` 使用对应 span type，其他值使用 `graph`。 |

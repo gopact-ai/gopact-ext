@@ -59,6 +59,7 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 		SK:       "sk-value",
 		SpaceID:  "67890",
 		Endpoint: server.URL + defaultTracePath,
+		PSM:      "demo.psm",
 	}, server.URL)
 	if err != nil {
 		t.Fatalf("authenticate() error = %v", err)
@@ -81,8 +82,8 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 	if !body.IsTCE {
 		t.Fatalf("auth body isTCE = false, want true")
 	}
-	if body.PSM != "unknown_psm" {
-		t.Fatalf("auth body psm = %q, want unknown_psm", body.PSM)
+	if body.PSM != "demo.psm" {
+		t.Fatalf("auth body psm = %q, want demo.psm", body.PSM)
 	}
 
 	_, err = authenticateWithHost(t.Context(), Config{
@@ -125,11 +126,21 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 		spaceID:       "12345",
 		endpoint:      server.URL + defaultTracePath,
 		authorization: "explicit-token",
+		psm:           "demo.psm",
+		userID:        "default-user",
+		deviceID:      "default-device",
+		metadata: map[string]string{
+			"tenant": "tenant-1",
+		},
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if _, err := middleware.Use(testAgent{}).Invoke(t.Context(), agent.Request{}); err != nil {
+	ctx := WithMetadata(WithDeviceID(WithUserID(t.Context(), "user-1"), "device-1"), map[string]string{
+		"request_id":      "request-1",
+		spanTypeAttribute: "bad",
+	})
+	if _, err := middleware.Use(testAgent{}).Invoke(ctx, agent.Request{}); err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
 	if err := middleware.Close(t.Context()); err != nil {
@@ -163,10 +174,28 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	}
 	rootFound := false
 	for _, span := range payload.Spans {
+		if span.TagsString[psmAttribute] != "demo.psm" {
+			t.Fatalf("%s psm tag = %q, want demo.psm", span.SpanName, span.TagsString[psmAttribute])
+		}
+		if span.TagsString[userIDAttribute] != "user-1" {
+			t.Fatalf("%s user_id tag = %q, want user-1", span.SpanName, span.TagsString[userIDAttribute])
+		}
+		if span.TagsString[deviceIDAttribute] != "device-1" {
+			t.Fatalf("%s device_id tag = %q, want device-1", span.SpanName, span.TagsString[deviceIDAttribute])
+		}
+		if span.TagsString["tenant"] != "tenant-1" {
+			t.Fatalf("%s tenant tag = %q, want tenant-1", span.SpanName, span.TagsString["tenant"])
+		}
+		if span.TagsString["request_id"] != "request-1" {
+			t.Fatalf("%s request_id tag = %q, want request-1", span.SpanName, span.TagsString["request_id"])
+		}
 		if span.SpanType == rootSpanType {
 			rootFound = true
 			if span.ParentID != "0" {
 				t.Fatalf("root parent_id = %q, want 0", span.ParentID)
+			}
+			if span.SpanType != rootSpanType {
+				t.Fatalf("reserved metadata overwrote span type: %q", span.SpanType)
 			}
 		}
 	}
@@ -178,7 +207,7 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider)
+	middleware := newMiddleware(provider, nil)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	var observed atomic.Int64
@@ -254,7 +283,7 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider)
+	middleware := newMiddleware(provider, nil)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	if _, err := middleware.Use(componentEventAgent{}).Invoke(t.Context(), agent.Request{
@@ -302,7 +331,7 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 func TestUseStreamingReportsOutput(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider)
+	middleware := newMiddleware(provider, nil)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	target, ok := middleware.Use(streamingTestAgent{}).(agent.StreamingAgent)
@@ -329,7 +358,7 @@ func TestUseStreamingReportsOutput(t *testing.T) {
 func TestStreamingConsumerStopEndsTrace(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider)
+	middleware := newMiddleware(provider, nil)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	for range middleware.UseStreaming(streamingTestAgent{}).InvokeStream(t.Context(), agent.Request{}) {
@@ -347,7 +376,7 @@ func TestStreamingConsumerStopEndsTrace(t *testing.T) {
 func TestStreamingTraceOutputIsBounded(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider)
+	middleware := newMiddleware(provider, nil)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	var chunks []agent.Chunk
@@ -379,7 +408,7 @@ func TestStreamingTraceOutputIsBounded(t *testing.T) {
 func TestUnaryTracePayloadsAreBounded(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider)
+	middleware := newMiddleware(provider, nil)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	largeText := strings.Repeat("x", maxTraceFieldBytes)
@@ -405,7 +434,7 @@ func TestUnaryTracePayloadsAreBounded(t *testing.T) {
 func TestMiddlewareReportsErrors(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider)
+	middleware := newMiddleware(provider, nil)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	if _, err := middleware.Use(failingTestAgent{}).Invoke(t.Context(), agent.Request{}); !errors.Is(err, errTestAgent) {
