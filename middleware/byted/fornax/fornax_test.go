@@ -98,6 +98,67 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 	}
 }
 
+func TestExporterRefreshesTokenAndRetriesUnauthorizedRequest(t *testing.T) {
+	initialToken := fakeJWT(67890)
+	refreshedToken := initialToken + ".refreshed"
+	var authCalls atomic.Int64
+	var traceCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, incoming *http.Request) {
+		if incoming.URL.Path == authPath {
+			token := initialToken
+			if authCalls.Add(1) > 1 {
+				token = refreshedToken
+			}
+			_, _ = response.Write([]byte(fmt.Sprintf(`{"jwtToken":%q}`, token)))
+			return
+		}
+		if incoming.URL.Path != defaultTracePath {
+			t.Errorf("request path = %q", incoming.URL.Path)
+			response.WriteHeader(http.StatusNotFound)
+			return
+		}
+		traceCalls.Add(1)
+		authorization := incoming.Header.Get("Authorization")
+		if authorization == initialToken {
+			response.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if authorization != refreshedToken {
+			t.Errorf("Authorization = %q, want initial or refreshed token", authorization)
+			response.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"code":0}`))
+	}))
+	defer server.Close()
+
+	auth, err := authenticateWithHost(t.Context(), Config{
+		AK:       "ak-value",
+		SK:       "sk-value",
+		Endpoint: server.URL + defaultTracePath,
+	}, server.URL)
+	if err != nil {
+		t.Fatalf("authenticate() error = %v", err)
+	}
+	middleware, err := newWithAuth(t.Context(), auth)
+	if err != nil {
+		t.Fatalf("newWithAuth() error = %v", err)
+	}
+	if _, err := middleware.Use(testAgent{}).Invoke(t.Context(), agent.Request{}); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if err := middleware.Close(t.Context()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := authCalls.Load(); got != 2 {
+		t.Fatalf("authentication requests = %d, want 2", got)
+	}
+	if got := traceCalls.Load(); got != 2 {
+		t.Fatalf("trace requests = %d, want 2", got)
+	}
+}
+
 func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:1/ambient")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "Authorization=ambient,cozeloop-workspace-id=999")
