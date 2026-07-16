@@ -39,8 +39,9 @@ Agent 调用上报为 `fornax_query`，Workflow RunID 和 SessionID 分别映射
 | Workflow `DefinitionID` | `agent_name`；嵌套 Agent span 名称 | 标识 Workflow/Agent 定义。 |
 | 节点 `NodeID` | 节点 span 名称和 `gopact.node_id` | `model`、`tool` 使用对应 span type，其他值使用 `graph`。 |
 | 节点 `ActivationID` / `AttemptID` | `gopact.activation_id` / `gopact.attempt_id` | 分别标识一次节点激活及其中一次执行尝试。 |
+| `ToolCall.ID` | typed tool span 上的 `tool_call_id` | 标识模型请求的工具调用，不是 OTel Span ID。 |
 | OTel Trace ID / Span ID | OTLP 原生 ID | 从输入 context 继承或由 OTel 生成，不从 RunID、SessionID 派生。 |
 
 Trace input/output 遵循 Fornax 的 4 MB 字段限制；超限值不再附加到 span，并在 `cut_off` 中标记。流式 chunk 仍会完整转发给应用，不受该上报限制影响。
 
-核心 Workflow event 契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型/工具结果。因此，该 middleware 可以上报节点耗时和状态，但不会虚构这些 provider 专属字段。
+核心 Workflow event 契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型/工具结果。支持 component observation 的 Agent 可以额外发出实时 typed model/tool observation；该 middleware 会用这些 observation 富化同一个节点 span，填入真实的请求、响应、token 用量、模型名、tool call ID 和工具结果。模型或工具 adapter 没有发出的字段不会被虚构。

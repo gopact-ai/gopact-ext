@@ -24,19 +24,26 @@ import (
 )
 
 const (
-	instrumentationName = "github.com/gopact-ai/gopact-ext/middleware/fornax"
-	spanTypeAttribute   = "cozeloop.span_type"
-	inputAttribute      = "cozeloop.input"
-	outputAttribute     = "cozeloop.output"
-	statusAttribute     = "cozeloop.status_code"
-	cutOffAttribute     = "cut_off"
-	messageIDAttribute  = "messaging.message.id"
-	threadIDAttribute   = "session.id"
-	rootSpanType        = "fornax_query"
-	maxTraceFieldBytes  = 4 << 20
-	decimalBase         = 10
-	spaceIDBitSize      = 64
-	failedStatusCode    = -1
+	instrumentationName   = "github.com/gopact-ai/gopact-ext/middleware/fornax"
+	spanTypeAttribute     = "cozeloop.span_type"
+	inputAttribute        = "cozeloop.input"
+	outputAttribute       = "cozeloop.output"
+	statusAttribute       = "cozeloop.status_code"
+	cutOffAttribute       = "cut_off"
+	messageIDAttribute    = "messaging.message.id"
+	threadIDAttribute     = "session.id"
+	modelNameAttribute    = "model_name"
+	inputTokensAttribute  = "input_tokens"
+	outputTokensAttribute = "output_tokens"
+	totalTokensAttribute  = "tokens"
+	finishReasonAttribute = "finish_reason"
+	toolNameAttribute     = "tool_name"
+	toolCallIDAttribute   = "tool_call_id"
+	rootSpanType          = "fornax_query"
+	maxTraceFieldBytes    = 4 << 20
+	decimalBase           = 10
+	spaceIDBitSize        = 64
+	failedStatusCode      = -1
 )
 
 // Config contains the values required to report traces to Fornax.
@@ -343,6 +350,13 @@ type spanState struct {
 	root bool
 }
 
+type nodeSpanState struct {
+	span         trace.Span
+	inputCutOff  bool
+	outputCutOff bool
+	failed       bool
+}
+
 type eventSink struct {
 	tracer  trace.Tracer
 	rootCtx context.Context
@@ -351,13 +365,13 @@ type eventSink struct {
 	mu        sync.Mutex
 	rootRunID string
 	runs      map[string]spanState
-	nodes     map[string]trace.Span
+	nodes     map[string]nodeSpanState
 }
 
 func newEventSink(tracer trace.Tracer, rootCtx context.Context, root trace.Span) *eventSink {
 	return &eventSink{
 		tracer: tracer, rootCtx: rootCtx, root: root,
-		runs: make(map[string]spanState), nodes: make(map[string]trace.Span),
+		runs: make(map[string]spanState), nodes: make(map[string]nodeSpanState),
 	}
 }
 
@@ -450,21 +464,21 @@ func (s *eventSink) startNode(event gopact.Event) {
 		trace.WithTimestamp(eventTime(event)),
 		trace.WithAttributes(nodeAttributes(event)...),
 	)
-	s.nodes[key] = span
+	s.nodes[key] = nodeSpanState{span: span}
 }
 
 func (s *eventSink) finishNode(event gopact.Event) {
 	key := nodeKey(event)
-	span, exists := s.nodes[key]
+	state, exists := s.nodes[key]
 	if !exists {
 		return
 	}
-	if event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped {
-		span.SetAttributes(attribute.Int(statusAttribute, 0))
+	if (event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped) && !state.failed {
+		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(span, errors.New(event.Type))
+		markError(state.span, errors.New(event.Type))
 	}
-	span.End(trace.WithTimestamp(eventTime(event)))
+	state.span.End(trace.WithTimestamp(eventTime(event)))
 	delete(s.nodes, key)
 }
 
@@ -474,11 +488,11 @@ func (s *eventSink) finish(err error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for key, span := range s.nodes {
+	for key, state := range s.nodes {
 		if err != nil {
-			markError(span, err)
+			markError(state.span, err)
 		}
-		span.End()
+		state.span.End()
 		delete(s.nodes, key)
 	}
 	for runID, state := range s.runs {
@@ -490,6 +504,123 @@ func (s *eventSink) finish(err error) {
 		}
 		state.span.End()
 		delete(s.runs, runID)
+	}
+}
+
+func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, state, ok := s.activeNode(ctx)
+	if !ok {
+		return nil
+	}
+	switch event.Type {
+	case gopact.ModelEventCallStarted:
+		state.span.SetAttributes(attribute.String(spanTypeAttribute, "model"))
+		if event.Request != nil {
+			setTraceJSON(state.span, inputAttribute, event.Request, &state.inputCutOff)
+			if event.Request.Model != "" {
+				state.span.SetAttributes(attribute.String(modelNameAttribute, event.Request.Model))
+			}
+		}
+	case gopact.ModelEventCallFinished:
+		if event.Response != nil {
+			setModelResponseAttributes(state.span, *event.Response, &state.outputCutOff)
+		}
+		if event.Err != nil {
+			markError(state.span, event.Err)
+			state.failed = true
+		}
+	case gopact.ModelEventUsage:
+		if event.Response != nil {
+			setUsageAttributes(state.span, event.Response.Usage)
+		}
+	}
+	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
+	s.nodes[key] = state
+	return nil
+}
+
+func (s *eventSink) EmitToolEvent(ctx context.Context, event gopact.ToolEvent) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, state, ok := s.activeNode(ctx)
+	if !ok {
+		return nil
+	}
+	switch event.Type {
+	case gopact.ToolEventCallStarted:
+		state.span.SetAttributes(
+			attribute.String(spanTypeAttribute, "tool"),
+			attribute.String(toolNameAttribute, event.Call.Name),
+			attribute.String(toolCallIDAttribute, event.Call.ID),
+		)
+		setTraceJSON(state.span, inputAttribute, event.Call, &state.inputCutOff)
+	case gopact.ToolEventCallFinished:
+		setTraceJSON(state.span, outputAttribute, event.Outcome, &state.outputCutOff)
+		if event.Err != nil {
+			markError(state.span, event.Err)
+			state.failed = true
+		} else if _, failed := event.Outcome.(gopact.ToolErrorOutcome); failed {
+			markError(state.span, errors.New("tool error outcome"))
+			state.failed = true
+		} else if value, failed := event.Outcome.(*gopact.ToolErrorOutcome); failed && value != nil {
+			markError(state.span, errors.New("tool error outcome"))
+			state.failed = true
+		}
+	}
+	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
+	s.nodes[key] = state
+	return nil
+}
+
+func (s *eventSink) activeNode(ctx context.Context) (string, nodeSpanState, bool) {
+	info := workflow.RunInfoFromContext(ctx)
+	if info.RunID == "" || info.ActivationID == "" {
+		return "", nodeSpanState{}, false
+	}
+	activationID := info.RunID + "/" + info.ActivationID
+	key := info.RunID + "\x00" + activationID
+	if info.Attempt > 0 {
+		key = info.RunID + "\x00" + activationID + "/attempt-" + strconv.Itoa(info.Attempt)
+	}
+	state, ok := s.nodes[key]
+	return key, state, ok
+}
+
+func setModelResponseAttributes(span trace.Span, response gopact.ModelResponse, outputCutOff *bool) {
+	setTraceJSON(span, outputAttribute, response, outputCutOff)
+	setUsageAttributes(span, response.Usage)
+	if response.FinishReason != "" {
+		span.SetAttributes(attribute.String(finishReasonAttribute, response.FinishReason))
+	}
+}
+
+func setUsageAttributes(span trace.Span, usage gopact.Usage) {
+	if usage.InputTokens != 0 {
+		span.SetAttributes(attribute.Int(inputTokensAttribute, usage.InputTokens))
+	}
+	if usage.OutputTokens != 0 {
+		span.SetAttributes(attribute.Int(outputTokensAttribute, usage.OutputTokens))
+	}
+	if usage.TotalTokens != 0 {
+		span.SetAttributes(attribute.Int(totalTokensAttribute, usage.TotalTokens))
+	}
+}
+
+func setTraceJSON(span trace.Span, key string, value any, cutOff *bool) {
+	encoded, truncated := traceJSON(value)
+	if encoded != "" {
+		span.SetAttributes(attribute.String(key, encoded))
+	}
+	if truncated {
+		*cutOff = true
 	}
 }
 
@@ -522,7 +653,7 @@ func nodeAttributes(event gopact.Event) []attribute.KeyValue {
 		attribute.String("gopact.attempt_id", event.AttemptID),
 	}
 	if nodeSpanType(event.NodeID) == "tool" {
-		attributes = append(attributes, attribute.String("tool_name", event.NodeID))
+		attributes = append(attributes, attribute.String(toolNameAttribute, event.NodeID))
 	}
 	return attributes
 }

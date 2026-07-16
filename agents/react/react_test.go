@@ -73,6 +73,43 @@ func TestAgentUsesWorkflowTurnFacts(t *testing.T) {
 	}
 }
 
+func TestAgentEmitsComponentEvents(t *testing.T) {
+	model := toolThenFinalModel("lookup")
+	tool := directTool("lookup", func(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
+		return resultOutcome(call, "found"), nil
+	})
+	target, err := New(testIdentity(), model, WithTools(tool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &componentEventRecorder{}
+	if _, err := target.Invoke(context.Background(), agent.Request{
+		Messages: []gopact.Message{gopact.UserMessage("work")},
+	}, gopact.WithEventSink(sink)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := modelEventTypes(sink.modelEvents); !reflect.DeepEqual(got, []gopact.ModelEventType{
+		gopact.ModelEventCallStarted,
+		gopact.ModelEventUsage,
+		gopact.ModelEventCallFinished,
+		gopact.ModelEventCallStarted,
+		gopact.ModelEventUsage,
+		gopact.ModelEventCallFinished,
+	}) {
+		t.Fatalf("model events = %v", got)
+	}
+	if got := toolEventTypes(sink.toolEvents); !reflect.DeepEqual(got, []gopact.ToolEventType{
+		gopact.ToolEventCallStarted,
+		gopact.ToolEventCallFinished,
+	}) {
+		t.Fatalf("tool events = %v", got)
+	}
+	if got := sink.toolEvents[1].Outcome.(gopact.ToolResultOutcome).Result.Preview; got != "found" {
+		t.Fatalf("tool outcome preview = %q, want found", got)
+	}
+}
+
 func TestAgentExecutesMultipleToolsAndReturnsStableFeedback(t *testing.T) {
 	model := &scriptedModel{responses: []gopact.ModelResponse{
 		{
@@ -686,7 +723,7 @@ func (model *scriptedModel) NewRequest(messages ...gopact.Message) gopact.ModelR
 	return gopact.ModelRequest{Messages: append([]gopact.Message(nil), messages...)}
 }
 
-func (model *scriptedModel) Invoke(_ context.Context, request gopact.ModelRequest, _ ...gopact.ModelCallOption) (gopact.ModelResponse, error) {
+func (model *scriptedModel) Invoke(ctx context.Context, request gopact.ModelRequest, options ...gopact.ModelCallOption) (gopact.ModelResponse, error) {
 	model.mu.Lock()
 	defer model.mu.Unlock()
 	model.requests = append(model.requests, request)
@@ -695,6 +732,12 @@ func (model *scriptedModel) Invoke(_ context.Context, request gopact.ModelReques
 	}
 	response := model.responses[model.next]
 	model.next++
+	config := gopact.ResolveModelCallOptions(options...)
+	for _, sink := range config.ModelEventSinks {
+		if err := sink.EmitModelEvent(ctx, gopact.ModelEvent{Type: gopact.ModelEventUsage, Response: &response}); err != nil {
+			return gopact.ModelResponse{}, err
+		}
+	}
 	return response, nil
 }
 
@@ -769,4 +812,42 @@ func toolThenFinalModel(name string) *scriptedModel {
 
 func testIdentity() agent.Identity {
 	return agent.Identity{Name: "react", Description: "tool-using agent", Version: "v1"}
+}
+
+type componentEventRecorder struct {
+	mu          sync.Mutex
+	modelEvents []gopact.ModelEvent
+	toolEvents  []gopact.ToolEvent
+}
+
+func (*componentEventRecorder) Emit(context.Context, gopact.Event) error { return nil }
+
+func (r *componentEventRecorder) EmitModelEvent(_ context.Context, event gopact.ModelEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.modelEvents = append(r.modelEvents, event)
+	return nil
+}
+
+func (r *componentEventRecorder) EmitToolEvent(_ context.Context, event gopact.ToolEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.toolEvents = append(r.toolEvents, event)
+	return nil
+}
+
+func modelEventTypes(events []gopact.ModelEvent) []gopact.ModelEventType {
+	types := make([]gopact.ModelEventType, len(events))
+	for index, event := range events {
+		types[index] = event.Type
+	}
+	return types
+}
+
+func toolEventTypes(events []gopact.ToolEvent) []gopact.ToolEventType {
+	types := make([]gopact.ToolEventType, len(events))
+	for index, event := range events {
+		types[index] = event.Type
+	}
+	return types
 }

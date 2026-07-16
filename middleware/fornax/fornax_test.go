@@ -153,6 +153,47 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	}
 }
 
+func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	middleware := newMiddleware(provider)
+	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+
+	if _, err := middleware.Use(componentEventAgent{}).Invoke(t.Context(), agent.Request{
+		Messages: []gopact.Message{gopact.UserMessage("hello")},
+	}); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+
+	spans := exporter.GetSpans()
+	model := spanNamed(t, spans, "model")
+	tool := spanNamed(t, spans, "tool")
+	if got := stringAttribute(model.Attributes, spanTypeAttribute); got != "model" {
+		t.Fatalf("model span type = %q, want model", got)
+	}
+	if got := stringAttribute(model.Attributes, modelNameAttribute); got != "demo-model" {
+		t.Fatalf("model_name = %q, want demo-model", got)
+	}
+	if got, ok := int64Attribute(model.Attributes, totalTokensAttribute); !ok || got != 3 {
+		t.Fatalf("tokens = %d, want 3", got)
+	}
+	if got := stringAttribute(model.Attributes, inputAttribute); !strings.Contains(got, "demo-model") {
+		t.Fatalf("model input = %q, want request payload", got)
+	}
+	if got := stringAttribute(model.Attributes, outputAttribute); !strings.Contains(got, "assistant") {
+		t.Fatalf("model output = %q, want response payload", got)
+	}
+	if got := stringAttribute(tool.Attributes, spanTypeAttribute); got != "tool" {
+		t.Fatalf("tool span type = %q, want tool", got)
+	}
+	if got := stringAttribute(tool.Attributes, toolCallIDAttribute); got != "call-1" {
+		t.Fatalf("tool_call_id = %q, want call-1", got)
+	}
+	if got := stringAttribute(tool.Attributes, outputAttribute); !strings.Contains(got, "tool-result") {
+		t.Fatalf("tool output = %q, want outcome payload", got)
+	}
+}
+
 func TestUseStreamingReportsOutput(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
@@ -388,6 +429,60 @@ func emitEvent(ctx context.Context, sinks []gopact.EventSink, event gopact.Event
 		}
 	}
 	return nil
+}
+
+type componentEventAgent struct{}
+
+func (componentEventAgent) Identity() agent.Identity {
+	return agent.Identity{Name: "component", Description: "component events", Version: "test"}
+}
+
+func (componentEventAgent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
+	wf := workflow.New[agent.Request, agent.Response]("component")
+	modelNode := wf.Node("model", func(ctx context.Context, request agent.Request) (agent.Request, error) {
+		modelRequest := gopact.ModelRequest{Model: "demo-model", Messages: request.Messages}
+		if err := workflow.EmitModelEvent(ctx, gopact.ModelEvent{
+			Type: gopact.ModelEventCallStarted, Request: &modelRequest,
+		}); err != nil {
+			return agent.Request{}, err
+		}
+		modelResponse := gopact.ModelResponse{
+			Message:      gopact.Message{Role: "assistant", Parts: []gopact.MessagePart{{Type: "text", Text: "use tool"}}},
+			Usage:        gopact.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+			FinishReason: "tool_calls",
+		}
+		if err := workflow.EmitModelEvent(ctx, gopact.ModelEvent{
+			Type: gopact.ModelEventCallFinished, Request: &modelRequest, Response: &modelResponse,
+		}); err != nil {
+			return agent.Request{}, err
+		}
+		return request, nil
+	})
+	toolNode := wf.Node("tool", func(ctx context.Context, _ agent.Request) (agent.Response, error) {
+		call := gopact.ToolCall{ID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{"query":"hello"}`)}
+		if err := workflow.EmitToolEvent(ctx, gopact.ToolEvent{Type: gopact.ToolEventCallStarted, Call: call}); err != nil {
+			return agent.Response{}, err
+		}
+		outcome := gopact.ToolResultOutcome{
+			CallID: call.ID, Name: call.Name, Result: gopact.ToolResult{Preview: "tool-result"},
+		}
+		if err := workflow.EmitToolEvent(ctx, gopact.ToolEvent{
+			Type: gopact.ToolEventCallFinished, Call: call, Outcome: outcome,
+		}); err != nil {
+			return agent.Response{}, err
+		}
+		return agent.Response{Message: gopact.Message{
+			Role: "assistant", Parts: []gopact.MessagePart{{Type: "text", Text: "done"}},
+		}}, nil
+	})
+	wf.Entry(modelNode)
+	wf.Edge(modelNode, toolNode)
+	wf.Exit(toolNode)
+	target, err := agent.NewWorkflowAgent(agent.Identity{Name: "component", Description: "component events", Version: "test"}, wf)
+	if err != nil {
+		return agent.Response{}, err
+	}
+	return target.Invoke(ctx, request, options...)
 }
 
 func spanNamed(t *testing.T, spans tracetest.SpanStubs, name string) tracetest.SpanStub {
