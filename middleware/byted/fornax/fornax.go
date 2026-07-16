@@ -530,12 +530,7 @@ func tagAttributes(psm, userID, deviceID string, metadata map[string]string) []a
 	return tags
 }
 
-func requestTags(
-	ctx context.Context,
-	defaults []attribute.KeyValue,
-	metadata map[string]string,
-	runConfig gopact.RunConfig,
-) []attribute.KeyValue {
+func requestTags(ctx context.Context, defaults []attribute.KeyValue, metadata map[string]string, runConfig gopact.RunConfig) []attribute.KeyValue {
 	tags := append([]attribute.KeyValue{}, defaults...)
 	tags = append(tags, tagAttributes("", "", "", metadata)...)
 	config := traceContext(ctx)
@@ -712,11 +707,7 @@ func (a *tracedAgent) Invoke(ctx context.Context, request agent.Request, options
 	return response, err
 }
 
-func (a *tracedAgent) startTrace(
-	ctx context.Context,
-	request agent.Request,
-	options []gopact.RunOption,
-) (context.Context, trace.Span, trace.Span, *eventSink, bool, error) {
+func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, options []gopact.RunOption) (context.Context, trace.Span, trace.Span, *eventSink, bool, error) {
 	if a == nil || a.middleware == nil || a.middleware.tracer == nil {
 		return nil, nil, nil, nil, false, errors.New("fornax: middleware is nil")
 	}
@@ -1215,13 +1206,7 @@ type eventSink struct {
 	nodes     map[string]nodeSpanState
 }
 
-func newEventSink(
-	tracer trace.Tracer,
-	rootCtx context.Context,
-	root trace.Span,
-	agent trace.Span,
-	tags []attribute.KeyValue,
-) *eventSink {
+func newEventSink(tracer trace.Tracer, rootCtx context.Context, root, agent trace.Span, tags []attribute.KeyValue) *eventSink {
 	return &eventSink{
 		tracer: tracer, rootCtx: rootCtx, root: root, agent: agent, tags: tags,
 		runs: make(map[string]spanState), nodes: make(map[string]nodeSpanState),
