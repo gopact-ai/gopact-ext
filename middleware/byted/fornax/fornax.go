@@ -35,8 +35,8 @@ const (
 	outputAttribute       = "cozeloop.output"
 	statusAttribute       = "cozeloop.status_code"
 	cutOffAttribute       = "cut_off"
-	messageIDAttribute    = "messaging.message.id"
-	threadIDAttribute     = "session.id"
+	messageIDAttribute    = "message_id"
+	threadIDAttribute     = "thread_id"
 	modelNameAttribute    = "model_name"
 	inputTokensAttribute  = "input_tokens"
 	outputTokensAttribute = "output_tokens"
@@ -51,7 +51,7 @@ const (
 	durationTag           = "duration"
 	psmFirstSpanTag       = "fornax_psm_first_span"
 	languageSystemTag     = "language"
-	agentSpanType         = "Agent"
+	agentSpanType         = "agent"
 	rootSpanType          = "fornax_query"
 	modelSpanType         = "model"
 	toolSpanType          = "tool"
@@ -530,19 +530,29 @@ func tagAttributes(psm, userID, deviceID string, metadata map[string]string) []a
 	return tags
 }
 
-func requestTags(ctx context.Context, defaults []attribute.KeyValue) []attribute.KeyValue {
-	config := traceContext(ctx)
-	if config.userID == "" && config.deviceID == "" && len(config.metadata) == 0 {
-		return defaults
-	}
+func requestTags(
+	ctx context.Context,
+	defaults []attribute.KeyValue,
+	metadata map[string]string,
+	runConfig gopact.RunConfig,
+) []attribute.KeyValue {
 	tags := append([]attribute.KeyValue{}, defaults...)
+	tags = append(tags, tagAttributes("", "", "", metadata)...)
+	config := traceContext(ctx)
 	tags = append(tags, tagAttributes("", config.userID, config.deviceID, config.metadata)...)
+	if runConfig.SessionID != "" {
+		tags = append(tags, attribute.String(threadIDAttribute, runConfig.SessionID))
+	}
+	if runConfig.RunID != "" {
+		tags = append(tags, attribute.String(messageIDAttribute, runConfig.RunID))
+	}
 	return tags
 }
 
 func reservedTraceAttribute(key string) bool {
 	switch key {
-	case spanTypeAttribute, inputAttribute, outputAttribute, statusAttribute, cutOffAttribute:
+	case spanTypeAttribute, inputAttribute, outputAttribute, statusAttribute, cutOffAttribute,
+		messageIDAttribute, threadIDAttribute:
 		return true
 	default:
 		return false
@@ -685,7 +695,7 @@ func (a *tracedAgent) Identity() agent.Identity {
 }
 
 func (a *tracedAgent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (response agent.Response, err error) {
-	spanCtx, root, agentSpan, sink, inputCutOff, err := a.startTrace(ctx, request)
+	spanCtx, root, agentSpan, sink, inputCutOff, err := a.startTrace(ctx, request, options)
 	if err != nil {
 		return agent.Response{}, err
 	}
@@ -702,7 +712,11 @@ func (a *tracedAgent) Invoke(ctx context.Context, request agent.Request, options
 	return response, err
 }
 
-func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (context.Context, trace.Span, trace.Span, *eventSink, bool, error) {
+func (a *tracedAgent) startTrace(
+	ctx context.Context,
+	request agent.Request,
+	options []gopact.RunOption,
+) (context.Context, trace.Span, trace.Span, *eventSink, bool, error) {
 	if a == nil || a.middleware == nil || a.middleware.tracer == nil {
 		return nil, nil, nil, nil, false, errors.New("fornax: middleware is nil")
 	}
@@ -712,7 +726,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (co
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	tags := requestTags(ctx, a.middleware.tags)
+	tags := requestTags(ctx, a.middleware.tags, request.Metadata, gopact.ResolveRunOptions(options...))
 	identity := a.target.Identity()
 	name := identity.Name
 	if name == "" {
@@ -805,7 +819,7 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 			yield(agent.Chunk{}, errors.New("fornax: target streaming agent is nil"))
 			return
 		}
-		spanCtx, root, agentSpan, sink, inputCutOff, err := a.startTrace(ctx, request)
+		spanCtx, root, agentSpan, sink, inputCutOff, err := a.startTrace(ctx, request, options)
 		if err != nil {
 			yield(agent.Chunk{}, err)
 			return
@@ -820,11 +834,9 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 					streamErr = context.Canceled
 				}
 			}
-			finishAgent(agentSpan, agent.Response{Message: gopact.Message{
-				Role:  gopact.MessageRoleAssistant,
-				Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: string(output.value())}},
-			}}, streamErr)
-			finishRoot(root, output.value(), streamErr, inputCutOff)
+			response := output.response()
+			finishAgent(agentSpan, response, streamErr)
+			finishRoot(root, response, streamErr, inputCutOff)
 			if output.truncated {
 				setCutOff(root, inputCutOff, true)
 			}
@@ -850,66 +862,45 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 }
 
 type streamOutput struct {
-	data      []byte
+	text      strings.Builder
 	truncated bool
 }
 
 func newStreamOutput() *streamOutput {
-	return &streamOutput{data: []byte{'['}}
+	return &streamOutput{}
 }
 
 func (o *streamOutput) add(chunk agent.Chunk) {
 	if o.truncated {
 		return
 	}
-	separatorBytes := 0
-	if len(o.data) > 1 {
-		separatorBytes = 1
-	}
-	remaining := maxTraceFieldBytes - len(o.data) - separatorBytes - 1
-	if remaining < 0 || !chunkMayFit(chunk, remaining) {
+	text := streamChunkText(chunk)
+	if len(text) > maxTraceFieldBytes-o.text.Len() {
 		o.truncated = true
 		return
 	}
-	encoded, err := json.Marshal(chunk)
-	if err != nil || len(encoded) > remaining {
-		o.truncated = true
-		return
-	}
-	if separatorBytes > 0 {
-		o.data = append(o.data, ',')
-	}
-	o.data = append(o.data, encoded...)
+	o.text.WriteString(text)
 }
 
-func (o *streamOutput) value() json.RawMessage {
-	return append(o.data, ']')
+func (o *streamOutput) response() agent.Response {
+	return agent.Response{Message: gopact.Message{
+		Role: gopact.MessageRoleAssistant,
+		Parts: []gopact.MessagePart{{
+			Type: gopact.MessagePartTypeText,
+			Text: o.text.String(),
+		}},
+	}}
 }
 
-func chunkMayFit(chunk agent.Chunk, remaining int) bool {
-	const (
-		emptyChunkBytes       = len(`{"Text":"","Parts":[]}`)
-		emptyPartBytes        = len(`{"Type":"","Text":"","Ref":null}`)
-		emptyArtifactRefBytes = len(`{"URI":"","Kind":"","Digest":""}`)
-		nullBytes             = len("null")
-	)
-	if !consumeBytes(&remaining, emptyChunkBytes) || !consumeBytes(&remaining, len(chunk.Text)) {
-		return false
+func streamChunkText(chunk agent.Chunk) string {
+	if chunk.Text != "" {
+		return chunk.Text
 	}
+	var text strings.Builder
 	for _, part := range chunk.Parts {
-		if !consumeBytes(&remaining, emptyPartBytes) ||
-			!consumeBytes(&remaining, len(part.Type)) ||
-			!consumeBytes(&remaining, len(part.Text)) {
-			return false
-		}
-		if part.Ref != nil && (!consumeBytes(&remaining, emptyArtifactRefBytes-nullBytes) ||
-			!consumeBytes(&remaining, len(part.Ref.URI)) ||
-			!consumeBytes(&remaining, len(part.Ref.Kind)) ||
-			!consumeBytes(&remaining, len(part.Ref.Digest))) {
-			return false
-		}
+		text.WriteString(part.Text)
 	}
-	return true
+	return text.String()
 }
 
 type queryPayload struct {
@@ -1196,14 +1187,6 @@ func toolOutput(outcome gopact.ToolOutcome) any {
 		return result.Result.Preview
 	}
 	return outcome
-}
-
-func consumeBytes(remaining *int, count int) bool {
-	if count > *remaining {
-		return false
-	}
-	*remaining -= count
-	return true
 }
 
 type spanState struct {
@@ -1519,11 +1502,11 @@ func runAttributes(event gopact.Event, spanType string) []attribute.KeyValue {
 	if event.DefinitionID != "" {
 		attributes = append(attributes, attribute.String("agent_name", event.DefinitionID))
 	}
+	if event.SessionID != "" {
+		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
+	}
 	if spanType == rootSpanType {
 		attributes = append(attributes, attribute.String(messageIDAttribute, event.RunID))
-		if event.SessionID != "" {
-			attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
-		}
 	}
 	if event.ParentRunID != "" {
 		attributes = append(attributes, attribute.String("gopact.parent_run_id", event.ParentRunID))
@@ -1538,6 +1521,9 @@ func nodeAttributes(event gopact.Event) []attribute.KeyValue {
 		attribute.String("gopact.node_id", event.NodeID),
 		attribute.String("gopact.activation_id", event.ActivationID),
 		attribute.String("gopact.attempt_id", event.AttemptID),
+	}
+	if event.SessionID != "" {
+		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
 	}
 	if nodeSpanType(event.NodeID) == "tool" {
 		attributes = append(attributes, attribute.String(toolNameAttribute, event.NodeID))

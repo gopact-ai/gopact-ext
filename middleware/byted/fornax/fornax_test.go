@@ -288,20 +288,20 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	if got := stringAttribute(root.Attributes, "cozeloop.span_type"); got != "fornax_query" {
 		t.Fatalf("root span type = %q, want fornax_query", got)
 	}
-	if got := stringAttribute(agentSpan.Attributes, "cozeloop.span_type"); got != "Agent" {
-		t.Fatalf("agent span type = %q, want Agent", got)
+	if got := stringAttribute(agentSpan.Attributes, "cozeloop.span_type"); got != "agent" {
+		t.Fatalf("agent span type = %q, want agent", got)
 	}
-	if got := stringAttribute(root.Attributes, "messaging.message.id"); got != "run-1" {
+	if got := stringAttribute(root.Attributes, "message_id"); got != "run-1" {
 		t.Fatalf("message_id = %q, want run-1", got)
 	}
-	if got := stringAttribute(root.Attributes, "session.id"); got != "session-1" {
+	if got := stringAttribute(root.Attributes, "thread_id"); got != "session-1" {
 		t.Fatalf("thread_id = %q, want session-1", got)
 	}
 	if got := stringAttribute(model.Attributes, "cozeloop.span_type"); got != "model" {
 		t.Fatalf("model span type = %q, want model", got)
 	}
-	if got := stringAttribute(child.Attributes, "cozeloop.span_type"); got != "Agent" {
-		t.Fatalf("nested span type = %q, want Agent", got)
+	if got := stringAttribute(child.Attributes, "cozeloop.span_type"); got != "agent" {
+		t.Fatalf("nested span type = %q, want agent", got)
 	}
 	if got := stringAttribute(tool.Attributes, "cozeloop.span_type"); got != "tool" {
 		t.Fatalf("tool span type = %q, want tool", got)
@@ -408,7 +408,16 @@ func TestUseStreamingReportsOutput(t *testing.T) {
 		t.Fatal("Use() removed StreamingAgent support")
 	}
 	var chunks []agent.Chunk
-	for chunk, err := range target.InvokeStream(t.Context(), agent.Request{}) {
+	request := agent.Request{Metadata: map[string]string{
+		"user_id": "user-1",
+		"chat_id": "chat-1",
+	}}
+	for chunk, err := range target.InvokeStream(
+		t.Context(),
+		request,
+		gopact.WithSessionID("thread-1"),
+		gopact.WithRunID("message-1"),
+	) {
 		if err != nil {
 			t.Fatalf("InvokeStream() error = %v", err)
 		}
@@ -417,10 +426,36 @@ func TestUseStreamingReportsOutput(t *testing.T) {
 	if len(chunks) != 2 || chunks[0].Text != "first" || chunks[1].Text != "second" {
 		t.Fatalf("InvokeStream() chunks = %+v", chunks)
 	}
-	root := spanNamedType(t, exporter.GetSpans(), "react", rootSpanType)
-	output := stringAttribute(root.Attributes, "cozeloop.output")
-	if !strings.Contains(output, "first") || !strings.Contains(output, "second") {
-		t.Fatalf("stream output = %q", output)
+	spans := exporter.GetSpans()
+	root := spanNamedType(t, spans, "react", rootSpanType)
+	agentSpan := spanNamedType(t, spans, "react", agentSpanType)
+	for _, span := range []tracetest.SpanStub{root, agentSpan} {
+		if got := stringAttribute(span.Attributes, threadIDAttribute); got != "thread-1" {
+			t.Fatalf("%s thread_id = %q, want thread-1", span.Name, got)
+		}
+		if got := stringAttribute(span.Attributes, userIDAttribute); got != "user-1" {
+			t.Fatalf("%s user_id = %q, want user-1", span.Name, got)
+		}
+		if got := stringAttribute(span.Attributes, "chat_id"); got != "chat-1" {
+			t.Fatalf("%s chat_id = %q, want chat-1", span.Name, got)
+		}
+	}
+	if got := stringAttribute(root.Attributes, messageIDAttribute); got != "message-1" {
+		t.Fatalf("message_id = %q, want message-1", got)
+	}
+	var output queryPayload
+	if err := json.Unmarshal([]byte(stringAttribute(root.Attributes, outputAttribute)), &output); err != nil {
+		t.Fatalf("stream output is not Fornax query JSON: %v", err)
+	}
+	if len(output.Contents) != 1 || output.Contents[0].Text != "firstsecond" {
+		t.Fatalf("stream output = %+v, want one firstsecond text content", output)
+	}
+	var agentText string
+	if err := json.Unmarshal([]byte(stringAttribute(agentSpan.Attributes, outputAttribute)), &agentText); err != nil {
+		t.Fatalf("agent output is not a JSON string: %v", err)
+	}
+	if agentText != "firstsecond" {
+		t.Fatalf("agent output = %q, want firstsecond", agentText)
 	}
 }
 
@@ -466,7 +501,7 @@ func TestStreamingTraceOutputIsBounded(t *testing.T) {
 	if len(output) > maxTraceFieldBytes {
 		t.Fatalf("stream trace output bytes = %d, limit = %d", len(output), maxTraceFieldBytes)
 	}
-	if !json.Valid([]byte(output)) {
+	if output != "" && !json.Valid([]byte(output)) {
 		t.Fatalf("stream trace output is invalid JSON: %q", output)
 	}
 	if got := stringAttribute(root.Attributes, cutOffAttribute); got != `["output"]` {
@@ -564,10 +599,6 @@ type streamingTestAgent struct{ testAgent }
 
 func (streamingTestAgent) InvokeStream(ctx context.Context, request agent.Request, options ...gopact.RunOption) iter.Seq2[agent.Chunk, error] {
 	return func(yield func(agent.Chunk, error) bool) {
-		if _, err := (testAgent{}).Invoke(ctx, request, options...); err != nil {
-			yield(agent.Chunk{}, err)
-			return
-		}
 		if !yield(agent.Chunk{Text: "first"}, nil) {
 			return
 		}
