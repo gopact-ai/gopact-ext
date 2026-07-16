@@ -47,6 +47,10 @@ const (
 	userIDAttribute       = "user_id"
 	deviceIDAttribute     = "device_id"
 	psmAttribute          = "psm"
+	spaceIDTag            = "fornax_space_id"
+	durationTag           = "duration"
+	psmFirstSpanTag       = "fornax_psm_first_span"
+	languageSystemTag     = "language"
 	agentSpanType         = "Agent"
 	rootSpanType          = "fornax_query"
 	modelSpanType         = "model"
@@ -333,10 +337,32 @@ func uploadSpanFrom(span sdktrace.ReadOnlySpan, spaceID, serviceName string) upl
 	for _, attr := range span.Attributes() {
 		applySpanAttribute(&out, attr)
 	}
+	applyDefaultSpanTags(&out)
 	if span.Status().Code == codes.Error && out.StatusCode == 0 {
 		out.StatusCode = failedStatusCode
 	}
 	return out
+}
+
+func applyDefaultSpanTags(span *uploadSpan) {
+	if span.SystemTagsString == nil {
+		span.SystemTagsString = map[string]string{}
+	}
+	span.SystemTagsString[languageSystemTag] = "go"
+	if span.TagsString == nil {
+		span.TagsString = map[string]string{}
+	}
+	span.TagsString[spaceIDTag] = span.WorkspaceID
+	if span.TagsLong == nil {
+		span.TagsLong = map[string]int64{}
+	}
+	span.TagsLong[durationTag] = span.DurationMicros
+	if span.SpanType == rootSpanType {
+		if span.TagsBool == nil {
+			span.TagsBool = map[string]bool{}
+		}
+		span.TagsBool[psmFirstSpanTag] = true
+	}
 }
 
 func parentID(span sdktrace.ReadOnlySpan) string {

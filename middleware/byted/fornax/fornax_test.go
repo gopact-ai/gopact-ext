@@ -177,6 +177,15 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 		if span.ServiceName != "demo.psm" {
 			t.Fatalf("%s service_name = %q, want demo.psm", span.SpanName, span.ServiceName)
 		}
+		if span.SystemTagsString[languageSystemTag] != "go" {
+			t.Fatalf("%s language system tag = %q, want go", span.SpanName, span.SystemTagsString[languageSystemTag])
+		}
+		if span.TagsString[spaceIDTag] != "12345" {
+			t.Fatalf("%s fornax_space_id tag = %q, want 12345", span.SpanName, span.TagsString[spaceIDTag])
+		}
+		if span.TagsLong[durationTag] < 0 {
+			t.Fatalf("%s duration tag = %d, want non-negative", span.SpanName, span.TagsLong[durationTag])
+		}
 		if span.TagsString[psmAttribute] != "demo.psm" {
 			t.Fatalf("%s psm tag = %q, want demo.psm", span.SpanName, span.TagsString[psmAttribute])
 		}
@@ -197,9 +206,14 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 			if span.ParentID != "0" {
 				t.Fatalf("root parent_id = %q, want 0", span.ParentID)
 			}
+			if !span.TagsBool[psmFirstSpanTag] {
+				t.Fatal("root fornax_psm_first_span tag = false, want true")
+			}
 			if span.SpanType != rootSpanType {
 				t.Fatalf("reserved metadata overwrote span type: %q", span.SpanType)
 			}
+		} else if span.TagsBool[psmFirstSpanTag] {
+			t.Fatalf("%s unexpectedly has fornax_psm_first_span", span.SpanName)
 		}
 	}
 	if !rootFound {
