@@ -58,7 +58,7 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 		AK:       "ak-value",
 		SK:       "sk-value",
 		SpaceID:  "67890",
-		Endpoint: server.URL + defaultOTLPTracePath,
+		Endpoint: server.URL + defaultTracePath,
 	}, server.URL)
 	if err != nil {
 		t.Fatalf("authenticate() error = %v", err)
@@ -89,7 +89,7 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 		AK:       "ak-value",
 		SK:       "sk-value",
 		SpaceID:  "1",
-		Endpoint: server.URL + defaultOTLPTracePath,
+		Endpoint: server.URL + defaultTracePath,
 	}, server.URL)
 	if err == nil || err.Error() != "fornax: space ID mismatch: configured 1, authenticated 67890" {
 		t.Fatalf("space ID mismatch error = %v", err)
@@ -102,7 +102,6 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 
 	type request struct {
 		authorization string
-		spaceID       string
 		path          string
 		body          []byte
 	}
@@ -114,19 +113,18 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 		}
 		requests <- request{
 			authorization: incoming.Header.Get("Authorization"),
-			spaceID:       incoming.Header.Get("cozeloop-workspace-id"),
 			path:          incoming.URL.Path,
 			body:          body,
 		}
-		response.Header().Set("Content-Type", "application/x-protobuf")
-		response.WriteHeader(http.StatusOK)
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"code":0}`))
 	}))
 	defer server.Close()
 
 	middleware, err := newWithAuth(t.Context(), authConfig{
 		spaceID:       "12345",
-		endpoint:      server.URL + "/open-api/observability/opentelemetry/v1/traces",
-		authorization: "Bearer explicit",
+		endpoint:      server.URL + defaultTracePath,
+		authorization: "explicit-token",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -144,17 +142,24 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("trace request was not received")
 	}
-	if got.authorization != "Bearer explicit" {
+	if got.authorization != "explicit-token" {
 		t.Fatalf("Authorization = %q, want explicit value", got.authorization)
 	}
-	if got.spaceID != "12345" {
-		t.Fatalf("workspace ID = %q, want 12345", got.spaceID)
-	}
-	if got.path != "/open-api/observability/opentelemetry/v1/traces" {
+	if got.path != defaultTracePath {
 		t.Fatalf("request path = %q", got.path)
 	}
 	if len(got.body) == 0 {
 		t.Fatal("trace request body is empty")
+	}
+	var payload traceIngestRequest
+	if err := json.Unmarshal(got.body, &payload); err != nil {
+		t.Fatalf("trace request body is not Fornax JSON: %v", err)
+	}
+	if len(payload.Spans) == 0 {
+		t.Fatal("trace request spans are empty")
+	}
+	if payload.Spans[0].WorkspaceID != "12345" {
+		t.Fatalf("workspace ID = %q, want 12345", payload.Spans[0].WorkspaceID)
 	}
 }
 

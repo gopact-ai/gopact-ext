@@ -2,6 +2,7 @@
 package fornax
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -23,7 +24,6 @@ import (
 	"github.com/gopact-ai/gopact/workflow"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -46,7 +46,7 @@ const (
 	toolCallIDAttribute   = "tool_call_id"
 	rootSpanType          = "fornax_query"
 	authPath              = "/open-apis/auth/v1/service_accounts/authenticate"
-	defaultOTLPTracePath  = "/open-api/observability/opentelemetry/v1/traces"
+	defaultTracePath      = "/open-api/observability/traces/ingest"
 	authVersion           = "auth-v1"
 	authTTLSeconds        = 3600
 	maxTraceFieldBytes    = 4 << 20
@@ -111,15 +111,11 @@ func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	exporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpointURL(endpoint),
-		otlptracehttp.WithHeaders(map[string]string{
-			"Authorization":         config.authorization,
-			"cozeloop-workspace-id": spaceID,
-		}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("fornax: create OTLP exporter: %w", err)
+	exporter := &traceExporter{
+		client:        http.DefaultClient,
+		endpoint:      endpoint,
+		authorization: config.authorization,
+		spaceID:       spaceID,
 	}
 	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))), nil
 }
@@ -156,9 +152,152 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 	}
 	endpoint := strings.TrimSpace(config.Endpoint)
 	if endpoint == "" {
-		endpoint = strings.TrimRight(host, "/") + defaultOTLPTracePath
+		endpoint = strings.TrimRight(host, "/") + defaultTracePath
 	}
 	return authConfig{spaceID: spaceID, endpoint: endpoint, authorization: token.jwt}, nil
+}
+
+type traceExporter struct {
+	client        *http.Client
+	endpoint      string
+	authorization string
+	spaceID       string
+}
+
+func (e *traceExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	if len(spans) == 0 {
+		return nil
+	}
+	payload := traceIngestRequest{Spans: make([]uploadSpan, 0, len(spans))}
+	for _, span := range spans {
+		payload.Spans = append(payload.Spans, uploadSpanFrom(span, e.spaceID))
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", e.authorization)
+	request.Header.Set("Agw-Js-Conv", "str")
+	response, err := e.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("fornax: export traces HTTP %d", response.StatusCode)
+	}
+	var result baseResponse
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return fmt.Errorf("fornax: decode trace export response: %w", err)
+	}
+	if result.Code != 0 {
+		return fmt.Errorf("fornax: export traces code %d: %s", result.Code, result.Msg)
+	}
+	return nil
+}
+
+func (*traceExporter) Shutdown(context.Context) error {
+	return nil
+}
+
+type traceIngestRequest struct {
+	Spans []uploadSpan `json:"spans"`
+}
+
+type uploadSpan struct {
+	StartedATMicros  int64              `json:"started_at_micros"`
+	LogID            string             `json:"log_id"`
+	SpanID           string             `json:"span_id"`
+	ParentID         string             `json:"parent_id"`
+	TraceID          string             `json:"trace_id"`
+	DurationMicros   int64              `json:"duration_micros"`
+	ServiceName      string             `json:"service_name"`
+	WorkspaceID      string             `json:"workspace_id"`
+	SpanName         string             `json:"span_name"`
+	SpanType         string             `json:"span_type"`
+	StatusCode       int32              `json:"status_code"`
+	Input            string             `json:"input"`
+	Output           string             `json:"output"`
+	ObjectStorage    string             `json:"object_storage"`
+	SystemTagsString map[string]string  `json:"system_tags_string"`
+	SystemTagsLong   map[string]int64   `json:"system_tags_long"`
+	SystemTagsDouble map[string]float64 `json:"system_tags_double"`
+	TagsString       map[string]string  `json:"tags_string"`
+	TagsLong         map[string]int64   `json:"tags_long"`
+	TagsDouble       map[string]float64 `json:"tags_double"`
+	TagsBool         map[string]bool    `json:"tags_bool"`
+}
+
+type baseResponse struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
+func uploadSpanFrom(span sdktrace.ReadOnlySpan, spaceID string) uploadSpan {
+	out := uploadSpan{
+		StartedATMicros: span.StartTime().UnixMicro(),
+		SpanID:          span.SpanContext().SpanID().String(),
+		ParentID:        span.Parent().SpanID().String(),
+		TraceID:         span.SpanContext().TraceID().String(),
+		DurationMicros:  span.EndTime().Sub(span.StartTime()).Microseconds(),
+		ServiceName:     instrumentationName,
+		WorkspaceID:     spaceID,
+		SpanName:        span.Name(),
+		SpanType:        "graph",
+	}
+	for _, attr := range span.Attributes() {
+		applySpanAttribute(&out, attr)
+	}
+	if span.Status().Code == codes.Error && out.StatusCode == 0 {
+		out.StatusCode = failedStatusCode
+	}
+	return out
+}
+
+func applySpanAttribute(span *uploadSpan, attr attribute.KeyValue) {
+	key := string(attr.Key)
+	switch key {
+	case spanTypeAttribute:
+		span.SpanType = attr.Value.AsString()
+	case inputAttribute:
+		span.Input = attr.Value.AsString()
+	case outputAttribute:
+		span.Output = attr.Value.AsString()
+	case statusAttribute:
+		span.StatusCode = int32(attr.Value.AsInt64())
+	default:
+		addTag(span, key, attr.Value)
+	}
+}
+
+func addTag(span *uploadSpan, key string, value attribute.Value) {
+	switch value.Type() {
+	case attribute.BOOL:
+		if span.TagsBool == nil {
+			span.TagsBool = make(map[string]bool)
+		}
+		span.TagsBool[key] = value.AsBool()
+	case attribute.INT64:
+		if span.TagsLong == nil {
+			span.TagsLong = make(map[string]int64)
+		}
+		span.TagsLong[key] = value.AsInt64()
+	case attribute.FLOAT64:
+		if span.TagsDouble == nil {
+			span.TagsDouble = make(map[string]float64)
+		}
+		span.TagsDouble[key] = value.AsFloat64()
+	default:
+		if span.TagsString == nil {
+			span.TagsString = make(map[string]string)
+		}
+		span.TagsString[key] = value.AsString()
+	}
 }
 
 type jwtToken struct {

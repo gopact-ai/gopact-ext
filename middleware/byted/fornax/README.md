@@ -2,7 +2,7 @@
 
 Chinese documentation: [README_zh.md](README_zh.md)
 
-`fornax` is a ByteDance-specific middleware that wraps a `gopact` Agent and reports its Agent, Workflow, and node spans to a Fornax OTLP/HTTP trace endpoint.
+`fornax` is a ByteDance-specific middleware that wraps a `gopact` Agent and reports its Agent, Workflow, and node spans to a Fornax trace ingest endpoint.
 
 Configuration is explicit. The middleware does not load credentials from environment variables; applications decide how to obtain and manage them.
 
@@ -23,7 +23,7 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 `Use` preserves `InvokeStream` when the target's dynamic type implements `agent.StreamingAgent`; use `UseStreaming` when the target is statically typed as `agent.StreamingAgent`. Streaming is traced through completion, failure, or consumer cancellation.
 
-`AK` and `SK` are the Fornax space credentials. `Region` is optional and is passed explicitly to the Fornax authentication and trace endpoints instead of relying on `FORNAX_CUSTOM_REGION`. `SpaceID` is optional; when provided, it must match the workspace resolved from AK/SK. `Endpoint` is an advanced override for the complete OTLP/HTTP trace URL.
+`AK` and `SK` are the Fornax space credentials. `Region` is optional and is passed explicitly to the Fornax authentication and trace endpoints instead of relying on `FORNAX_CUSTOM_REGION`. `SpaceID` is optional; when provided, it must match the workspace resolved from AK/SK. `Endpoint` is an advanced override for the complete Fornax trace ingest URL.
 
 The Agent invocation is reported as `fornax_query`, with the Workflow RunID and SessionID mapped to Fornax `message_id` and `thread_id`. Nested Workflow runs are reported as `agent`; nodes named `model` and `tool` use their corresponding Fornax span types, and other nodes use `graph`. Existing event sinks passed to `Invoke` remain attached. Call `Close` during application shutdown to flush pending spans.
 
@@ -31,7 +31,7 @@ The Agent invocation is reported as `fornax_query`, with the Workflow RunID and 
 
 | Source value | Exported value | Meaning in Fornax |
 | --- | --- | --- |
-| AK/SK authenticated workspace | HTTP header `cozeloop-workspace-id` | Target workspace; it is not a trace or span ID. |
+| AK/SK authenticated workspace | trace ingest `workspace_id` | Target workspace; it is not a trace or span ID. |
 | Root Workflow `RunID` | `messaging.message.id` and `gopact.run_id` | Fornax `message_id` and the gopact run identifier. |
 | Nested Workflow `RunID` | `gopact.run_id` | Child Agent run identifier; it does not replace the root `message_id`. |
 | Workflow `SessionID` | `session.id` on the root span | Fornax `thread_id`, used to group related messages. |
