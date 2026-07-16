@@ -157,13 +157,14 @@ func New(ctx context.Context, config Config) (*Middleware, error) {
 }
 
 type authConfig struct {
-	spaceID       string
-	endpoint      string
-	authorization string
-	psm           string
-	userID        string
-	deviceID      string
-	metadata      map[string]string
+	spaceID        string
+	endpoint       string
+	authorization  string
+	refreshRequest *tokenRequest
+	psm            string
+	userID         string
+	deviceID       string
+	metadata       map[string]string
 }
 
 func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
@@ -183,11 +184,12 @@ func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
 		ctx = context.Background()
 	}
 	exporter := &traceExporter{
-		client:        http.DefaultClient,
-		endpoint:      endpoint,
-		authorization: config.authorization,
-		spaceID:       spaceID,
-		serviceName:   effectivePSM(config.psm),
+		client:         http.DefaultClient,
+		endpoint:       endpoint,
+		authorization:  config.authorization,
+		refreshRequest: config.refreshRequest,
+		spaceID:        spaceID,
+		serviceName:    effectivePSM(config.psm),
 	}
 	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter)), traceTags(config)), nil
 }
@@ -216,14 +218,15 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 		return authConfig{}, errors.New("fornax: PSM is invalid")
 	}
 	psm = effectivePSM(psm)
-	token, err := fetchJWTToken(ctx, tokenRequest{
+	refreshRequest := tokenRequest{
 		client: http.DefaultClient,
 		host:   host,
 		ak:     ak,
 		sk:     sk,
 		region: config.Region,
 		psm:    psm,
-	})
+	}
+	token, err := fetchJWTToken(ctx, refreshRequest)
 	if err != nil {
 		return authConfig{}, fmt.Errorf("fornax: get token: %w", err)
 	}
@@ -239,22 +242,24 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 		endpoint = strings.TrimRight(host, "/") + defaultTracePath
 	}
 	return authConfig{
-		spaceID:       spaceID,
-		endpoint:      endpoint,
-		authorization: token.jwt,
-		psm:           psm,
-		userID:        config.UserID,
-		deviceID:      config.DeviceID,
-		metadata:      copyMetadata(config.Metadata),
+		spaceID:        spaceID,
+		endpoint:       endpoint,
+		authorization:  token.jwt,
+		refreshRequest: &refreshRequest,
+		psm:            psm,
+		userID:         config.UserID,
+		deviceID:       config.DeviceID,
+		metadata:       copyMetadata(config.Metadata),
 	}, nil
 }
 
 type traceExporter struct {
-	client        *http.Client
-	endpoint      string
-	authorization string
-	spaceID       string
-	serviceName   string
+	client         *http.Client
+	endpoint       string
+	authorization  string
+	refreshRequest *tokenRequest
+	spaceID        string
+	serviceName    string
 }
 
 func (e *traceExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
@@ -269,29 +274,47 @@ func (e *traceExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOn
 	if err != nil {
 		return err
 	}
+	statusCode, err := e.export(ctx, body)
+	if statusCode != http.StatusUnauthorized || e.refreshRequest == nil {
+		return err
+	}
+	token, refreshErr := fetchJWTToken(ctx, *e.refreshRequest)
+	if refreshErr != nil {
+		return fmt.Errorf("fornax: refresh token: %w", refreshErr)
+	}
+	spaceID := strconv.FormatInt(token.spaceID, decimalBase)
+	if spaceID != e.spaceID {
+		return fmt.Errorf("fornax: refreshed token space ID changed from %s to %s", e.spaceID, spaceID)
+	}
+	e.authorization = token.jwt
+	_, err = e.export(ctx, body)
+	return err
+}
+
+func (e *traceExporter) export(ctx context.Context, body []byte) (int, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", e.authorization)
 	request.Header.Set("Agw-Js-Conv", "str")
 	response, err := e.client.Do(request)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("fornax: export traces HTTP %d", response.StatusCode)
+		return response.StatusCode, fmt.Errorf("fornax: export traces HTTP %d", response.StatusCode)
 	}
 	var result baseResponse
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		return fmt.Errorf("fornax: decode trace export response: %w", err)
+		return response.StatusCode, fmt.Errorf("fornax: decode trace export response: %w", err)
 	}
 	if result.Code != 0 {
-		return fmt.Errorf("fornax: export traces code %d: %s", result.Code, result.Msg)
+		return response.StatusCode, fmt.Errorf("fornax: export traces code %d: %s", result.Code, result.Msg)
 	}
-	return nil
+	return response.StatusCode, nil
 }
 
 func (*traceExporter) Shutdown(context.Context) error {
