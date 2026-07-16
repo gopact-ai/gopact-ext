@@ -1,0 +1,565 @@
+// Package fornax reports gopact Agent traces to a Fornax OTLP endpoint.
+package fornax
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"iter"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/gopact/agent"
+	"github.com/gopact-ai/gopact/workflow"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	instrumentationName = "github.com/gopact-ai/gopact-ext/middleware/fornax"
+	spanTypeAttribute   = "cozeloop.span_type"
+	inputAttribute      = "cozeloop.input"
+	outputAttribute     = "cozeloop.output"
+	statusAttribute     = "cozeloop.status_code"
+	cutOffAttribute     = "cut_off"
+	messageIDAttribute  = "messaging.message.id"
+	threadIDAttribute   = "session.id"
+	rootSpanType        = "fornax_query"
+	maxTraceFieldBytes  = 4 << 20
+	decimalBase         = 10
+	spaceIDBitSize      = 64
+	failedStatusCode    = -1
+)
+
+// Config contains the values required to report traces to Fornax.
+// The caller owns how these values are obtained and managed.
+type Config struct {
+	// SpaceID identifies the target Fornax workspace.
+	SpaceID string
+	// Endpoint is the complete OTLP/HTTP trace URL, including /v1/traces.
+	Endpoint string
+	// Authorization is sent unchanged as the HTTP Authorization header.
+	Authorization string
+}
+
+// Middleware wraps Agents with Fornax tracing.
+type Middleware struct {
+	provider *sdktrace.TracerProvider
+	tracer   trace.Tracer
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// New creates a Fornax middleware from explicit configuration.
+func New(ctx context.Context, config Config) (*Middleware, error) {
+	spaceID := strings.TrimSpace(config.SpaceID)
+	endpoint := strings.TrimSpace(config.Endpoint)
+	if _, err := strconv.ParseUint(spaceID, decimalBase, spaceIDBitSize); err != nil || spaceID == "0" {
+		return nil, errors.New("fornax: space ID must be a positive integer")
+	}
+	parsedEndpoint, err := url.Parse(endpoint)
+	if err != nil || (parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") || parsedEndpoint.Host == "" {
+		return nil, errors.New("fornax: endpoint must be an absolute HTTP URL")
+	}
+	if strings.TrimSpace(config.Authorization) == "" || strings.ContainsAny(config.Authorization, "\r\n") {
+		return nil, errors.New("fornax: authorization is invalid")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	exporter, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpointURL(endpoint),
+		otlptracehttp.WithHeaders(map[string]string{
+			"Authorization":         config.Authorization,
+			"cozeloop-workspace-id": spaceID,
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fornax: create OTLP exporter: %w", err)
+	}
+	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))), nil
+}
+
+func newMiddleware(provider *sdktrace.TracerProvider) *Middleware {
+	return &Middleware{provider: provider, tracer: provider.Tracer(instrumentationName)}
+}
+
+// Use wraps target with Fornax tracing.
+func (m *Middleware) Use(target agent.Agent) agent.Agent {
+	if streaming, ok := target.(agent.StreamingAgent); ok {
+		return m.UseStreaming(streaming)
+	}
+	return &tracedAgent{middleware: m, target: target}
+}
+
+// UseStreaming wraps a streaming target without removing its streaming API.
+func (m *Middleware) UseStreaming(target agent.StreamingAgent) agent.StreamingAgent {
+	traced := &tracedAgent{middleware: m, target: target}
+	return &tracedStreamingAgent{tracedAgent: traced, streaming: target}
+}
+
+// Close flushes pending spans and releases exporter resources.
+func (m *Middleware) Close(ctx context.Context) error {
+	if m == nil || m.provider == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.closeOnce.Do(func() {
+		m.closeErr = m.provider.Shutdown(ctx)
+	})
+	return m.closeErr
+}
+
+type tracedAgent struct {
+	middleware *Middleware
+	target     agent.Agent
+}
+
+func (a *tracedAgent) Identity() agent.Identity {
+	if a == nil || a.target == nil {
+		return agent.Identity{}
+	}
+	return a.target.Identity()
+}
+
+func (a *tracedAgent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (response agent.Response, err error) {
+	spanCtx, root, sink, inputCutOff, err := a.startTrace(ctx, request)
+	if err != nil {
+		return agent.Response{}, err
+	}
+	defer func() {
+		sink.finish(err)
+		root.End()
+	}()
+
+	options = append(options, gopact.WithEventSink(sink))
+	response, err = a.target.Invoke(spanCtx, request, options...)
+	finishRoot(root, response, err, inputCutOff)
+	return response, err
+}
+
+func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (context.Context, trace.Span, *eventSink, bool, error) {
+	if a == nil || a.middleware == nil || a.middleware.tracer == nil {
+		return nil, nil, nil, false, errors.New("fornax: middleware is nil")
+	}
+	if a.target == nil {
+		return nil, nil, nil, false, errors.New("fornax: target agent is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	identity := a.target.Identity()
+	name := identity.Name
+	if name == "" {
+		name = "agent"
+	}
+	attributes := []attribute.KeyValue{
+		attribute.String(spanTypeAttribute, rootSpanType),
+		attribute.String("agent_name", name),
+	}
+	input, inputCutOff := traceJSON(request)
+	if input != "" {
+		attributes = append(attributes, attribute.String(inputAttribute, input))
+	}
+	if inputCutOff {
+		attributes = append(attributes, attribute.String(cutOffAttribute, `["input"]`))
+	}
+	spanCtx, root := a.middleware.tracer.Start(ctx, name, trace.WithAttributes(attributes...))
+	return spanCtx, root, newEventSink(a.middleware.tracer, spanCtx, root), inputCutOff, nil
+}
+
+func finishRoot(root trace.Span, output any, err error, inputCutOff bool) {
+	if err != nil {
+		markError(root, err)
+		return
+	}
+	root.SetAttributes(attribute.Int(statusAttribute, 0))
+	encoded, outputCutOff := traceJSON(output)
+	if encoded != "" {
+		root.SetAttributes(attribute.String(outputAttribute, encoded))
+	}
+	if outputCutOff {
+		setCutOff(root, inputCutOff, true)
+	}
+}
+
+func traceJSON(value any) (string, bool) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", false
+	}
+	if len(encoded) > maxTraceFieldBytes {
+		return "", true
+	}
+	return string(encoded), false
+}
+
+func setCutOff(span trace.Span, input, output bool) {
+	switch {
+	case input && output:
+		span.SetAttributes(attribute.String(cutOffAttribute, `["input","output"]`))
+	case input:
+		span.SetAttributes(attribute.String(cutOffAttribute, `["input"]`))
+	case output:
+		span.SetAttributes(attribute.String(cutOffAttribute, `["output"]`))
+	}
+}
+
+type tracedStreamingAgent struct {
+	*tracedAgent
+	streaming agent.StreamingAgent
+}
+
+func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.Request, options ...gopact.RunOption) iter.Seq2[agent.Chunk, error] {
+	return func(yield func(agent.Chunk, error) bool) {
+		if a == nil || a.streaming == nil || a.tracedAgent == nil {
+			yield(agent.Chunk{}, errors.New("fornax: target streaming agent is nil"))
+			return
+		}
+		spanCtx, root, sink, inputCutOff, err := a.startTrace(ctx, request)
+		if err != nil {
+			yield(agent.Chunk{}, err)
+			return
+		}
+		output := newStreamOutput()
+		var streamErr error
+		completed := false
+		defer func() {
+			if !completed && streamErr == nil {
+				streamErr = spanCtx.Err()
+				if streamErr == nil {
+					streamErr = context.Canceled
+				}
+			}
+			finishRoot(root, output.value(), streamErr, inputCutOff)
+			if output.truncated {
+				setCutOff(root, inputCutOff, true)
+			}
+			sink.finish(streamErr)
+			root.End()
+		}()
+
+		options = append(options, gopact.WithEventSink(sink))
+		for chunk, itemErr := range a.streaming.InvokeStream(spanCtx, request, options...) {
+			if itemErr != nil {
+				streamErr = itemErr
+				yield(chunk, itemErr)
+				return
+			}
+			output.add(chunk)
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+		completed = true
+	}
+}
+
+type streamOutput struct {
+	data      []byte
+	truncated bool
+}
+
+func newStreamOutput() *streamOutput {
+	return &streamOutput{data: []byte{'['}}
+}
+
+func (o *streamOutput) add(chunk agent.Chunk) {
+	if o.truncated {
+		return
+	}
+	separatorBytes := 0
+	if len(o.data) > 1 {
+		separatorBytes = 1
+	}
+	remaining := maxTraceFieldBytes - len(o.data) - separatorBytes - 1
+	if remaining < 0 || !chunkMayFit(chunk, remaining) {
+		o.truncated = true
+		return
+	}
+	encoded, err := json.Marshal(chunk)
+	if err != nil || len(encoded) > remaining {
+		o.truncated = true
+		return
+	}
+	if separatorBytes > 0 {
+		o.data = append(o.data, ',')
+	}
+	o.data = append(o.data, encoded...)
+}
+
+func (o *streamOutput) value() json.RawMessage {
+	return append(o.data, ']')
+}
+
+func chunkMayFit(chunk agent.Chunk, remaining int) bool {
+	const (
+		emptyChunkBytes       = len(`{"Text":"","Parts":[]}`)
+		emptyPartBytes        = len(`{"Type":"","Text":"","Ref":null}`)
+		emptyArtifactRefBytes = len(`{"URI":"","Kind":"","Digest":""}`)
+		nullBytes             = len("null")
+	)
+	if !consumeBytes(&remaining, emptyChunkBytes) || !consumeBytes(&remaining, len(chunk.Text)) {
+		return false
+	}
+	for _, part := range chunk.Parts {
+		if !consumeBytes(&remaining, emptyPartBytes) ||
+			!consumeBytes(&remaining, len(part.Type)) ||
+			!consumeBytes(&remaining, len(part.Text)) {
+			return false
+		}
+		if part.Ref != nil && (!consumeBytes(&remaining, emptyArtifactRefBytes-nullBytes) ||
+			!consumeBytes(&remaining, len(part.Ref.URI)) ||
+			!consumeBytes(&remaining, len(part.Ref.Kind)) ||
+			!consumeBytes(&remaining, len(part.Ref.Digest))) {
+			return false
+		}
+	}
+	return true
+}
+
+func consumeBytes(remaining *int, count int) bool {
+	if count > *remaining {
+		return false
+	}
+	*remaining -= count
+	return true
+}
+
+type spanState struct {
+	ctx  context.Context
+	span trace.Span
+	root bool
+}
+
+type eventSink struct {
+	tracer  trace.Tracer
+	rootCtx context.Context
+	root    trace.Span
+
+	mu        sync.Mutex
+	rootRunID string
+	runs      map[string]spanState
+	nodes     map[string]trace.Span
+}
+
+func newEventSink(tracer trace.Tracer, rootCtx context.Context, root trace.Span) *eventSink {
+	return &eventSink{
+		tracer: tracer, rootCtx: rootCtx, root: root,
+		runs: make(map[string]spanState), nodes: make(map[string]trace.Span),
+	}
+}
+
+func (s *eventSink) Emit(_ context.Context, event gopact.Event) error {
+	if s == nil || s.tracer == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch event.Type {
+	case workflow.EventWorkflowStarted, workflow.EventWorkflowResumed,
+		workflow.EventWorkflowRetryStarted, workflow.EventWorkflowJumpStarted:
+		s.startRun(event)
+	case workflow.EventWorkflowCompleted, workflow.EventWorkflowFailed,
+		workflow.EventWorkflowCanceled, workflow.EventWorkflowTerminated,
+		workflow.EventWorkflowInterrupted:
+		s.finishRun(event)
+	case workflow.EventNodeStarted:
+		s.startNode(event)
+	case workflow.EventNodeRetrying, workflow.EventNodeCompleted,
+		workflow.EventNodeCanceled, workflow.EventNodeSuperseded,
+		workflow.EventNodeSkipped, workflow.EventNodeFailed:
+		s.finishNode(event)
+	}
+	return nil
+}
+
+func (s *eventSink) startRun(event gopact.Event) {
+	if event.RunID == "" {
+		return
+	}
+	if _, exists := s.runs[event.RunID]; exists {
+		return
+	}
+	if s.rootRunID == "" && event.ParentRunID == "" {
+		s.rootRunID = event.RunID
+		s.root.SetAttributes(runAttributes(event, rootSpanType)...)
+		s.runs[event.RunID] = spanState{ctx: s.rootCtx, span: s.root, root: true}
+		return
+	}
+	parent := s.rootCtx
+	if parentRun, exists := s.runs[event.ParentRunID]; exists {
+		parent = parentRun.ctx
+	}
+	name := event.DefinitionID
+	if name == "" {
+		name = "agent"
+	}
+	ctx, span := s.tracer.Start(parent, name,
+		trace.WithTimestamp(eventTime(event)),
+		trace.WithAttributes(runAttributes(event, "agent")...),
+	)
+	s.runs[event.RunID] = spanState{ctx: ctx, span: span}
+}
+
+func (s *eventSink) finishRun(event gopact.Event) {
+	state, exists := s.runs[event.RunID]
+	if !exists {
+		return
+	}
+	if event.Type == workflow.EventWorkflowCompleted {
+		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
+	} else {
+		markError(state.span, errors.New(event.Type))
+	}
+	if state.root {
+		return
+	}
+	state.span.End(trace.WithTimestamp(eventTime(event)))
+	delete(s.runs, event.RunID)
+}
+
+func (s *eventSink) startNode(event gopact.Event) {
+	key := nodeKey(event)
+	if key == "" {
+		return
+	}
+	if _, exists := s.nodes[key]; exists {
+		return
+	}
+	parent := s.rootCtx
+	if run, exists := s.runs[event.RunID]; exists {
+		parent = run.ctx
+	}
+	name := event.NodeID
+	if name == "" {
+		name = "node"
+	}
+	_, span := s.tracer.Start(parent, name,
+		trace.WithTimestamp(eventTime(event)),
+		trace.WithAttributes(nodeAttributes(event)...),
+	)
+	s.nodes[key] = span
+}
+
+func (s *eventSink) finishNode(event gopact.Event) {
+	key := nodeKey(event)
+	span, exists := s.nodes[key]
+	if !exists {
+		return
+	}
+	if event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped {
+		span.SetAttributes(attribute.Int(statusAttribute, 0))
+	} else {
+		markError(span, errors.New(event.Type))
+	}
+	span.End(trace.WithTimestamp(eventTime(event)))
+	delete(s.nodes, key)
+}
+
+func (s *eventSink) finish(err error) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, span := range s.nodes {
+		if err != nil {
+			markError(span, err)
+		}
+		span.End()
+		delete(s.nodes, key)
+	}
+	for runID, state := range s.runs {
+		if state.root {
+			continue
+		}
+		if err != nil {
+			markError(state.span, err)
+		}
+		state.span.End()
+		delete(s.runs, runID)
+	}
+}
+
+func runAttributes(event gopact.Event, spanType string) []attribute.KeyValue {
+	attributes := []attribute.KeyValue{
+		attribute.String(spanTypeAttribute, spanType),
+		attribute.String("gopact.run_id", event.RunID),
+	}
+	if event.DefinitionID != "" {
+		attributes = append(attributes, attribute.String("agent_name", event.DefinitionID))
+	}
+	if spanType == rootSpanType {
+		attributes = append(attributes, attribute.String(messageIDAttribute, event.RunID))
+		if event.SessionID != "" {
+			attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
+		}
+	}
+	if event.ParentRunID != "" {
+		attributes = append(attributes, attribute.String("gopact.parent_run_id", event.ParentRunID))
+	}
+	return attributes
+}
+
+func nodeAttributes(event gopact.Event) []attribute.KeyValue {
+	attributes := []attribute.KeyValue{
+		attribute.String(spanTypeAttribute, nodeSpanType(event.NodeID)),
+		attribute.String("gopact.run_id", event.RunID),
+		attribute.String("gopact.node_id", event.NodeID),
+		attribute.String("gopact.activation_id", event.ActivationID),
+		attribute.String("gopact.attempt_id", event.AttemptID),
+	}
+	if nodeSpanType(event.NodeID) == "tool" {
+		attributes = append(attributes, attribute.String("tool_name", event.NodeID))
+	}
+	return attributes
+}
+
+func nodeSpanType(nodeID string) string {
+	switch strings.ToLower(nodeID) {
+	case "model":
+		return "model"
+	case "tool":
+		return "tool"
+	default:
+		return "graph"
+	}
+}
+
+func nodeKey(event gopact.Event) string {
+	if event.AttemptID != "" {
+		return event.RunID + "\x00" + event.AttemptID
+	}
+	if event.ActivationID != "" {
+		return event.RunID + "\x00" + event.ActivationID
+	}
+	return ""
+}
+
+func eventTime(event gopact.Event) time.Time {
+	if event.Timestamp.IsZero() {
+		return time.Now()
+	}
+	return event.Timestamp
+}
+
+func markError(span trace.Span, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	span.SetAttributes(
+		attribute.String("error", err.Error()),
+		attribute.Int(statusAttribute, failedStatusCode),
+	)
+}

@@ -11,11 +11,12 @@ Official extensions for the redesigned `gopact` core.
 Until the coordinated RC modules are published, this repository is a source-development
 checkout: clone `gopact` beside `gopact-ext`; the committed `go.work` joins the source
 modules without changing their published dependency contract. A standalone clone is
-supported only after the corresponding tagged modules have passed clean-consumer verification.
+supported only after the corresponding exact module versions are available through the
+configured Go proxy and have passed clean-consumer verification.
 
 ## Release verification
 
-The manifest defines the release order. Each row names a module, its exact tag, and a package to compile from a clean consumer. During the module extraction the order is `gopact` → `gopact-ext/models/openai` → legacy `gopact-ext` → `gopact-ext/stores` → `gopact-examples`; the legacy root entry will disappear after its domains have standalone modules. Increase the prefix after each approved tag; omitting it checks the full manifest:
+The manifest defines the release order. Each row names a module, its exact release version, and a package to compile from a clean consumer. During the module extraction the order is `gopact` → `gopact-ext/models/openai` → legacy `gopact-ext` → `gopact-ext/stores` → `gopact-examples`; the legacy root entry will disappear after its domains have standalone modules. The `gopact v0.1.0-rc.3` VCS tag was removed during the history rewrite, but its immutable module artifact remains available from the public Go proxy and is still required by the published ext RC modules. Active source modules pin the equivalent post-rewrite commit; replace the historical manifest row after a new core release is available. Increase the prefix after each exact module version is available through the configured proxy; omitting it checks the full manifest:
 
 ```bash
 ./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
@@ -82,6 +83,12 @@ OpenAI organization usage is API-platform metering and is not the same thing as 
 | [`stores/mysql`](./stores/mysql) | Multi-host persistence on MySQL |
 | [`stores/mariadb`](./stores/mariadb) | Multi-host persistence on MariaDB through the MySQL dialect |
 | [`stores/postgres`](./stores/postgres) | Multi-host persistence on PostgreSQL |
+
+### Middleware
+
+| Package | Use it for |
+| --- | --- |
+| [`middleware/fornax`](./middleware/fornax) | Report Agent, Workflow, and node traces to Fornax with explicit configuration |
 
 For complete runnable applications, see [gopact-examples](https://github.com/gopact-ai/gopact-examples).
 
