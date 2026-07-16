@@ -3,11 +3,13 @@ module github.com/gopact-ai/gopact-ext/middleware/byted/fornax
 go 1.27
 
 require (
-	github.com/gopact-ai/gopact v0.0.0-20260716101400-d2f2a74a3ced // rewritten equivalent of the removed v0.1.0-rc.3 tag
+	github.com/gopact-ai/gopact v0.1.0-rc.4
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0
 )
+
+retract v0.1.0-rc.1 // Requires an unpublished core revision and fails under normal MVS.
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

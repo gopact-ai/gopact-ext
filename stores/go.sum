@@ -11,8 +11,8 @@ github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17k
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e/go.mod h1:boTsfXsheKC2y+lKOCMpSfarhxDeIzfZG1jqGcPl3cA=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/gopact-ai/gopact v0.0.0-20260715175854-19c7fe707d87 h1:r256yeaISk8OVrMJbITdut5W+/ShRqL5O2Qi4ieotVM=
-github.com/gopact-ai/gopact v0.0.0-20260715175854-19c7fe707d87/go.mod h1:FYYgELmmpqePVEPIFWgusXNOKDi95O4zIBA8xSuWuVA=
+github.com/gopact-ai/gopact v0.1.0-rc.4 h1:PiW3mmTJvnw7tQ1GlOSbXf2zGy3Gg2sktHl5aKmF5OI=
+github.com/gopact-ai/gopact v0.1.0-rc.4/go.mod h1:FYYgELmmpqePVEPIFWgusXNOKDi95O4zIBA8xSuWuVA=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
