@@ -1,8 +1,8 @@
-# Fornax middleware
+# ByteDance Fornax middleware
 
 [English documentation](README.md)
 
-`fornax` 包装一个 `gopact` Agent，并把 Agent、Workflow 与节点 span 上报到 Fornax OTLP/HTTP trace endpoint。
+`fornax` 是 ByteDance 专属中间件，用于包装 `gopact` Agent，并把 Agent、Workflow 与节点 span 上报到 Fornax OTLP/HTTP trace endpoint。
 
 配置采用显式注入。middleware 不从环境变量读取凭据；应用自行决定这些参数的来源和管理方式。
 

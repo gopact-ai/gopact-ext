@@ -1,4 +1,4 @@
-// Package fornax reports gopact Agent traces to a Fornax OTLP endpoint.
+// Package fornax reports gopact Agent traces to ByteDance Fornax.
 package fornax
 
 import (
@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	instrumentationName   = "github.com/gopact-ai/gopact-ext/middleware/fornax"
+	instrumentationName   = "github.com/gopact-ai/gopact-ext/middleware/byted/fornax"
 	spanTypeAttribute     = "cozeloop.span_type"
 	inputAttribute        = "cozeloop.input"
 	outputAttribute       = "cozeloop.output"

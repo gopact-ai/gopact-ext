@@ -1,8 +1,8 @@
-# Fornax middleware
+# ByteDance Fornax middleware
 
 Chinese documentation: [README_zh.md](README_zh.md)
 
-`fornax` wraps a `gopact` Agent and reports its Agent, Workflow, and node spans to a Fornax OTLP/HTTP trace endpoint.
+`fornax` is a ByteDance-specific middleware that wraps a `gopact` Agent and reports its Agent, Workflow, and node spans to a Fornax OTLP/HTTP trace endpoint.
 
 Configuration is explicit. The middleware does not load credentials from environment variables; applications decide how to obtain and manage them.
 

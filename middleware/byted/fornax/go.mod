@@ -1,4 +1,4 @@
-module github.com/gopact-ai/gopact-ext/middleware/fornax
+module github.com/gopact-ai/gopact-ext/middleware/byted/fornax
 
 go 1.27
 

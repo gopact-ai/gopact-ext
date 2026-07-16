@@ -88,7 +88,7 @@ OpenAI organization usage is API-platform metering and is not the same thing as 
 
 | Package | Use it for |
 | --- | --- |
-| [`middleware/fornax`](./middleware/fornax) | Report Agent, Workflow, and node traces to Fornax with explicit configuration |
+| [`middleware/byted/fornax`](./middleware/byted/fornax) | ByteDance-specific middleware for reporting Agent, Workflow, and node traces to Fornax |
 
 For complete runnable applications, see [gopact-examples](https://github.com/gopact-ai/gopact-examples).
 
