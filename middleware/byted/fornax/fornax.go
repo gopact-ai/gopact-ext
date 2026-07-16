@@ -44,7 +44,10 @@ const (
 	finishReasonAttribute = "finish_reason"
 	toolNameAttribute     = "tool_name"
 	toolCallIDAttribute   = "tool_call_id"
+	agentSpanType         = "Agent"
 	rootSpanType          = "fornax_query"
+	modelSpanType         = "model"
+	toolSpanType          = "tool"
 	authPath              = "/open-apis/auth/v1/service_accounts/authenticate"
 	defaultTracePath      = "/open-api/observability/traces/ingest"
 	authVersion           = "auth-v1"
@@ -242,7 +245,7 @@ func uploadSpanFrom(span sdktrace.ReadOnlySpan, spaceID string) uploadSpan {
 	out := uploadSpan{
 		StartedATMicros: span.StartTime().UnixMicro(),
 		SpanID:          span.SpanContext().SpanID().String(),
-		ParentID:        span.Parent().SpanID().String(),
+		ParentID:        parentID(span),
 		TraceID:         span.SpanContext().TraceID().String(),
 		DurationMicros:  span.EndTime().Sub(span.StartTime()).Microseconds(),
 		ServiceName:     instrumentationName,
@@ -257,6 +260,13 @@ func uploadSpanFrom(span sdktrace.ReadOnlySpan, spaceID string) uploadSpan {
 		out.StatusCode = failedStatusCode
 	}
 	return out
+}
+
+func parentID(span sdktrace.ReadOnlySpan) string {
+	if !span.Parent().SpanID().IsValid() {
+		return "0"
+	}
+	return span.Parent().SpanID().String()
 }
 
 func applySpanAttribute(span *uploadSpan, attr attribute.KeyValue) {
@@ -490,27 +500,29 @@ func (a *tracedAgent) Identity() agent.Identity {
 }
 
 func (a *tracedAgent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (response agent.Response, err error) {
-	spanCtx, root, sink, inputCutOff, err := a.startTrace(ctx, request)
+	spanCtx, root, agentSpan, sink, inputCutOff, err := a.startTrace(ctx, request)
 	if err != nil {
 		return agent.Response{}, err
 	}
 	defer func() {
 		sink.finish(err)
+		agentSpan.End()
 		root.End()
 	}()
 
 	options = append(options, gopact.WithEventSink(sink))
 	response, err = a.target.Invoke(spanCtx, request, options...)
+	finishAgent(agentSpan, response, err)
 	finishRoot(root, response, err, inputCutOff)
 	return response, err
 }
 
-func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (context.Context, trace.Span, *eventSink, bool, error) {
+func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (context.Context, trace.Span, trace.Span, *eventSink, bool, error) {
 	if a == nil || a.middleware == nil || a.middleware.tracer == nil {
-		return nil, nil, nil, false, errors.New("fornax: middleware is nil")
+		return nil, nil, nil, nil, false, errors.New("fornax: middleware is nil")
 	}
 	if a.target == nil {
-		return nil, nil, nil, false, errors.New("fornax: target agent is nil")
+		return nil, nil, nil, nil, false, errors.New("fornax: target agent is nil")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -524,15 +536,20 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request) (co
 		attribute.String(spanTypeAttribute, rootSpanType),
 		attribute.String("agent_name", name),
 	}
-	input, inputCutOff := traceJSON(request)
+	input, inputCutOff := traceJSON(fornaxQueryInput(request))
 	if input != "" {
 		attributes = append(attributes, attribute.String(inputAttribute, input))
 	}
 	if inputCutOff {
 		attributes = append(attributes, attribute.String(cutOffAttribute, `["input"]`))
 	}
-	spanCtx, root := a.middleware.tracer.Start(ctx, name, trace.WithAttributes(attributes...))
-	return spanCtx, root, newEventSink(a.middleware.tracer, spanCtx, root), inputCutOff, nil
+	rootCtx, root := a.middleware.tracer.Start(ctx, name, trace.WithAttributes(attributes...))
+	agentCtx, agentSpan := a.middleware.tracer.Start(rootCtx, name, trace.WithAttributes(
+		attribute.String(spanTypeAttribute, agentSpanType),
+		attribute.String("agent_name", name),
+	))
+	setTraceJSON(agentSpan, inputAttribute, agentInput(request), new(bool))
+	return agentCtx, root, agentSpan, newEventSink(a.middleware.tracer, agentCtx, root), inputCutOff, nil
 }
 
 func finishRoot(root trace.Span, output any, err error, inputCutOff bool) {
@@ -541,13 +558,29 @@ func finishRoot(root trace.Span, output any, err error, inputCutOff bool) {
 		return
 	}
 	root.SetAttributes(attribute.Int(statusAttribute, 0))
-	encoded, outputCutOff := traceJSON(output)
+	var rootOutput any
+	switch response := output.(type) {
+	case agent.Response:
+		rootOutput = fornaxQueryOutput(response)
+	default:
+		rootOutput = queryPayload{Contents: textContents(valueText(response))}
+	}
+	encoded, outputCutOff := traceJSON(rootOutput)
 	if encoded != "" {
 		root.SetAttributes(attribute.String(outputAttribute, encoded))
 	}
 	if outputCutOff {
 		setCutOff(root, inputCutOff, true)
 	}
+}
+
+func finishAgent(span trace.Span, response agent.Response, err error) {
+	if err != nil {
+		markError(span, err)
+		return
+	}
+	span.SetAttributes(attribute.Int(statusAttribute, 0))
+	setTraceJSON(span, outputAttribute, agentOutput(response), new(bool))
 }
 
 func traceJSON(value any) (string, bool) {
@@ -583,7 +616,7 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 			yield(agent.Chunk{}, errors.New("fornax: target streaming agent is nil"))
 			return
 		}
-		spanCtx, root, sink, inputCutOff, err := a.startTrace(ctx, request)
+		spanCtx, root, agentSpan, sink, inputCutOff, err := a.startTrace(ctx, request)
 		if err != nil {
 			yield(agent.Chunk{}, err)
 			return
@@ -598,11 +631,16 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 					streamErr = context.Canceled
 				}
 			}
+			finishAgent(agentSpan, agent.Response{Message: gopact.Message{
+				Role:  gopact.MessageRoleAssistant,
+				Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: string(output.value())}},
+			}}, streamErr)
 			finishRoot(root, output.value(), streamErr, inputCutOff)
 			if output.truncated {
 				setCutOff(root, inputCutOff, true)
 			}
 			sink.finish(streamErr)
+			agentSpan.End()
 			root.End()
 		}()
 
@@ -683,6 +721,288 @@ func chunkMayFit(chunk agent.Chunk, remaining int) bool {
 		}
 	}
 	return true
+}
+
+type queryPayload struct {
+	Contents []queryContent `json:"contents,omitempty"`
+}
+
+type queryContent struct {
+	ContentType string `json:"content_type,omitempty"`
+	Text        string `json:"text,omitempty"`
+}
+
+type modelInputPayload struct {
+	Messages   []modelMessagePayload `json:"messages,omitempty"`
+	Tools      []modelToolPayload    `json:"tools,omitempty"`
+	ToolChoice *modelToolChoice      `json:"tool_choice,omitempty"`
+}
+
+type modelOutputPayload struct {
+	Choices []modelChoicePayload `json:"choices"`
+}
+
+type modelChoicePayload struct {
+	FinishReason string              `json:"finish_reason"`
+	Index        int64               `json:"index"`
+	Message      modelMessagePayload `json:"message"`
+}
+
+type modelMessagePayload struct {
+	Role       string                 `json:"role"`
+	Content    string                 `json:"content,omitempty"`
+	Parts      []modelPartPayload     `json:"parts,omitempty"`
+	ToolCalls  []modelToolCallPayload `json:"tool_calls,omitempty"`
+	ToolCallID string                 `json:"tool_call_id,omitempty"`
+	Name       string                 `json:"name,omitempty"`
+}
+
+type modelPartPayload struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type modelToolPayload struct {
+	Type     string                   `json:"type"`
+	Function modelToolFunctionPayload `json:"function"`
+}
+
+type modelToolFunctionPayload struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Arguments   string          `json:"arguments,omitempty"`
+}
+
+type modelToolCallPayload struct {
+	ID       string                   `json:"id,omitempty"`
+	Type     string                   `json:"type,omitempty"`
+	Function modelToolFunctionPayload `json:"function"`
+}
+
+type modelToolChoice struct {
+	Type     string                   `json:"type"`
+	Function *modelToolChoiceFunction `json:"function,omitempty"`
+}
+
+type modelToolChoiceFunction struct {
+	Name string `json:"name"`
+}
+
+func fornaxQueryInput(request agent.Request) queryPayload {
+	return queryPayload{Contents: textContents(messagesText(request.Messages))}
+}
+
+func fornaxQueryOutput(response agent.Response) queryPayload {
+	return queryPayload{Contents: textContents(messageText(response.Message))}
+}
+
+func agentInput(request agent.Request) string {
+	return messagesText(request.Messages)
+}
+
+func agentOutput(response agent.Response) string {
+	return messageText(response.Message)
+}
+
+func textContents(text string) []queryContent {
+	if text == "" {
+		return nil
+	}
+	return []queryContent{{ContentType: "text", Text: text}}
+}
+
+func messagesText(messages []gopact.Message) string {
+	var builder strings.Builder
+	for _, message := range messages {
+		text := messageText(message)
+		if text == "" {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
+		}
+		if message.Role != "" {
+			builder.WriteString(message.Role)
+			builder.WriteString(": ")
+		}
+		builder.WriteString(text)
+	}
+	return builder.String()
+}
+
+func messageText(message gopact.Message) string {
+	var builder strings.Builder
+	for _, part := range message.Parts {
+		if part.Text == "" {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
+		}
+		builder.WriteString(part.Text)
+	}
+	return builder.String()
+}
+
+func valueText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	case json.RawMessage:
+		return string(typed)
+	default:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	}
+}
+
+func modelInput(request gopact.ModelRequest) modelInputPayload {
+	payload := modelInputPayload{
+		Messages: modelMessages(request.Messages),
+		Tools:    modelTools(request.Tools),
+	}
+	if request.ToolChoice.Mode != "" {
+		choiceType := request.ToolChoice.Mode
+		if choiceType == gopact.ToolChoiceModeNamed {
+			choiceType = "function"
+		}
+		payload.ToolChoice = &modelToolChoice{Type: choiceType}
+		if request.ToolChoice.Name != "" {
+			payload.ToolChoice.Function = &modelToolChoiceFunction{Name: request.ToolChoice.Name}
+		}
+	}
+	return payload
+}
+
+func modelOutput(response gopact.ModelResponse) modelOutputPayload {
+	message := modelMessage(response.Message)
+	if intent, ok := response.Intent.(gopact.ToolCallIntent); ok {
+		message.ToolCalls = modelToolCalls(intent.Calls)
+	}
+	if intent, ok := response.Intent.(*gopact.ToolCallIntent); ok && intent != nil {
+		message.ToolCalls = modelToolCalls(intent.Calls)
+	}
+	return modelOutputPayload{Choices: []modelChoicePayload{{
+		FinishReason: response.FinishReason,
+		Index:        0,
+		Message:      message,
+	}}}
+}
+
+func modelMessages(messages []gopact.Message) []modelMessagePayload {
+	if len(messages) == 0 {
+		return nil
+	}
+	out := make([]modelMessagePayload, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, modelMessage(message))
+	}
+	return out
+}
+
+func modelMessage(message gopact.Message) modelMessagePayload {
+	payload := modelMessagePayload{
+		Role:    message.Role,
+		Content: messageText(message),
+	}
+	if !messagePartsAreTextOnly(message.Parts) {
+		payload.Parts = modelParts(message.Parts)
+	}
+	return payload
+}
+
+func messagePartsAreTextOnly(parts []gopact.MessagePart) bool {
+	for _, part := range parts {
+		if part.Type != "" && part.Type != gopact.MessagePartTypeText {
+			return false
+		}
+	}
+	return true
+}
+
+func modelParts(parts []gopact.MessagePart) []modelPartPayload {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]modelPartPayload, 0, len(parts))
+	for _, part := range parts {
+		if part.Text == "" {
+			continue
+		}
+		partType := part.Type
+		if partType == "" {
+			partType = gopact.MessagePartTypeText
+		}
+		out = append(out, modelPartPayload{Type: partType, Text: part.Text})
+	}
+	return out
+}
+
+func modelTools(tools []gopact.ToolSpec) []modelToolPayload {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]modelToolPayload, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, modelToolPayload{
+			Type: "function",
+			Function: modelToolFunctionPayload{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  tool.Schema,
+			},
+		})
+	}
+	return out
+}
+
+func modelToolCall(call gopact.ToolCall) modelToolCallPayload {
+	return modelToolCallPayload{
+		ID:   call.ID,
+		Type: "function",
+		Function: modelToolFunctionPayload{
+			Name:      call.Name,
+			Arguments: string(call.Arguments),
+		},
+	}
+}
+
+func modelToolCalls(calls []gopact.ToolCall) []modelToolCallPayload {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]modelToolCallPayload, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, modelToolCall(call))
+	}
+	return out
+}
+
+func toolInput(call gopact.ToolCall) any {
+	if len(call.Arguments) == 0 {
+		return map[string]string{"tool_call_id": call.ID, "tool_name": call.Name}
+	}
+	var decoded any
+	if err := json.Unmarshal(call.Arguments, &decoded); err == nil {
+		return decoded
+	}
+	return string(call.Arguments)
+}
+
+func toolOutput(outcome gopact.ToolOutcome) any {
+	if result, ok := outcome.(gopact.ToolResultOutcome); ok {
+		return result.Result.Preview
+	}
+	if result, ok := outcome.(*gopact.ToolResultOutcome); ok && result != nil {
+		return result.Result.Preview
+	}
+	return outcome
 }
 
 func consumeBytes(remaining *int, count int) bool {
@@ -771,7 +1091,7 @@ func (s *eventSink) startRun(event gopact.Event) {
 	}
 	ctx, span := s.tracer.Start(parent, name,
 		trace.WithTimestamp(eventTime(event)),
-		trace.WithAttributes(runAttributes(event, "agent")...),
+		trace.WithAttributes(runAttributes(event, agentSpanType)...),
 	)
 	s.runs[event.RunID] = spanState{ctx: ctx, span: span}
 }
@@ -868,9 +1188,9 @@ func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent)
 	}
 	switch event.Type {
 	case gopact.ModelEventCallStarted:
-		state.span.SetAttributes(attribute.String(spanTypeAttribute, "model"))
+		state.span.SetAttributes(attribute.String(spanTypeAttribute, modelSpanType))
 		if event.Request != nil {
-			setTraceJSON(state.span, inputAttribute, event.Request, &state.inputCutOff)
+			setTraceJSON(state.span, inputAttribute, modelInput(*event.Request), &state.inputCutOff)
 			if event.Request.Model != "" {
 				state.span.SetAttributes(attribute.String(modelNameAttribute, event.Request.Model))
 			}
@@ -906,13 +1226,13 @@ func (s *eventSink) EmitToolEvent(ctx context.Context, event gopact.ToolEvent) e
 	switch event.Type {
 	case gopact.ToolEventCallStarted:
 		state.span.SetAttributes(
-			attribute.String(spanTypeAttribute, "tool"),
+			attribute.String(spanTypeAttribute, toolSpanType),
 			attribute.String(toolNameAttribute, event.Call.Name),
 			attribute.String(toolCallIDAttribute, event.Call.ID),
 		)
-		setTraceJSON(state.span, inputAttribute, event.Call, &state.inputCutOff)
+		setTraceJSON(state.span, inputAttribute, toolInput(event.Call), &state.inputCutOff)
 	case gopact.ToolEventCallFinished:
-		setTraceJSON(state.span, outputAttribute, event.Outcome, &state.outputCutOff)
+		setTraceJSON(state.span, outputAttribute, toolOutput(event.Outcome), &state.outputCutOff)
 		if event.Err != nil {
 			markError(state.span, event.Err)
 			state.failed = true
@@ -944,7 +1264,7 @@ func (s *eventSink) activeNode(ctx context.Context) (string, nodeSpanState, bool
 }
 
 func setModelResponseAttributes(span trace.Span, response gopact.ModelResponse, outputCutOff *bool) {
-	setTraceJSON(span, outputAttribute, response, outputCutOff)
+	setTraceJSON(span, outputAttribute, modelOutput(response), outputCutOff)
 	setUsageAttributes(span, response.Usage)
 	if response.FinishReason != "" {
 		span.SetAttributes(attribute.String(finishReasonAttribute, response.FinishReason))

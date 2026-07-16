@@ -25,7 +25,7 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 `AK` and `SK` are the Fornax space credentials. `Region` is optional and is passed explicitly to the Fornax authentication and trace endpoints instead of relying on `FORNAX_CUSTOM_REGION`. `SpaceID` is optional; when provided, it must match the workspace resolved from AK/SK. `Endpoint` is an advanced override for the complete Fornax trace ingest URL.
 
-The Agent invocation is reported as `fornax_query`, with the Workflow RunID and SessionID mapped to Fornax `message_id` and `thread_id`. Nested Workflow runs are reported as `agent`; nodes named `model` and `tool` use their corresponding Fornax span types, and other nodes use `graph`. Existing event sinks passed to `Invoke` remain attached. Call `Close` during application shutdown to flush pending spans.
+The Agent invocation is reported as `fornax_query`, with an `Agent` span under it. Workflow RunID and SessionID are mapped to Fornax `message_id` and `thread_id`. Nested Workflow runs are reported as `Agent`; nodes named `model` and `tool` use their corresponding Fornax span types, and other nodes use `graph`. Existing event sinks passed to `Invoke` remain attached. Call `Close` during application shutdown to flush pending spans.
 
 ## ID correspondence
 

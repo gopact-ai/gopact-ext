@@ -161,6 +161,18 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	if payload.Spans[0].WorkspaceID != "12345" {
 		t.Fatalf("workspace ID = %q, want 12345", payload.Spans[0].WorkspaceID)
 	}
+	rootFound := false
+	for _, span := range payload.Spans {
+		if span.SpanType == rootSpanType {
+			rootFound = true
+			if span.ParentID != "0" {
+				t.Fatalf("root parent_id = %q, want 0", span.ParentID)
+			}
+		}
+	}
+	if !rootFound {
+		t.Fatal("root span was not exported")
+	}
 }
 
 func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
@@ -187,17 +199,21 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	}
 
 	spans := exporter.GetSpans()
-	if len(spans) != 4 {
-		t.Fatalf("reported %d spans, want 4", len(spans))
+	if len(spans) != 5 {
+		t.Fatalf("reported %d spans, want 5", len(spans))
 	}
-	root := spanNamed(t, spans, "react")
+	root := spanNamedType(t, spans, "react", rootSpanType)
+	agentSpan := spanNamedType(t, spans, "react", agentSpanType)
 	model := spanNamed(t, spans, "model")
 	child := spanNamed(t, spans, "child")
 	tool := spanNamed(t, spans, "tool")
-	if model.Parent.SpanID() != root.SpanContext.SpanID() {
+	if agentSpan.Parent.SpanID() != root.SpanContext.SpanID() {
+		t.Fatal("agent span is not a child of the root query span")
+	}
+	if model.Parent.SpanID() != agentSpan.SpanContext.SpanID() {
 		t.Fatal("model span is not a child of the agent span")
 	}
-	if child.Parent.SpanID() != root.SpanContext.SpanID() {
+	if child.Parent.SpanID() != agentSpan.SpanContext.SpanID() {
 		t.Fatal("nested Agent span is not a child of the root Agent span")
 	}
 	if tool.Parent.SpanID() != child.SpanContext.SpanID() {
@@ -205,6 +221,9 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	}
 	if got := stringAttribute(root.Attributes, "cozeloop.span_type"); got != "fornax_query" {
 		t.Fatalf("root span type = %q, want fornax_query", got)
+	}
+	if got := stringAttribute(agentSpan.Attributes, "cozeloop.span_type"); got != "Agent" {
+		t.Fatalf("agent span type = %q, want Agent", got)
 	}
 	if got := stringAttribute(root.Attributes, "messaging.message.id"); got != "run-1" {
 		t.Fatalf("message_id = %q, want run-1", got)
@@ -215,8 +234,8 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	if got := stringAttribute(model.Attributes, "cozeloop.span_type"); got != "model" {
 		t.Fatalf("model span type = %q, want model", got)
 	}
-	if got := stringAttribute(child.Attributes, "cozeloop.span_type"); got != "agent" {
-		t.Fatalf("nested span type = %q, want agent", got)
+	if got := stringAttribute(child.Attributes, "cozeloop.span_type"); got != "Agent" {
+		t.Fatalf("nested span type = %q, want Agent", got)
 	}
 	if got := stringAttribute(tool.Attributes, "cozeloop.span_type"); got != "tool" {
 		t.Fatalf("tool span type = %q, want tool", got)
@@ -256,11 +275,18 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	if got, ok := int64Attribute(model.Attributes, totalTokensAttribute); !ok || got != 3 {
 		t.Fatalf("tokens = %d, want 3", got)
 	}
-	if got := stringAttribute(model.Attributes, inputAttribute); !strings.Contains(got, "demo-model") {
-		t.Fatalf("model input = %q, want request payload", got)
+	if got := stringAttribute(model.Attributes, inputAttribute); !strings.Contains(got, `"messages"`) || !strings.Contains(got, `"hello"`) {
+		t.Fatalf("model input = %q, want Fornax model input payload", got)
 	}
 	if got := stringAttribute(model.Attributes, outputAttribute); !strings.Contains(got, "assistant") {
 		t.Fatalf("model output = %q, want response payload", got)
+	}
+	var output modelOutputPayload
+	if err := json.Unmarshal([]byte(stringAttribute(model.Attributes, outputAttribute)), &output); err != nil {
+		t.Fatalf("model output is not JSON: %v", err)
+	}
+	if len(output.Choices) != 1 || output.Choices[0].Message.Content != "use tool" {
+		t.Fatalf("model output content = %+v, want content field", output)
 	}
 	if got := stringAttribute(tool.Attributes, spanTypeAttribute); got != "tool" {
 		t.Fatalf("tool span type = %q, want tool", got)
@@ -293,7 +319,7 @@ func TestUseStreamingReportsOutput(t *testing.T) {
 	if len(chunks) != 2 || chunks[0].Text != "first" || chunks[1].Text != "second" {
 		t.Fatalf("InvokeStream() chunks = %+v", chunks)
 	}
-	root := spanNamed(t, exporter.GetSpans(), "react")
+	root := spanNamedType(t, exporter.GetSpans(), "react", rootSpanType)
 	output := stringAttribute(root.Attributes, "cozeloop.output")
 	if !strings.Contains(output, "first") || !strings.Contains(output, "second") {
 		t.Fatalf("stream output = %q", output)
@@ -309,7 +335,7 @@ func TestStreamingConsumerStopEndsTrace(t *testing.T) {
 	for range middleware.UseStreaming(streamingTestAgent{}).InvokeStream(t.Context(), agent.Request{}) {
 		break
 	}
-	root := spanNamed(t, exporter.GetSpans(), "react")
+	root := spanNamedType(t, exporter.GetSpans(), "react", rootSpanType)
 	if root.Status.Code != codes.Error {
 		t.Fatalf("root status = %v, want error", root.Status.Code)
 	}
@@ -337,7 +363,7 @@ func TestStreamingTraceOutputIsBounded(t *testing.T) {
 	if len(chunks[0].Text) != maxTraceFieldBytes || chunks[1].Text != "tail" {
 		t.Fatalf("InvokeStream() did not forward all chunks: first bytes = %d, second = %q", len(chunks[0].Text), chunks[1].Text)
 	}
-	root := spanNamed(t, exporter.GetSpans(), "react")
+	root := spanNamedType(t, exporter.GetSpans(), "react", rootSpanType)
 	output := stringAttribute(root.Attributes, outputAttribute)
 	if len(output) > maxTraceFieldBytes {
 		t.Fatalf("stream trace output bytes = %d, limit = %d", len(output), maxTraceFieldBytes)
@@ -364,7 +390,7 @@ func TestUnaryTracePayloadsAreBounded(t *testing.T) {
 	if _, err := middleware.Use(largeTestAgent{output: largeText}).Invoke(t.Context(), request); err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
-	root := spanNamed(t, exporter.GetSpans(), "react")
+	root := spanNamedType(t, exporter.GetSpans(), "react", rootSpanType)
 	if got := stringAttribute(root.Attributes, inputAttribute); got != "" {
 		t.Fatalf("oversized input was reported with %d bytes", len(got))
 	}
@@ -386,19 +412,22 @@ func TestMiddlewareReportsErrors(t *testing.T) {
 		t.Fatalf("Invoke() error = %v, want test error", err)
 	}
 	spans := exporter.GetSpans()
-	if len(spans) != 2 {
-		t.Fatalf("reported %d spans, want 2", len(spans))
+	if len(spans) != 3 {
+		t.Fatalf("reported %d spans, want 3", len(spans))
 	}
-	for _, name := range []string{"failing", "model"} {
-		span := spanNamed(t, spans, name)
+	for _, span := range []tracetest.SpanStub{
+		spanNamedType(t, spans, "failing", rootSpanType),
+		spanNamedType(t, spans, "failing", agentSpanType),
+		spanNamed(t, spans, "model"),
+	} {
 		if span.Status.Code != codes.Error {
-			t.Fatalf("%s status = %v, want error", name, span.Status.Code)
+			t.Fatalf("%s status = %v, want error", span.Name, span.Status.Code)
 		}
 		if got, ok := int64Attribute(span.Attributes, "cozeloop.status_code"); !ok || got != failedStatusCode {
-			t.Fatalf("%s status code = %d, want %d", name, got, failedStatusCode)
+			t.Fatalf("%s status code = %d, want %d", span.Name, got, failedStatusCode)
 		}
 		if got := stringAttribute(span.Attributes, "error"); got == "" {
-			t.Fatalf("%s error attribute is empty", name)
+			t.Fatalf("%s error attribute is empty", span.Name)
 		}
 	}
 }
@@ -572,6 +601,17 @@ func spanNamed(t *testing.T, spans tracetest.SpanStubs, name string) tracetest.S
 		}
 	}
 	t.Fatalf("span %q not found", name)
+	return tracetest.SpanStub{}
+}
+
+func spanNamedType(t *testing.T, spans tracetest.SpanStubs, name, spanType string) tracetest.SpanStub {
+	t.Helper()
+	for _, span := range spans {
+		if span.Name == name && stringAttribute(span.Attributes, spanTypeAttribute) == spanType {
+			return span
+		}
+	}
+	t.Fatalf("span %q with span_type %q not found", name, spanType)
 	return tracetest.SpanStub{}
 }
 
