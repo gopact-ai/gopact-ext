@@ -2,8 +2,10 @@ package fornax
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
@@ -22,7 +24,79 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-func TestNewUsesExplicitFornaxConfiguration(t *testing.T) {
+func TestNewRequiresAKSK(t *testing.T) {
+	if _, err := New(t.Context(), Config{}); err == nil || err.Error() != "fornax: AK is required" {
+		t.Fatalf("New() error = %v, want AK required", err)
+	}
+	if _, err := New(t.Context(), Config{AK: "ak"}); err == nil || err.Error() != "fornax: SK is required" {
+		t.Fatalf("New() error = %v, want SK required", err)
+	}
+}
+
+func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
+	type authRequestBody struct {
+		PSM   string `json:"psm"`
+		IsTCE bool   `json:"isTCE"`
+	}
+	authHeaders := make(chan http.Header, 2)
+	authBodies := make(chan authRequestBody, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, incoming *http.Request) {
+		if incoming.URL.Path != authPath {
+			t.Errorf("auth path = %q", incoming.URL.Path)
+		}
+		authHeaders <- incoming.Header.Clone()
+		var body authRequestBody
+		if err := json.NewDecoder(incoming.Body).Decode(&body); err != nil {
+			t.Errorf("decode auth body: %v", err)
+		}
+		authBodies <- body
+		_, _ = response.Write([]byte(fmt.Sprintf(`{"jwtToken":%q}`, fakeJWT(67890))))
+	}))
+	defer server.Close()
+
+	auth, err := authenticateWithHost(t.Context(), Config{
+		AK:       "ak-value",
+		SK:       "sk-value",
+		SpaceID:  "67890",
+		Endpoint: server.URL + defaultOTLPTracePath,
+	}, server.URL)
+	if err != nil {
+		t.Fatalf("authenticate() error = %v", err)
+	}
+	if auth.spaceID != "67890" {
+		t.Fatalf("spaceID = %q, want 67890", auth.spaceID)
+	}
+	if auth.authorization != fakeJWT(67890) {
+		t.Fatalf("authorization token mismatch")
+	}
+
+	headers := <-authHeaders
+	if got := headers.Get("Agw-Js-Conv"); got != "str" {
+		t.Fatalf("Agw-Js-Conv = %q, want str", got)
+	}
+	if got := headers.Get("Fornax-Auth"); !strings.HasPrefix(got, "auth-v1/ak-value/") {
+		t.Fatalf("Fornax-Auth = %q, want auth-v1 prefix with AK", got)
+	}
+	body := <-authBodies
+	if !body.IsTCE {
+		t.Fatalf("auth body isTCE = false, want true")
+	}
+	if body.PSM != "unknown_psm" {
+		t.Fatalf("auth body psm = %q, want unknown_psm", body.PSM)
+	}
+
+	_, err = authenticateWithHost(t.Context(), Config{
+		AK:       "ak-value",
+		SK:       "sk-value",
+		SpaceID:  "1",
+		Endpoint: server.URL + defaultOTLPTracePath,
+	}, server.URL)
+	if err == nil || err.Error() != "fornax: space ID mismatch: configured 1, authenticated 67890" {
+		t.Fatalf("space ID mismatch error = %v", err)
+	}
+}
+
+func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:1/ambient")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "Authorization=ambient,cozeloop-workspace-id=999")
 
@@ -49,10 +123,10 @@ func TestNewUsesExplicitFornaxConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	middleware, err := New(t.Context(), Config{
-		SpaceID:       "12345",
-		Endpoint:      server.URL + "/open-api/observability/opentelemetry/v1/traces",
-		Authorization: "Bearer explicit",
+	middleware, err := newWithAuth(t.Context(), authConfig{
+		spaceID:       "12345",
+		endpoint:      server.URL + "/open-api/observability/opentelemetry/v1/traces",
+		authorization: "Bearer explicit",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -512,4 +586,9 @@ func int64Attribute(attributes []attribute.KeyValue, key string) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func fakeJWT(spaceID int64) string {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"space_id":%d}`, spaceID)))
+	return "header." + payload + ".signature"
 }

@@ -3,11 +3,16 @@ package fornax
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +45,10 @@ const (
 	toolNameAttribute     = "tool_name"
 	toolCallIDAttribute   = "tool_call_id"
 	rootSpanType          = "fornax_query"
+	authPath              = "/open-apis/auth/v1/service_accounts/authenticate"
+	defaultOTLPTracePath  = "/open-api/observability/opentelemetry/v1/traces"
+	authVersion           = "auth-v1"
+	authTTLSeconds        = 3600
 	maxTraceFieldBytes    = 4 << 20
 	decimalBase           = 10
 	spaceIDBitSize        = 64
@@ -49,12 +58,17 @@ const (
 // Config contains the values required to report traces to Fornax.
 // The caller owns how these values are obtained and managed.
 type Config struct {
-	// SpaceID identifies the target Fornax workspace.
+	// AK is the Fornax space access key.
+	AK string
+	// SK is the Fornax space secret key.
+	SK string
+	// Region optionally selects the Fornax region, for example CN, SG, US,
+	// Asia-SouthEastBD, or I18N-DEV.
+	Region string
+	// SpaceID optionally verifies the workspace resolved from AK/SK.
 	SpaceID string
-	// Endpoint is the complete OTLP/HTTP trace URL, including /v1/traces.
+	// Endpoint optionally overrides the complete OTLP/HTTP trace URL.
 	Endpoint string
-	// Authorization is sent unchanged as the HTTP Authorization header.
-	Authorization string
 }
 
 // Middleware wraps Agents with Fornax tracing.
@@ -68,16 +82,30 @@ type Middleware struct {
 
 // New creates a Fornax middleware from explicit configuration.
 func New(ctx context.Context, config Config) (*Middleware, error) {
-	spaceID := strings.TrimSpace(config.SpaceID)
-	endpoint := strings.TrimSpace(config.Endpoint)
-	if _, err := strconv.ParseUint(spaceID, decimalBase, spaceIDBitSize); err != nil || spaceID == "0" {
-		return nil, errors.New("fornax: space ID must be a positive integer")
+	auth, err := authenticate(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	return newWithAuth(ctx, auth)
+}
+
+type authConfig struct {
+	spaceID       string
+	endpoint      string
+	authorization string
+}
+
+func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
+	spaceID := strings.TrimSpace(config.spaceID)
+	endpoint := strings.TrimSpace(config.endpoint)
+	if err := validateSpaceID(spaceID); err != nil {
+		return nil, err
 	}
 	parsedEndpoint, err := url.Parse(endpoint)
 	if err != nil || (parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") || parsedEndpoint.Host == "" {
 		return nil, errors.New("fornax: endpoint must be an absolute HTTP URL")
 	}
-	if strings.TrimSpace(config.Authorization) == "" || strings.ContainsAny(config.Authorization, "\r\n") {
+	if strings.TrimSpace(config.authorization) == "" || strings.ContainsAny(config.authorization, "\r\n") {
 		return nil, errors.New("fornax: authorization is invalid")
 	}
 	if ctx == nil {
@@ -86,7 +114,7 @@ func New(ctx context.Context, config Config) (*Middleware, error) {
 	exporter, err := otlptracehttp.New(ctx,
 		otlptracehttp.WithEndpointURL(endpoint),
 		otlptracehttp.WithHeaders(map[string]string{
-			"Authorization":         config.Authorization,
+			"Authorization":         config.authorization,
 			"cozeloop-workspace-id": spaceID,
 		}),
 	)
@@ -94,6 +122,188 @@ func New(ctx context.Context, config Config) (*Middleware, error) {
 		return nil, fmt.Errorf("fornax: create OTLP exporter: %w", err)
 	}
 	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))), nil
+}
+
+func authenticate(ctx context.Context, config Config) (authConfig, error) {
+	return authenticateWithHost(ctx, config, hostForRegion(config.Region))
+}
+
+func authenticateWithHost(ctx context.Context, config Config, host string) (authConfig, error) {
+	ak := strings.TrimSpace(config.AK)
+	sk := strings.TrimSpace(config.SK)
+	if ak == "" {
+		return authConfig{}, errors.New("fornax: AK is required")
+	}
+	if sk == "" {
+		return authConfig{}, errors.New("fornax: SK is required")
+	}
+	if strings.ContainsAny(ak, "\r\n") || strings.ContainsAny(sk, "\r\n") {
+		return authConfig{}, errors.New("fornax: AK/SK is invalid")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	token, err := fetchJWTToken(ctx, http.DefaultClient, host, ak, sk, config.Region)
+	if err != nil {
+		return authConfig{}, fmt.Errorf("fornax: get token: %w", err)
+	}
+	if token.jwt == "" || token.spaceID <= 0 {
+		return authConfig{}, errors.New("fornax: authentication returned an invalid token")
+	}
+	spaceID := strconv.FormatInt(token.spaceID, decimalBase)
+	if expected := strings.TrimSpace(config.SpaceID); expected != "" && expected != spaceID {
+		return authConfig{}, fmt.Errorf("fornax: space ID mismatch: configured %s, authenticated %s", expected, spaceID)
+	}
+	endpoint := strings.TrimSpace(config.Endpoint)
+	if endpoint == "" {
+		endpoint = strings.TrimRight(host, "/") + defaultOTLPTracePath
+	}
+	return authConfig{spaceID: spaceID, endpoint: endpoint, authorization: token.jwt}, nil
+}
+
+type jwtToken struct {
+	jwt     string
+	spaceID int64
+}
+
+func fetchJWTToken(ctx context.Context, client *http.Client, host, ak, sk, region string) (jwtToken, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	requestBody := authRequest{
+		PSM:     "unknown_psm",
+		IsTCE:   true,
+		Env:     os.Getenv("ENV"),
+		IsBOE:   strings.EqualFold(strings.TrimSpace(region), "BOE"),
+		Stage:   os.Getenv("TCE_STAGE"),
+		Payload: "",
+	}
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return jwtToken{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(host, "/")+authPath, strings.NewReader(string(body)))
+	if err != nil {
+		return jwtToken{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Agw-Js-Conv", "str")
+	request.Header.Set("Fornax-Auth", genAuthSignature(ak, sk, body, time.Now()))
+	response, err := client.Do(request)
+	if err != nil {
+		return jwtToken{}, err
+	}
+	defer response.Body.Close()
+
+	var authResponse authResponse
+	if err := json.NewDecoder(response.Body).Decode(&authResponse); err != nil {
+		return jwtToken{}, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return jwtToken{}, fmt.Errorf("authenticate HTTP %d: %s", response.StatusCode, authResponse.message())
+	}
+	if authResponse.Code != nil && *authResponse.Code != 0 {
+		return jwtToken{}, fmt.Errorf("authenticate code %d: %s", *authResponse.Code, authResponse.message())
+	}
+	if authResponse.BaseResp != nil && authResponse.BaseResp.StatusCode != 0 {
+		return jwtToken{}, fmt.Errorf("authenticate base response code %d: %s", authResponse.BaseResp.StatusCode, authResponse.BaseResp.StatusMessage)
+	}
+	spaceID, err := spaceIDFromJWT(authResponse.JWTToken)
+	if err != nil {
+		return jwtToken{}, err
+	}
+	return jwtToken{jwt: authResponse.JWTToken, spaceID: spaceID}, nil
+}
+
+type authRequest struct {
+	PSM      string `json:"psm"`
+	Cluster  string `json:"cluster"`
+	Env      string `json:"env"`
+	IsBOE    bool   `json:"isBOE"`
+	IsTCE    bool   `json:"isTCE"`
+	Payload  string `json:"payload"`
+	ZTIToken string `json:"ztiToken"`
+	Stage    string `json:"stage"`
+}
+
+type authResponse struct {
+	JWTToken string    `json:"jwtToken"`
+	Code     *int32    `json:"code,omitempty"`
+	Msg      *string   `json:"msg,omitempty"`
+	BaseResp *baseResp `json:"baseResp,omitempty"`
+}
+
+type baseResp struct {
+	StatusCode    int32  `json:"statusCode,omitempty"`
+	StatusMessage string `json:"statusMessage,omitempty"`
+}
+
+func (r authResponse) message() string {
+	if r.Msg != nil {
+		return *r.Msg
+	}
+	if r.BaseResp != nil {
+		return r.BaseResp.StatusMessage
+	}
+	return ""
+}
+
+func genAuthSignature(ak, sk string, payload []byte, now time.Time) string {
+	signKeyInfo := fmt.Sprintf("%s/%s/%d/%d", authVersion, ak, now.Unix(), authTTLSeconds)
+	signKey := sha256HMAC([]byte(sk), []byte(signKeyInfo))
+	signResult := sha256HMAC([]byte(signKey), payload)
+	return fmt.Sprintf("%s/%s", signKeyInfo, signResult)
+}
+
+func sha256HMAC(key, data []byte) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(data)
+	return fmt.Sprintf("%x", mac.Sum(nil))
+}
+
+func spaceIDFromJWT(token string) (int64, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return 0, errors.New("fornax: authentication returned a malformed JWT")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0, fmt.Errorf("fornax: decode JWT payload: %w", err)
+	}
+	var claims struct {
+		SpaceID int64 `json:"space_id"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return 0, fmt.Errorf("fornax: parse JWT payload: %w", err)
+	}
+	if claims.SpaceID <= 0 {
+		return 0, errors.New("fornax: JWT payload does not contain a valid space_id")
+	}
+	return claims.SpaceID, nil
+}
+
+func hostForRegion(region string) string {
+	switch strings.TrimSpace(region) {
+	case "", "CN", "BOE":
+		return "https://fornax.bytedance.net"
+	case "SG", "BOEI18N":
+		return "https://fornax.byteintl.net"
+	case "US":
+		return "https://fornax-va.byteintl.net"
+	case "Asia-SouthEastBD":
+		return "https://fornax-i18nbd.byteintl.net"
+	case "I18N-DEV":
+		return "https://fornax-i18n.byteintl.net"
+	default:
+		return "https://fornax.bytedance.net"
+	}
+}
+
+func validateSpaceID(spaceID string) error {
+	if _, err := strconv.ParseUint(spaceID, decimalBase, spaceIDBitSize); err != nil || spaceID == "0" {
+		return errors.New("fornax: space ID must be a positive integer")
+	}
+	return nil
 }
 
 func newMiddleware(provider *sdktrace.TracerProvider) *Middleware {

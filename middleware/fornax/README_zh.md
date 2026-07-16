@@ -4,13 +4,13 @@
 
 `fornax` 包装一个 `gopact` Agent，并把 Agent、Workflow 与节点 span 上报到 Fornax OTLP/HTTP trace endpoint。
 
-配置采用显式注入。middleware 不从环境变量读取 `SpaceID`、`Endpoint` 或 `Authorization`；应用自行决定这些参数的来源和管理方式。
+配置采用显式注入。middleware 不从环境变量读取凭据；应用自行决定这些参数的来源和管理方式。
 
 ```go
 middleware, err := fornax.New(ctx, fornax.Config{
-	SpaceID:       spaceID,
-	Endpoint:      endpoint,
-	Authorization: authorization,
+	AK:     ak,
+	SK:     sk,
+	Region: "CN", // 可选；按需使用 SG、US、Asia-SouthEastBD 或 I18N-DEV
 })
 if err != nil {
 	return err
@@ -23,7 +23,7 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 如果 target 的动态类型实现了 `agent.StreamingAgent`，`Use` 会保留 `InvokeStream`；当 target 的静态类型就是 `agent.StreamingAgent` 时，可直接使用 `UseStreaming`。两种入口都会持续追踪到流正常结束、失败或被消费者取消。
 
-`Endpoint` 是完整的 Fornax OTLP/HTTP trace URL。`Authorization` 会原样写入 HTTP `Authorization` header，`SpaceID` 会写入 `cozeloop-workspace-id`。
+`AK` 和 `SK` 是 Fornax 空间凭据。`Region` 可选，会显式用于 Fornax 鉴权和 trace endpoint 选择，不依赖 `FORNAX_CUSTOM_REGION`。`SpaceID` 可选；传入时必须与 AK/SK 鉴权得到的空间一致。`Endpoint` 是高级覆盖项，用于指定完整 OTLP/HTTP trace URL。
 
 Agent 调用上报为 `fornax_query`，Workflow RunID 和 SessionID 分别映射为 Fornax `message_id` 和 `thread_id`；嵌套 Workflow run 上报为 `agent`；名为 `model` 和 `tool` 的节点分别使用对应的 Fornax span type，其他节点使用 `graph`。传给 `Invoke` 的已有 event sink 会继续生效。应用退出时调用 `Close`，以刷新尚未上报的 span。
 
@@ -31,7 +31,7 @@ Agent 调用上报为 `fornax_query`，Workflow RunID 和 SessionID 分别映射
 
 | 来源 | 上报值 | 在 Fornax 中的含义 |
 | --- | --- | --- |
-| `Config.SpaceID` | HTTP header `cozeloop-workspace-id` | 目标工作空间，不是 trace ID 或 span ID。 |
+| AK/SK 鉴权得到的 workspace | HTTP header `cozeloop-workspace-id` | 目标工作空间，不是 trace ID 或 span ID。 |
 | 根 Workflow `RunID` | `messaging.message.id` 和 `gopact.run_id` | 分别作为 Fornax `message_id` 和 gopact run 标识。 |
 | 嵌套 Workflow `RunID` | `gopact.run_id` | 子 Agent run 标识，不会替换根 `message_id`。 |
 | Workflow `SessionID` | 根 span 上的 `session.id` | Fornax `thread_id`，用于归组相关消息。 |
