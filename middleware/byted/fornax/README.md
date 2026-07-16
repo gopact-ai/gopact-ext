@@ -6,13 +6,34 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 Configuration is explicit. The middleware does not load credentials from environment variables; applications decide how to obtain and manage them.
 
+## Basic usage
+
 ```go
 middleware, err := fornax.New(ctx, fornax.Config{
-	AK:     ak,
-	SK:     sk,
+	AK: ak,
+	SK: sk,
+})
+if err != nil {
+	return err
+}
+defer middleware.Close(context.Background())
+
+tracedAgent := middleware.Use(target)
+response, err := tracedAgent.Invoke(ctx, request)
+```
+
+## Full configuration
+
+```go
+middleware, err := fornax.New(ctx, fornax.Config{
+	AK:      ak,
+	SK:      sk,
+	SpaceID: "12345", // optional; verifies the authenticated workspace
 	Region: "CN", // optional; use SG, US, Asia-SouthEastBD, or I18N-DEV as needed
-	PSM:    "your.service.psm",
-	UserID: "user-123",
+	Endpoint: "https://fornax.bytedance.net/open-api/observability/traces/ingest", // optional override
+	PSM:      "your.service.psm", // optional; defaults to unknown_psm
+	UserID:   "default-user",
+	DeviceID: "default-device",
 	Metadata: map[string]string{
 		"tenant": "tenant-1",
 	},
@@ -23,7 +44,16 @@ if err != nil {
 defer middleware.Close(context.Background())
 
 tracedAgent := middleware.Use(target)
+response, err := tracedAgent.Invoke(ctx, request)
+```
+
+## Per-request tags
+
+`UserID`, `DeviceID`, and `Metadata` in `Config` are defaults. Use context helpers when these values differ per request:
+
+```go
 ctx = fornax.WithUserID(ctx, "user-456")
+ctx = fornax.WithDeviceID(ctx, "device-456")
 ctx = fornax.WithMetadata(ctx, map[string]string{"request_id": "req-1"})
 response, err := tracedAgent.Invoke(ctx, request)
 ```

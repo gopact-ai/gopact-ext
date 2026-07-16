@@ -6,13 +6,34 @@
 
 配置采用显式注入。middleware 不从环境变量读取凭据；应用自行决定这些参数的来源和管理方式。
 
+## 最小用法
+
 ```go
 middleware, err := fornax.New(ctx, fornax.Config{
-	AK:     ak,
-	SK:     sk,
+	AK: ak,
+	SK: sk,
+})
+if err != nil {
+	return err
+}
+defer middleware.Close(context.Background())
+
+tracedAgent := middleware.Use(target)
+response, err := tracedAgent.Invoke(ctx, request)
+```
+
+## 完整配置
+
+```go
+middleware, err := fornax.New(ctx, fornax.Config{
+	AK:      ak,
+	SK:      sk,
+	SpaceID: "12345", // 可选；校验 AK/SK 鉴权得到的 workspace
 	Region: "CN", // 可选；按需使用 SG、US、Asia-SouthEastBD 或 I18N-DEV
-	PSM:    "your.service.psm",
-	UserID: "user-123",
+	Endpoint: "https://fornax.bytedance.net/open-api/observability/traces/ingest", // 可选覆盖
+	PSM:      "your.service.psm", // 可选；默认 unknown_psm
+	UserID:   "default-user",
+	DeviceID: "default-device",
 	Metadata: map[string]string{
 		"tenant": "tenant-1",
 	},
@@ -23,7 +44,16 @@ if err != nil {
 defer middleware.Close(context.Background())
 
 tracedAgent := middleware.Use(target)
+response, err := tracedAgent.Invoke(ctx, request)
+```
+
+## 单次请求标签
+
+`Config` 里的 `UserID`、`DeviceID`、`Metadata` 是默认值。如果这些值每次请求不同，使用 context helper：
+
+```go
 ctx = fornax.WithUserID(ctx, "user-456")
+ctx = fornax.WithDeviceID(ctx, "device-456")
 ctx = fornax.WithMetadata(ctx, map[string]string{"request_id": "req-1"})
 response, err := tracedAgent.Invoke(ctx, request)
 ```
