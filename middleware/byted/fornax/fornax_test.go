@@ -273,6 +273,11 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	model := spanNamed(t, spans, "model")
 	child := spanNamed(t, spans, "child")
 	tool := spanNamed(t, spans, "tool")
+	for _, span := range spans {
+		if got := stringAttribute(span.Attributes, threadIDAttribute); got != "session-1" {
+			t.Fatalf("%s thread_id = %q, want session-1", span.Name, got)
+		}
+	}
 	if agentSpan.Parent.SpanID() != root.SpanContext.SpanID() {
 		t.Fatal("agent span is not a child of the root query span")
 	}

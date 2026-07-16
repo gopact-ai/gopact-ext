@@ -752,7 +752,7 @@ func (a *tracedAgent) startTrace(
 		}, tags...)...,
 	))
 	setTraceJSON(agentSpan, inputAttribute, agentInput(request), new(bool))
-	return agentCtx, root, agentSpan, newEventSink(a.middleware.tracer, agentCtx, root, tags), inputCutOff, nil
+	return agentCtx, root, agentSpan, newEventSink(a.middleware.tracer, agentCtx, root, agentSpan, tags), inputCutOff, nil
 }
 
 func finishRoot(root trace.Span, output any, err error, inputCutOff bool) {
@@ -1206,6 +1206,7 @@ type eventSink struct {
 	tracer  trace.Tracer
 	rootCtx context.Context
 	root    trace.Span
+	agent   trace.Span
 	tags    []attribute.KeyValue
 
 	mu        sync.Mutex
@@ -1214,9 +1215,15 @@ type eventSink struct {
 	nodes     map[string]nodeSpanState
 }
 
-func newEventSink(tracer trace.Tracer, rootCtx context.Context, root trace.Span, tags []attribute.KeyValue) *eventSink {
+func newEventSink(
+	tracer trace.Tracer,
+	rootCtx context.Context,
+	root trace.Span,
+	agent trace.Span,
+	tags []attribute.KeyValue,
+) *eventSink {
 	return &eventSink{
-		tracer: tracer, rootCtx: rootCtx, root: root, tags: tags,
+		tracer: tracer, rootCtx: rootCtx, root: root, agent: agent, tags: tags,
 		runs: make(map[string]spanState), nodes: make(map[string]nodeSpanState),
 	}
 }
@@ -1255,6 +1262,9 @@ func (s *eventSink) startRun(event gopact.Event) {
 	if s.rootRunID == "" && event.ParentRunID == "" {
 		s.rootRunID = event.RunID
 		s.root.SetAttributes(runAttributes(event, rootSpanType)...)
+		if event.SessionID != "" {
+			s.agent.SetAttributes(attribute.String(threadIDAttribute, event.SessionID))
+		}
 		s.runs[event.RunID] = spanState{ctx: s.rootCtx, span: s.root, root: true}
 		return
 	}
