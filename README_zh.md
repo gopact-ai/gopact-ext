@@ -15,7 +15,7 @@
 
 ## 发布验证
 
-发布顺序由 manifest 定义；每行声明 module、精确发布版本，以及要在 clean consumer 中编译的包。模块拆分期间的顺序为 `gopact` → `gopact-ext/models/openai` → 旧根模块 `gopact-ext` → `gopact-ext/stores` → `gopact-examples`；各领域拥有独立 module 后会移除旧根模块条目。`gopact v0.1.0-rc.3` 的 VCS tag 已在历史重写时删除，但其不可变 module 制品仍可从公共 Go proxy 获取，且已发布的 ext RC module 仍依赖该版本。活跃源码 module 固定到等价的重写后提交；新的 core 版本发布后再替换这条历史 manifest 记录。每个精确 module 版本可从已配置的 proxy 获取后递增 prefix；省略 prefix 时检查完整 manifest：
+发布顺序由 manifest 定义；每行声明 module、精确发布版本，以及要在 clean consumer 中编译的包。模块拆分期间的顺序为 `gopact` → `gopact-ext/middleware/byted/fornax` → `gopact-ext/models/openai` → 旧根模块 `gopact-ext` → `gopact-ext/stores` → `gopact-examples`；各领域拥有独立 module 后会移除旧根模块条目。`gopact v0.1.0-rc.3` 的 VCS tag 已在历史重写时删除，但其不可变 module 制品仍可从公共 Go proxy 获取，且已发布的 ext RC module 仍依赖该版本。活跃源码 module 固定到等价的重写后提交；新的 core 版本发布后再替换这条历史 manifest 记录。每个精确 module 版本可从已配置的 proxy 获取后递增 prefix；省略 prefix 时检查完整 manifest：
 
 ```bash
 ./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
@@ -23,6 +23,7 @@
 ./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 4 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 5 scripts/release-versions.txt
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 

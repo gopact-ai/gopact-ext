@@ -16,7 +16,7 @@ configured Go proxy and have passed clean-consumer verification.
 
 ## Release verification
 
-The manifest defines the release order. Each row names a module, its exact release version, and a package to compile from a clean consumer. During the module extraction the order is `gopact` → `gopact-ext/models/openai` → legacy `gopact-ext` → `gopact-ext/stores` → `gopact-examples`; the legacy root entry will disappear after its domains have standalone modules. The `gopact v0.1.0-rc.3` VCS tag was removed during the history rewrite, but its immutable module artifact remains available from the public Go proxy and is still required by the published ext RC modules. Active source modules pin the equivalent post-rewrite commit; replace the historical manifest row after a new core release is available. Increase the prefix after each exact module version is available through the configured proxy; omitting it checks the full manifest:
+The manifest defines the release order. Each row names a module, its exact release version, and a package to compile from a clean consumer. During the module extraction the order is `gopact` → `gopact-ext/middleware/byted/fornax` → `gopact-ext/models/openai` → legacy `gopact-ext` → `gopact-ext/stores` → `gopact-examples`; the legacy root entry will disappear after its domains have standalone modules. The `gopact v0.1.0-rc.3` VCS tag was removed during the history rewrite, but its immutable module artifact remains available from the public Go proxy and is still required by the published ext RC modules. Active source modules pin the equivalent post-rewrite commit; replace the historical manifest row after a new core release is available. Increase the prefix after each exact module version is available through the configured proxy; omitting it checks the full manifest:
 
 ```bash
 ./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
@@ -24,6 +24,7 @@ The manifest defines the release order. Each row names a module, its exact relea
 ./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
 ./scripts/clean-consumer.sh --prefix-count 4 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count 5 scripts/release-versions.txt
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
