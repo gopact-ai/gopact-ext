@@ -174,6 +174,9 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	}
 	rootFound := false
 	for _, span := range payload.Spans {
+		if span.ServiceName != "demo.psm" {
+			t.Fatalf("%s service_name = %q, want demo.psm", span.SpanName, span.ServiceName)
+		}
 		if span.TagsString[psmAttribute] != "demo.psm" {
 			t.Fatalf("%s psm tag = %q, want demo.psm", span.SpanName, span.TagsString[psmAttribute])
 		}

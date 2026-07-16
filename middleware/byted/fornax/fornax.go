@@ -181,6 +181,7 @@ func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
 		endpoint:      endpoint,
 		authorization: config.authorization,
 		spaceID:       spaceID,
+		serviceName:   effectivePSM(config.psm),
 	}
 	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter)), traceTags(config)), nil
 }
@@ -208,9 +209,7 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 	if strings.ContainsAny(psm, "\r\n") {
 		return authConfig{}, errors.New("fornax: PSM is invalid")
 	}
-	if psm == "" {
-		psm = "unknown_psm"
-	}
+	psm = effectivePSM(psm)
 	token, err := fetchJWTToken(ctx, http.DefaultClient, host, ak, sk, config.Region, psm)
 	if err != nil {
 		return authConfig{}, fmt.Errorf("fornax: get token: %w", err)
@@ -242,6 +241,7 @@ type traceExporter struct {
 	endpoint      string
 	authorization string
 	spaceID       string
+	serviceName   string
 }
 
 func (e *traceExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
@@ -250,7 +250,7 @@ func (e *traceExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOn
 	}
 	payload := traceIngestRequest{Spans: make([]uploadSpan, 0, len(spans))}
 	for _, span := range spans {
-		payload.Spans = append(payload.Spans, uploadSpanFrom(span, e.spaceID))
+		payload.Spans = append(payload.Spans, uploadSpanFrom(span, e.spaceID, e.serviceName))
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -318,14 +318,14 @@ type baseResponse struct {
 	Msg  string `json:"msg"`
 }
 
-func uploadSpanFrom(span sdktrace.ReadOnlySpan, spaceID string) uploadSpan {
+func uploadSpanFrom(span sdktrace.ReadOnlySpan, spaceID, serviceName string) uploadSpan {
 	out := uploadSpan{
 		StartedATMicros: span.StartTime().UnixMicro(),
 		SpanID:          span.SpanContext().SpanID().String(),
 		ParentID:        parentID(span),
 		TraceID:         span.SpanContext().TraceID().String(),
 		DurationMicros:  span.EndTime().Sub(span.StartTime()).Microseconds(),
-		ServiceName:     instrumentationName,
+		ServiceName:     effectivePSM(serviceName),
 		WorkspaceID:     spaceID,
 		SpanName:        span.Name(),
 		SpanType:        "graph",
@@ -450,6 +450,14 @@ func copyMetadata(metadata map[string]string) map[string]string {
 		copied[key] = value
 	}
 	return copied
+}
+
+func effectivePSM(psm string) string {
+	psm = strings.TrimSpace(psm)
+	if psm == "" {
+		return "unknown_psm"
+	}
+	return psm
 }
 
 func traceTags(config authConfig) []attribute.KeyValue {
