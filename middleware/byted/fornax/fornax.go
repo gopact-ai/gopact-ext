@@ -60,8 +60,10 @@ const (
 	authVersion           = "auth-v1"
 	authTTLSeconds        = 3600
 	maxTraceFieldBytes    = 4 << 20
+	traceTagDefaultCount  = 3
 	decimalBase           = 10
 	spaceIDBitSize        = 64
+	jwtMinParts           = 2
 	failedStatusCode      = -1
 )
 
@@ -214,7 +216,14 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 		return authConfig{}, errors.New("fornax: PSM is invalid")
 	}
 	psm = effectivePSM(psm)
-	token, err := fetchJWTToken(ctx, http.DefaultClient, host, ak, sk, config.Region, psm)
+	token, err := fetchJWTToken(ctx, tokenRequest{
+		client: http.DefaultClient,
+		host:   host,
+		ak:     ak,
+		sk:     sk,
+		region: config.Region,
+		psm:    psm,
+	})
 	if err != nil {
 		return authConfig{}, fmt.Errorf("fornax: get token: %w", err)
 	}
@@ -418,15 +427,25 @@ type jwtToken struct {
 	spaceID int64
 }
 
-func fetchJWTToken(ctx context.Context, client *http.Client, host, ak, sk, region, psm string) (jwtToken, error) {
-	if client == nil {
+type tokenRequest struct {
+	client *http.Client
+	host   string
+	ak     string
+	sk     string
+	region string
+	psm    string
+}
+
+func fetchJWTToken(ctx context.Context, input tokenRequest) (jwtToken, error) {
+	client := input.client
+	if input.client == nil {
 		client = http.DefaultClient
 	}
 	requestBody := authRequest{
-		PSM:     psm,
+		PSM:     input.psm,
 		IsTCE:   true,
 		Env:     os.Getenv("ENV"),
-		IsBOE:   strings.EqualFold(strings.TrimSpace(region), "BOE"),
+		IsBOE:   strings.EqualFold(strings.TrimSpace(input.region), "BOE"),
 		Stage:   os.Getenv("TCE_STAGE"),
 		Payload: "",
 	}
@@ -434,13 +453,13 @@ func fetchJWTToken(ctx context.Context, client *http.Client, host, ak, sk, regio
 	if err != nil {
 		return jwtToken{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(host, "/")+authPath, strings.NewReader(string(body)))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(input.host, "/")+authPath, strings.NewReader(string(body)))
 	if err != nil {
 		return jwtToken{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Agw-Js-Conv", "str")
-	request.Header.Set("Fornax-Auth", genAuthSignature(ak, sk, body, time.Now()))
+	request.Header.Set("Fornax-Auth", genAuthSignature(input.ak, input.sk, body, time.Now()))
 	response, err := client.Do(request)
 	if err != nil {
 		return jwtToken{}, err
@@ -491,7 +510,7 @@ func traceTags(config authConfig) []attribute.KeyValue {
 }
 
 func tagAttributes(psm, userID, deviceID string, metadata map[string]string) []attribute.KeyValue {
-	tags := make([]attribute.KeyValue, 0, len(metadata)+3)
+	tags := make([]attribute.KeyValue, 0, len(metadata)+traceTagDefaultCount)
 	for key, value := range metadata {
 		key = strings.TrimSpace(key)
 		if key == "" || reservedTraceAttribute(key) {
@@ -578,7 +597,7 @@ func sha256HMAC(key, data []byte) string {
 
 func spaceIDFromJWT(token string) (int64, error) {
 	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
+	if len(parts) < jwtMinParts {
 		return 0, errors.New("fornax: authentication returned a malformed JWT")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
@@ -1024,12 +1043,16 @@ func valueText(value any) string {
 	case json.RawMessage:
 		return string(typed)
 	default:
-		encoded, err := json.Marshal(typed)
-		if err != nil {
-			return ""
-		}
-		return string(encoded)
+		return marshalText(typed)
 	}
+}
+
+func marshalText(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func modelInput(request gopact.ModelRequest) modelInputPayload {
@@ -1359,19 +1382,9 @@ func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent)
 	}
 	switch event.Type {
 	case gopact.ModelEventCallStarted:
-		state.span.SetAttributes(attribute.String(spanTypeAttribute, modelSpanType))
-		if event.Request != nil {
-			setTraceJSON(state.span, inputAttribute, modelInput(*event.Request), &state.inputCutOff)
-			if event.Request.Model != "" {
-				state.span.SetAttributes(attribute.String(modelNameAttribute, event.Request.Model))
-			}
-		}
+		startModelSpan(state.span, event.Request, &state.inputCutOff)
 	case gopact.ModelEventCallFinished:
-		if event.Response != nil {
-			setModelResponseAttributes(state.span, *event.Response, &state.outputCutOff)
-		}
-		if event.Err != nil {
-			markError(state.span, event.Err)
+		if finishModelSpan(state.span, event, &state.outputCutOff) {
 			state.failed = true
 		}
 	case gopact.ModelEventUsage:
@@ -1382,6 +1395,28 @@ func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent)
 	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
 	s.nodes[key] = state
 	return nil
+}
+
+func startModelSpan(span trace.Span, request *gopact.ModelRequest, inputCutOff *bool) {
+	span.SetAttributes(attribute.String(spanTypeAttribute, modelSpanType))
+	if request == nil {
+		return
+	}
+	setTraceJSON(span, inputAttribute, modelInput(*request), inputCutOff)
+	if request.Model != "" {
+		span.SetAttributes(attribute.String(modelNameAttribute, request.Model))
+	}
+}
+
+func finishModelSpan(span trace.Span, event gopact.ModelEvent, outputCutOff *bool) bool {
+	if event.Response != nil {
+		setModelResponseAttributes(span, *event.Response, outputCutOff)
+	}
+	if event.Err == nil {
+		return false
+	}
+	markError(span, event.Err)
+	return true
 }
 
 func (s *eventSink) EmitToolEvent(ctx context.Context, event gopact.ToolEvent) error {

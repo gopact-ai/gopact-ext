@@ -201,23 +201,42 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 		if span.TagsString["request_id"] != "request-1" {
 			t.Fatalf("%s request_id tag = %q, want request-1", span.SpanName, span.TagsString["request_id"])
 		}
-		if span.SpanType == rootSpanType {
+		if rootUploadSpan(t, span) {
 			rootFound = true
-			if span.ParentID != "0" {
-				t.Fatalf("root parent_id = %q, want 0", span.ParentID)
-			}
-			if !span.TagsBool[psmFirstSpanTag] {
-				t.Fatal("root fornax_psm_first_span tag = false, want true")
-			}
-			if span.SpanType != rootSpanType {
-				t.Fatalf("reserved metadata overwrote span type: %q", span.SpanType)
-			}
-		} else if span.TagsBool[psmFirstSpanTag] {
-			t.Fatalf("%s unexpectedly has fornax_psm_first_span", span.SpanName)
 		}
 	}
 	if !rootFound {
 		t.Fatal("root span was not exported")
+	}
+}
+
+func rootUploadSpan(t *testing.T, span uploadSpan) bool {
+	t.Helper()
+	if span.SpanType == rootSpanType {
+		assertRootUploadSpan(t, span)
+		return true
+	}
+	assertNotRootUploadSpan(t, span)
+	return false
+}
+
+func assertRootUploadSpan(t *testing.T, span uploadSpan) {
+	t.Helper()
+	if span.ParentID != "0" {
+		t.Fatalf("root parent_id = %q, want 0", span.ParentID)
+	}
+	if !span.TagsBool[psmFirstSpanTag] {
+		t.Fatal("root fornax_psm_first_span tag = false, want true")
+	}
+	if span.SpanType != rootSpanType {
+		t.Fatalf("reserved metadata overwrote span type: %q", span.SpanType)
+	}
+}
+
+func assertNotRootUploadSpan(t *testing.T, span uploadSpan) {
+	t.Helper()
+	if span.TagsBool[psmFirstSpanTag] {
+		t.Fatalf("%s unexpectedly has fornax_psm_first_span", span.SpanName)
 	}
 }
 
