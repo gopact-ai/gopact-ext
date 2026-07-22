@@ -12,7 +12,7 @@
 
 ## 执行模型
 
-可观测执行图从 `prepare → model` 开始。Final 分支为 `model → finish`；repair 分支为 `model → continue → prepare`；tools 分支为 `model → continue → dispatch-tools → tool → observe-tools → continue`。之后如果仍有下一批调用，`continue` 会回到 `dispatch-tools`，否则回到 `prepare` 开始下一次 model turn。Typed Workflow state 保存 turn、messages、pending observations、tool calls、artifacts 和 metadata。`prepare` 只消费一次 pending observations，并使用已配置的 tool specs 构造模型实际可见的请求。同一 batch 的 direct tools 并发执行，但 observations 保持模型调用顺序；invokable tools 是串行屏障。`WithLimits` 限制 turns、tool call 总数和并行 direct tools 数量。
+可观测执行图从 `prepare → model` 开始。Final 分支为 `model → finish`；repair 分支为 `model → continue → prepare`；tools 分支为 `model → continue → dispatch-tools → tool → observe-tools → continue`。之后如果仍有下一批调用，`continue` 会回到 `dispatch-tools`，否则回到 `prepare` 开始下一次 model turn。Typed Workflow state 保存 turn、messages、pending observations、tool calls、artifacts 和 metadata。`prepare` 只消费一次 pending observations，并使用已配置的 tool specs 构造模型实际可见的请求。同一 batch 的 direct tools 并发执行；即使完成顺序不同，每条 observation 也会保留原始 tool call ID，invokable tools 则仍是串行屏障。`WithLimits` 限制 turns、tool call 总数和并行 direct tools 数量。
 
 ## 示例
 

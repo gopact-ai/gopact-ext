@@ -317,15 +317,18 @@ func (target *Agent) Invoke(ctx context.Context, request agent.Request, options 
 }
 
 func normalizeTurn(response gopact.ModelResponse, state *State, limits Limits) (turnResult, error) {
+	if len(response.Message.ToolCalls) > 0 && !isToolCallIntent(response.Intent) {
+		return turnResult{}, fmt.Errorf("react: %T intent has assistant tool calls", response.Intent)
+	}
 	switch intent := response.Intent.(type) {
 	case gopact.FinalIntent:
 		return turnResult{Kind: turnFinal, Message: cloneMessage(response.Message)}, nil
 	case *gopact.FinalIntent:
 		return normalizeFinalPointer(intent, response.Message)
 	case gopact.ToolCallIntent:
-		return normalizeToolTurn(intent.Calls, state, limits)
+		return normalizeToolTurn(response.Message, state, limits)
 	case *gopact.ToolCallIntent:
-		return normalizeToolPointer(intent, state, limits)
+		return normalizeToolPointer(intent, response.Message, state, limits)
 	case gopact.RepairIntent:
 		return normalizeRepairTurn(intent.Repair, state)
 	case *gopact.RepairIntent:
@@ -341,6 +344,15 @@ func normalizeTurn(response gopact.ModelResponse, state *State, limits Limits) (
 	}
 }
 
+func isToolCallIntent(intent gopact.ModelIntent) bool {
+	switch intent.(type) {
+	case gopact.ToolCallIntent, *gopact.ToolCallIntent:
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeFinalPointer(intent *gopact.FinalIntent, message gopact.Message) (turnResult, error) {
 	if intent == nil {
 		return turnResult{}, errors.New("react: nil final intent")
@@ -348,11 +360,11 @@ func normalizeFinalPointer(intent *gopact.FinalIntent, message gopact.Message) (
 	return turnResult{Kind: turnFinal, Message: cloneMessage(message)}, nil
 }
 
-func normalizeToolPointer(intent *gopact.ToolCallIntent, state *State, limits Limits) (turnResult, error) {
+func normalizeToolPointer(intent *gopact.ToolCallIntent, message gopact.Message, state *State, limits Limits) (turnResult, error) {
 	if intent == nil {
 		return turnResult{}, errors.New("react: nil tool-call intent")
 	}
-	return normalizeToolTurn(intent.Calls, state, limits)
+	return normalizeToolTurn(message, state, limits)
 }
 
 func normalizeRepairPointer(intent *gopact.RepairIntent, state *State) (turnResult, error) {
@@ -369,9 +381,13 @@ func normalizeRefusalPointer(intent *gopact.RefusalIntent) (turnResult, error) {
 	return turnResult{}, refusalError(intent.Refusal)
 }
 
-func normalizeToolTurn(calls []gopact.ToolCall, state *State, limits Limits) (turnResult, error) {
+func normalizeToolTurn(message gopact.Message, state *State, limits Limits) (turnResult, error) {
+	calls := message.ToolCalls
 	if len(calls) == 0 {
 		return turnResult{}, errors.New("react: tool-call intent has no calls")
+	}
+	if message.Role != gopact.MessageRoleAssistant {
+		return turnResult{}, fmt.Errorf("react: tool-call message role %q is not assistant", message.Role)
 	}
 	if err := validateToolCalls(calls); err != nil {
 		return turnResult{}, err
@@ -607,14 +623,7 @@ func cloneMessages(messages []gopact.Message) []gopact.Message {
 }
 
 func cloneMessage(message gopact.Message) gopact.Message {
-	message.Parts = append([]gopact.MessagePart(nil), message.Parts...)
-	for index := range message.Parts {
-		if message.Parts[index].Ref != nil {
-			ref := *message.Parts[index].Ref
-			message.Parts[index].Ref = &ref
-		}
-	}
-	return message
+	return message.Clone()
 }
 
 func cloneToolSpecs(specs []gopact.ToolSpec) []gopact.ToolSpec {

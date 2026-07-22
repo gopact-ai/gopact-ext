@@ -187,11 +187,11 @@ func TestModelInvokeReplaysReasoningAndToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Invoke() error = %v", err)
 	}
-	intent, ok := first.Intent.(gopact.ToolCallIntent)
-	if !ok || len(intent.Calls) != 1 {
+	_, ok := first.Intent.(gopact.ToolCallIntent)
+	if !ok || len(first.Message.ToolCalls) != 1 {
 		t.Fatalf("first intent = %+v", first.Intent)
 	}
-	if call := intent.Calls[0]; call.ID != "call_1" || call.Name != "lookup" || string(call.Arguments) != `{"q":"gopact"}` {
+	if call := first.Message.ToolCalls[0]; call.ID != "call_1" || call.Name != "lookup" || string(call.Arguments) != `{"q":"gopact"}` {
 		t.Fatalf("tool call = %+v", call)
 	}
 	if first.FinishReason != "tool_calls" {
@@ -204,7 +204,10 @@ func TestModelInvokeReplaysReasoningAndToolCalls(t *testing.T) {
 	secondReq := model.NewRequest(
 		gopact.UserMessage("find it"),
 		first.Message,
-		gopact.Message{Role: gopact.MessageRoleTool, Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "result-42"}}},
+		gopact.Message{
+			Role: gopact.MessageRoleTool, ToolCallID: "call_1",
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "result-42"}},
+		},
 	)
 	secondReq.Tools = firstReq.Tools
 	final, err := model.Invoke(t.Context(), secondReq)
@@ -225,6 +228,110 @@ func TestModelInvokeReplaysReasoningAndToolCalls(t *testing.T) {
 	}
 	if second.Input[1].ID != "" || second.Input[2].ID != "" {
 		t.Fatalf("replayed response item ids = %q/%q, want empty", second.Input[1].ID, second.Input[2].ID)
+	}
+}
+
+func TestEncodeMessagesAssociatesParallelToolOutputsByID(t *testing.T) {
+	calls := []gopact.ToolCall{
+		{ID: "call-1", Name: "slow", Arguments: json.RawMessage(`{"value":1}`)},
+		{ID: "call-2", Name: "fast", Arguments: json.RawMessage(`{"value":2}`)},
+	}
+	_, input, err := encodeMessages([]gopact.Message{
+		gopact.UserMessage("work"),
+		{
+			Role: gopact.MessageRoleAssistant,
+			Parts: []gopact.MessagePart{
+				{Type: MessagePartTypeResponseItem, Text: `{"type":"function_call","name":"slow","arguments":"{\"value\":1}","call_id":"call-1"}`},
+				{Type: MessagePartTypeResponseItem, Text: `{"type":"function_call","name":"fast","arguments":"{\"value\":2}","call_id":"call-2"}`},
+			},
+			ToolCalls: calls,
+		},
+		{
+			Role: gopact.MessageRoleTool, ToolCallID: "call-2",
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText}},
+		},
+		{
+			Role: gopact.MessageRoleTool, ToolCallID: "call-1",
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "slow-result"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encodeMessages() error = %v", err)
+	}
+	var outputs []responseInputItem
+	for _, item := range input {
+		if item.Type == "function_call_output" {
+			outputs = append(outputs, item)
+		}
+	}
+	if len(outputs) != 2 || outputs[0].CallID != "call-2" || outputs[0].Output != "" ||
+		outputs[1].CallID != "call-1" || outputs[1].Output != "slow-result" {
+		t.Fatalf("function outputs = %+v, want explicit reversed associations", outputs)
+	}
+	emptyOutput, err := json.Marshal(outputs[0])
+	if err != nil {
+		t.Fatalf("marshal empty function output: %v", err)
+	}
+	if !strings.Contains(string(emptyOutput), `"output":""`) {
+		t.Fatalf("empty function output = %s, want required output field", emptyOutput)
+	}
+}
+
+func TestEncodeMessagesBuildsCodexCallsFromCanonicalTranscript(t *testing.T) {
+	call := gopact.ToolCall{ID: "call-1", Name: "lookup"}
+	_, input, err := encodeMessages([]gopact.Message{
+		{Role: gopact.MessageRoleAssistant, ToolCalls: []gopact.ToolCall{call}},
+		{
+			Role: gopact.MessageRoleTool, ToolCallID: call.ID,
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "found"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encodeMessages() error = %v", err)
+	}
+	if len(input) != 2 || input[0].Type != "function_call" || input[0].CallID != call.ID ||
+		input[0].Arguments != "{}" || input[1].Type != "function_call_output" || input[1].CallID != call.ID {
+		t.Fatalf("input = %+v, want reconstructed call and associated output", input)
+	}
+}
+
+func TestEncodeMessagesRejectsInvalidToolAssociations(t *testing.T) {
+	call := gopact.ToolCall{ID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{}`)}
+	assistant := gopact.Message{Role: gopact.MessageRoleAssistant, ToolCalls: []gopact.ToolCall{call}}
+	output := func(id string) gopact.Message {
+		return gopact.Message{
+			Role: gopact.MessageRoleTool, ToolCallID: id,
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "result"}},
+		}
+	}
+	tests := []struct {
+		name     string
+		messages []gopact.Message
+		want     string
+	}{
+		{name: "missing output", messages: []gopact.Message{assistant}, want: "no tool output"},
+		{name: "unknown output", messages: []gopact.Message{output("unknown")}, want: "unknown function call"},
+		{name: "duplicate output", messages: []gopact.Message{assistant, output(call.ID), output(call.ID)}, want: "duplicate tool output"},
+		{name: "unassociated tool message", messages: []gopact.Message{{Role: gopact.MessageRoleTool}}, want: "tool call id"},
+		{
+			name: "opaque call mismatch",
+			messages: []gopact.Message{{
+				Role: gopact.MessageRoleAssistant,
+				Parts: []gopact.MessagePart{{
+					Type: MessagePartTypeResponseItem,
+					Text: `{"type":"function_call","name":"different","arguments":"{}","call_id":"call-1"}`,
+				}},
+				ToolCalls: []gopact.ToolCall{call},
+			}},
+			want: "conflicts with canonical tool call",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := encodeMessages(test.messages); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("encodeMessages() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

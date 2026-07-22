@@ -390,12 +390,89 @@ func TestModelInvokeMapsToolsSchemaReasoningAndToolIntent(t *testing.T) {
 	if got.ToolChoice == nil || got.ResponseFormat == nil || got.ReasoningEffort != "low" {
 		t.Fatalf("advanced request = %+v, want tool choice, response format, reasoning", got)
 	}
-	intent, ok := resp.Intent.(gopact.ToolCallIntent)
-	if !ok || len(intent.Calls) != 1 || intent.Calls[0].Name != "search" {
+	_, ok := resp.Intent.(gopact.ToolCallIntent)
+	if !ok || len(resp.Message.ToolCalls) != 1 || resp.Message.ToolCalls[0].Name != "search" {
 		t.Fatalf("intent = %+v, want search tool call", resp.Intent)
 	}
-	if string(intent.Calls[0].Arguments) != `{"q":"gopact"}` {
-		t.Fatalf("arguments = %s, want tool arguments", intent.Calls[0].Arguments)
+	if string(resp.Message.ToolCalls[0].Arguments) != `{"q":"gopact"}` {
+		t.Fatalf("arguments = %s, want tool arguments", resp.Message.ToolCalls[0].Arguments)
+	}
+}
+
+func TestNewChatRequestPreservesParallelToolAssociations(t *testing.T) {
+	model, err := New("test", "https://example.com", "test-key", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := []gopact.ToolCall{
+		{ID: "call-1", Name: "slow", Arguments: json.RawMessage(`{"value":1}`)},
+		{ID: "call-2", Name: "fast"},
+	}
+	request := model.NewRequest(
+		gopact.UserMessage("work"),
+		gopact.Message{Role: gopact.MessageRoleAssistant, ToolCalls: calls},
+		gopact.Message{
+			Role: gopact.MessageRoleTool, ToolCallID: "call-2",
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText}},
+		},
+		gopact.Message{
+			Role: gopact.MessageRoleTool, ToolCallID: "call-1",
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "slow-result"}},
+		},
+	)
+	wire, err := model.newChatRequest(request, false)
+	if err != nil {
+		t.Fatalf("newChatRequest() error = %v", err)
+	}
+	if len(wire.Messages) != 4 || len(wire.Messages[1].ToolCalls) != 2 {
+		t.Fatalf("wire messages = %+v, want assistant calls and two outputs", wire.Messages)
+	}
+	if wire.Messages[2].ToolCallID != "call-2" || wire.Messages[3].ToolCallID != "call-1" {
+		t.Fatalf("wire outputs = %+v, want explicit reversed CallIDs", wire.Messages[2:])
+	}
+	if wire.Messages[1].ToolCalls[1].Function.Arguments != "{}" {
+		t.Fatalf("parameterless call arguments = %q, want empty object", wire.Messages[1].ToolCalls[1].Function.Arguments)
+	}
+	emptyOutput, err := json.Marshal(wire.Messages[2])
+	if err != nil {
+		t.Fatalf("marshal empty tool output: %v", err)
+	}
+	if !strings.Contains(string(emptyOutput), `"content":""`) {
+		t.Fatalf("empty tool output = %s, want required content field", emptyOutput)
+	}
+}
+
+func TestNewChatRequestRejectsInvalidToolAssociations(t *testing.T) {
+	model, err := New("test", "https://example.com", "test-key", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := gopact.ToolCall{ID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{}`)}
+	assistant := gopact.Message{Role: gopact.MessageRoleAssistant, ToolCalls: []gopact.ToolCall{call}}
+	output := func(id string) gopact.Message {
+		return gopact.Message{
+			Role: gopact.MessageRoleTool, ToolCallID: id,
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "result"}},
+		}
+	}
+	tests := []struct {
+		name     string
+		messages []gopact.Message
+		want     string
+	}{
+		{name: "missing output", messages: []gopact.Message{assistant}, want: "no tool output"},
+		{name: "unknown output", messages: []gopact.Message{output("unknown")}, want: "unknown tool call"},
+		{name: "duplicate output", messages: []gopact.Message{assistant, output(call.ID), output(call.ID)}, want: "duplicate tool output"},
+		{name: "unassociated tool message", messages: []gopact.Message{{Role: gopact.MessageRoleTool}}, want: "tool call id"},
+		{name: "calls on user message", messages: []gopact.Message{{Role: gopact.MessageRoleUser, ToolCalls: []gopact.ToolCall{call}}}, want: "assistant"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := gopact.ModelRequest{Model: "test-model", Messages: test.messages}
+			if _, err := model.newChatRequest(request, false); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("newChatRequest() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
