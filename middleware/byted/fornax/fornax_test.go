@@ -720,32 +720,61 @@ func TestUnaryTracePayloadsAreBounded(t *testing.T) {
 }
 
 func TestMiddlewareReportsErrors(t *testing.T) {
-	exporter := tracetest.NewInMemoryExporter()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil, false)
-	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+	tests := []struct {
+		name       string
+		capture    bool
+		wantDetail bool
+	}{
+		{name: "metadata-only", capture: false, wantDetail: false},
+		{name: "content-capture", capture: true, wantDetail: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			exporter := tracetest.NewInMemoryExporter()
+			provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+			middleware := newMiddleware(provider, nil, test.capture)
+			t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
-	if _, err := middleware.Use(failingTestAgent{}).Invoke(t.Context(), agent.Request{}); !errors.Is(err, errTestAgent) {
-		t.Fatalf("Invoke() error = %v, want test error", err)
+			if _, err := middleware.Use(failingTestAgent{}).Invoke(t.Context(), agent.Request{}); !errors.Is(err, errTestAgent) {
+				t.Fatalf("Invoke() error = %v, want test error", err)
+			}
+			spans := exporter.GetSpans()
+			if len(spans) != 3 {
+				t.Fatalf("reported %d spans, want 3", len(spans))
+			}
+			for _, span := range []tracetest.SpanStub{
+				spanNamedType(t, spans, "failing", rootSpanType),
+				spanNamedType(t, spans, "failing", agentSpanType),
+				spanNamed(t, spans, "model"),
+			} {
+				assertErrorMetadata(t, span)
+				assertErrorDetail(t, span, test.wantDetail)
+			}
+		})
 	}
-	spans := exporter.GetSpans()
-	if len(spans) != 3 {
-		t.Fatalf("reported %d spans, want 3", len(spans))
+}
+
+func assertErrorMetadata(t *testing.T, span tracetest.SpanStub) {
+	t.Helper()
+	if span.Status.Code != codes.Error {
+		t.Fatalf("%s status = %v, want error", span.Name, span.Status.Code)
 	}
-	for _, span := range []tracetest.SpanStub{
-		spanNamedType(t, spans, "failing", rootSpanType),
-		spanNamedType(t, spans, "failing", agentSpanType),
-		spanNamed(t, spans, "model"),
-	} {
-		if span.Status.Code != codes.Error {
-			t.Fatalf("%s status = %v, want error", span.Name, span.Status.Code)
+	if got, ok := int64Attribute(span.Attributes, statusAttribute); !ok || got != failedStatusCode {
+		t.Fatalf("%s status code = %d, want %d", span.Name, got, failedStatusCode)
+	}
+}
+
+func assertErrorDetail(t *testing.T, span tracetest.SpanStub, want bool) {
+	t.Helper()
+	detail := stringAttribute(span.Attributes, "error")
+	if want {
+		if detail == "" || span.Status.Description == "" || len(span.Events) == 0 {
+			t.Fatalf("%s error detail is incomplete: attribute=%q status=%q events=%d", span.Name, detail, span.Status.Description, len(span.Events))
 		}
-		if got, ok := int64Attribute(span.Attributes, "cozeloop.status_code"); !ok || got != failedStatusCode {
-			t.Fatalf("%s status code = %d, want %d", span.Name, got, failedStatusCode)
-		}
-		if got := stringAttribute(span.Attributes, "error"); got == "" {
-			t.Fatalf("%s error attribute is empty", span.Name)
-		}
+		return
+	}
+	if detail != "" || span.Status.Description != "" || len(span.Events) != 0 {
+		t.Fatalf("%s error detail leaked: attribute=%q status=%q events=%d", span.Name, detail, span.Status.Description, len(span.Events))
 	}
 }
 

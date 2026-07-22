@@ -22,7 +22,7 @@ tracedAgent := middleware.Use(target)
 response, err := tracedAgent.Invoke(ctx, request)
 ```
 
-默认只上报运行元数据，不上报 Agent 消息、model 请求与响应、tool arguments、结果 preview 或流式输出。
+默认只上报运行元数据，不上报 Agent 消息、model 请求与响应、tool arguments、结果 preview、流式输出或详细错误信息。
 
 ## 完整配置
 
@@ -52,9 +52,9 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 ## 内容采集
 
-只有 application 明确批准把请求与响应内容导出到 Fornax 时，才设置 `CaptureContent: true`。开启后，root、Agent、model 与 tool span 会包含 `cozeloop.input` 和 `cozeloop.output`，其中可能有消息、tool schema 与 arguments、结果 preview，以及聚合后的流式输出。零值为 `false`；本模块不提供单次请求覆盖，避免因 context 传播错误意外开启采集。
+只有 application 明确批准把请求与响应内容导出到 Fornax 时，才设置 `CaptureContent: true`。开启后，root、Agent、model 与 tool span 会包含 `cozeloop.input` 和 `cozeloop.output`，其中可能有消息、tool schema 与 arguments、结果 preview，以及聚合后的流式输出。它还会开启原始 error attribute、status description 和 error event，因为 provider error 可能包含响应 payload。零值为 `false`；本模块不提供单次请求覆盖，避免因 context 传播错误意外开启采集。
 
-关闭内容采集时仍保留运行元数据：span 层级、run/session/node 标识、model/tool 名称、tool call ID、token 用量、finish reason、状态、耗时和 application 显式提供的 tags。
+关闭内容采集时仍保留运行元数据：span 层级、run/session/node 标识、model/tool 名称、tool call ID、token 用量、finish reason、错误状态、耗时和 application 显式提供的 tags。原始 error 仍会返回给 application。
 
 ## 单次请求标签
 

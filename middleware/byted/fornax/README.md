@@ -22,7 +22,7 @@ tracedAgent := middleware.Use(target)
 response, err := tracedAgent.Invoke(ctx, request)
 ```
 
-By default, spans contain operational metadata only. Agent messages, model requests and responses, tool arguments, result previews, and streaming output are not reported.
+By default, spans contain operational metadata only. Agent messages, model requests and responses, tool arguments, result previews, streaming output, and verbose error details are not reported.
 
 ## Full configuration
 
@@ -52,9 +52,9 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 ## Content capture
 
-Set `CaptureContent: true` only when the application has explicitly approved exporting request and response content to Fornax. This enables `cozeloop.input` and `cozeloop.output` on root, Agent, model, and tool spans, including messages, tool schemas and arguments, result previews, and aggregated streaming output. The zero value is `false`; there is no per-request override, so an application cannot accidentally enable capture by propagating the wrong context.
+Set `CaptureContent: true` only when the application has explicitly approved exporting request and response content to Fornax. This enables `cozeloop.input` and `cozeloop.output` on root, Agent, model, and tool spans, including messages, tool schemas and arguments, result previews, and aggregated streaming output. It also enables raw error attributes, status descriptions, and error events because provider errors can contain response payloads. The zero value is `false`; there is no per-request override, so an application cannot accidentally enable capture by propagating the wrong context.
 
-Metadata remains available when content capture is disabled: span hierarchy, run/session/node identifiers, model and tool names, tool call IDs, token usage, finish reason, status, latency, and application-provided tags.
+Metadata remains available when content capture is disabled: span hierarchy, run/session/node identifiers, model and tool names, tool call IDs, token usage, finish reason, error status, latency, and application-provided tags. The original error is still returned to the application.
 
 ## Per-request tags
 

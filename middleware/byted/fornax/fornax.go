@@ -91,7 +91,8 @@ type Config struct {
 	// Metadata attaches custom string tags to exported spans.
 	Metadata map[string]string
 	// CaptureContent enables trace input/output payloads, including messages,
-	// model and tool arguments, responses, and result previews. It defaults to false.
+	// model and tool arguments, responses, result previews, and verbose error details.
+	// It defaults to false.
 	CaptureContent bool
 }
 
@@ -790,7 +791,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 
 func finishRoot(root trace.Span, output any, err error, inputCutOff, capture bool) {
 	if err != nil {
-		markError(root, err)
+		markError(root, err, capture)
 		return
 	}
 	root.SetAttributes(attribute.Int(statusAttribute, 0))
@@ -815,7 +816,7 @@ func finishRoot(root trace.Span, output any, err error, inputCutOff, capture boo
 
 func finishAgent(span trace.Span, response agent.Response, err error, capture bool) {
 	if err != nil {
-		markError(span, err)
+		markError(span, err, capture)
 		return
 	}
 	span.SetAttributes(attribute.Int(statusAttribute, 0))
@@ -1333,7 +1334,7 @@ func (s *eventSink) finishRun(event gopact.Event) {
 	if event.Type == workflow.EventWorkflowCompleted {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, errors.New(event.Type))
+		markError(state.span, errors.New(event.Type), s.captureContent)
 	}
 	if state.root {
 		return
@@ -1374,7 +1375,7 @@ func (s *eventSink) finishNode(event gopact.Event) {
 	if (event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped) && !state.failed {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, errors.New(event.Type))
+		markError(state.span, errors.New(event.Type), s.captureContent)
 	}
 	state.span.End(trace.WithTimestamp(eventTime(event)))
 	delete(s.nodes, key)
@@ -1388,7 +1389,7 @@ func (s *eventSink) finish(err error) {
 	defer s.mu.Unlock()
 	for key, state := range s.nodes {
 		if err != nil {
-			markError(state.span, err)
+			markError(state.span, err, s.captureContent)
 		}
 		state.span.End()
 		delete(s.nodes, key)
@@ -1398,14 +1399,14 @@ func (s *eventSink) finish(err error) {
 			continue
 		}
 		if err != nil {
-			markError(state.span, err)
+			markError(state.span, err, s.captureContent)
 		}
 		state.span.End()
 		delete(s.runs, runID)
 	}
 	if s.directModel != nil {
 		if err != nil {
-			markError(s.directModel.span, err)
+			markError(s.directModel.span, err, s.captureContent)
 		}
 		s.directModel.span.End()
 		s.directModel = nil
@@ -1494,7 +1495,7 @@ func finishModelSpan(span trace.Span, event gopact.ModelEvent, outputCutOff *boo
 	if event.Err == nil {
 		return false
 	}
-	markError(span, event.Err)
+	markError(span, event.Err, capture)
 	return true
 }
 
@@ -1523,13 +1524,13 @@ func (s *eventSink) EmitToolEvent(ctx context.Context, event gopact.ToolEvent) e
 			setTraceJSON(state.span, outputAttribute, toolOutput(event.Outcome), &state.outputCutOff)
 		}
 		if event.Err != nil {
-			markError(state.span, event.Err)
+			markError(state.span, event.Err, s.captureContent)
 			state.failed = true
 		} else if _, failed := event.Outcome.(gopact.ToolErrorOutcome); failed {
-			markError(state.span, errors.New("tool error outcome"))
+			markError(state.span, errors.New("tool error outcome"), s.captureContent)
 			state.failed = true
 		} else if value, failed := event.Outcome.(*gopact.ToolErrorOutcome); failed && value != nil {
-			markError(state.span, errors.New("tool error outcome"))
+			markError(state.span, errors.New("tool error outcome"), s.captureContent)
 			state.failed = true
 		}
 	}
@@ -1674,11 +1675,13 @@ func eventTime(event gopact.Event) time.Time {
 	return event.Timestamp
 }
 
-func markError(span trace.Span, err error) {
+func markError(span trace.Span, err error, detail bool) {
+	span.SetStatus(codes.Error, "")
+	span.SetAttributes(attribute.Int(statusAttribute, failedStatusCode))
+	if !detail {
+		return
+	}
 	span.RecordError(err)
 	span.SetStatus(codes.Error, err.Error())
-	span.SetAttributes(
-		attribute.String("error", err.Error()),
-		attribute.Int(statusAttribute, failedStatusCode),
-	)
+	span.SetAttributes(attribute.String("error", err.Error()))
 }
