@@ -56,11 +56,12 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 	defer server.Close()
 
 	auth, err := authenticateWithHost(t.Context(), Config{
-		AK:       "ak-value",
-		SK:       "sk-value",
-		SpaceID:  "67890",
-		Endpoint: server.URL + defaultTracePath,
-		PSM:      "demo.psm",
+		AK:             "ak-value",
+		SK:             "sk-value",
+		SpaceID:        "67890",
+		Endpoint:       server.URL + defaultTracePath,
+		PSM:            "demo.psm",
+		CaptureContent: true,
 	}, server.URL)
 	if err != nil {
 		t.Fatalf("authenticate() error = %v", err)
@@ -70,6 +71,9 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 	}
 	if auth.authorization != fakeJWT(67890) {
 		t.Fatalf("authorization token mismatch")
+	}
+	if !auth.captureContent {
+		t.Fatal("capture content = false, want explicit opt-in preserved")
 	}
 
 	headers := <-authHeaders
@@ -141,6 +145,9 @@ func TestExporterRefreshesTokenAndRetriesUnauthorizedRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate() error = %v", err)
 	}
+	if auth.captureContent {
+		t.Fatal("capture content = true, want zero-value configuration disabled")
+	}
 	middleware, err := newWithAuth(t.Context(), auth)
 	if err != nil {
 		t.Fatalf("newWithAuth() error = %v", err)
@@ -185,12 +192,13 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	defer server.Close()
 
 	middleware, err := newWithAuth(t.Context(), authConfig{
-		spaceID:       "12345",
-		endpoint:      server.URL + defaultTracePath,
-		authorization: "explicit-token",
-		psm:           "demo.psm",
-		userID:        "default-user",
-		deviceID:      "default-device",
+		spaceID:        "12345",
+		endpoint:       server.URL + defaultTracePath,
+		authorization:  "explicit-token",
+		psm:            "demo.psm",
+		userID:         "default-user",
+		deviceID:       "default-device",
+		captureContent: true,
 		metadata: map[string]string{
 			"tenant": "tenant-1",
 		},
@@ -293,6 +301,9 @@ func assertRootUploadSpan(t *testing.T, span uploadSpan) {
 	if span.SpanType != rootSpanType {
 		t.Fatalf("reserved metadata overwrote span type: %q", span.SpanType)
 	}
+	if span.Input == "" || span.Output == "" {
+		t.Fatal("explicit content capture did not export root input/output")
+	}
 }
 
 func assertNotRootUploadSpan(t *testing.T, span uploadSpan) {
@@ -305,7 +316,7 @@ func assertNotRootUploadSpan(t *testing.T, span uploadSpan) {
 func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, true)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	var observed atomic.Int64
@@ -383,10 +394,42 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	}
 }
 
+func TestMiddlewareDefaultsToMetadataOnly(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	middleware := newMiddleware(provider, nil, false)
+	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+
+	if _, err := middleware.Use(componentEventAgent{}).Invoke(t.Context(), agent.Request{
+		Messages: []gopact.Message{gopact.UserMessage("private-message")},
+	}); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+
+	spans := exporter.GetSpans()
+	model := spanNamed(t, spans, "model")
+	tool := spanNamed(t, spans, "tool")
+	if got := stringAttribute(model.Attributes, modelNameAttribute); got != "demo-model" {
+		t.Fatalf("model_name = %q, want demo-model", got)
+	}
+	if got, ok := int64Attribute(model.Attributes, totalTokensAttribute); !ok || got != 3 {
+		t.Fatalf("tokens = %d, want 3", got)
+	}
+	if got := stringAttribute(tool.Attributes, toolNameAttribute); got != "lookup" {
+		t.Fatalf("tool_name = %q, want lookup", got)
+	}
+	if got := stringAttribute(tool.Attributes, toolCallIDAttribute); got != "call-1" {
+		t.Fatalf("tool_call_id = %q, want call-1", got)
+	}
+	for _, span := range spans {
+		assertMetadataOnly(t, span)
+	}
+}
+
 func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, true)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	if _, err := middleware.Use(componentEventAgent{}).Invoke(t.Context(), agent.Request{
@@ -426,6 +469,9 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	if got := stringAttribute(tool.Attributes, toolCallIDAttribute); got != "call-1" {
 		t.Fatalf("tool_call_id = %q, want call-1", got)
 	}
+	if got := stringAttribute(tool.Attributes, inputAttribute); !strings.Contains(got, `"query":"hello"`) {
+		t.Fatalf("tool input = %q, want arguments payload", got)
+	}
 	if got := stringAttribute(tool.Attributes, outputAttribute); !strings.Contains(got, "tool-result") {
 		t.Fatalf("tool output = %q, want outcome payload", got)
 	}
@@ -434,7 +480,7 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 func TestMiddlewareReportsDirectModelSpan(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, true)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	response, err := middleware.Use(directModelEventAgent{}).Invoke(
@@ -515,7 +561,7 @@ func TestActiveNodeKeysMatchWorkflowEventIDs(t *testing.T) {
 func TestUseStreamingReportsOutput(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, true)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	target, ok := middleware.Use(streamingTestAgent{}).(agent.StreamingAgent)
@@ -574,10 +620,33 @@ func TestUseStreamingReportsOutput(t *testing.T) {
 	}
 }
 
+func TestStreamingDefaultsToMetadataOnly(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	middleware := newMiddleware(provider, nil, false)
+	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+
+	var text strings.Builder
+	for chunk, err := range middleware.UseStreaming(streamingTestAgent{}).InvokeStream(t.Context(), agent.Request{
+		Messages: []gopact.Message{gopact.UserMessage("private-stream-input")},
+	}) {
+		if err != nil {
+			t.Fatalf("InvokeStream() error = %v", err)
+		}
+		text.WriteString(chunk.Text)
+	}
+	if got := text.String(); got != "firstsecond" {
+		t.Fatalf("stream output = %q, want firstsecond", got)
+	}
+	for _, span := range exporter.GetSpans() {
+		assertMetadataOnly(t, span)
+	}
+}
+
 func TestStreamingConsumerStopEndsTrace(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, false)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	for range middleware.UseStreaming(streamingTestAgent{}).InvokeStream(t.Context(), agent.Request{}) {
@@ -595,7 +664,7 @@ func TestStreamingConsumerStopEndsTrace(t *testing.T) {
 func TestStreamingTraceOutputIsBounded(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, true)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	var chunks []agent.Chunk
@@ -627,7 +696,7 @@ func TestStreamingTraceOutputIsBounded(t *testing.T) {
 func TestUnaryTracePayloadsAreBounded(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, true)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	largeText := strings.Repeat("x", maxTraceFieldBytes)
@@ -653,7 +722,7 @@ func TestUnaryTracePayloadsAreBounded(t *testing.T) {
 func TestMiddlewareReportsErrors(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	middleware := newMiddleware(provider, nil)
+	middleware := newMiddleware(provider, nil, false)
 	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
 	if _, err := middleware.Use(failingTestAgent{}).Invoke(t.Context(), agent.Request{}); !errors.Is(err, errTestAgent) {
@@ -917,6 +986,32 @@ func int64Attribute(attributes []attribute.KeyValue, key string) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func assertMetadataOnly(t *testing.T, span tracetest.SpanStub) {
+	t.Helper()
+	for _, attr := range span.Attributes {
+		if attr.Key == inputAttribute || attr.Key == outputAttribute || attr.Key == cutOffAttribute {
+			t.Fatalf("%s reported content attribute %q by default", span.Name, attr.Key)
+		}
+		if attr.Value.Type() != attribute.STRING {
+			continue
+		}
+		if content := reportedTraceContent(attr.Value.AsString()); content != "" {
+			t.Fatalf("%s reported content %q in attribute %q by default", span.Name, content, attr.Key)
+		}
+	}
+}
+
+func reportedTraceContent(value string) string {
+	for _, content := range []string{
+		"private-message", "private-stream-input", `"query":"hello"`, "tool-result", "use tool", "done", "firstsecond",
+	} {
+		if strings.Contains(value, content) {
+			return content
+		}
+	}
+	return ""
 }
 
 func fakeJWT(spaceID int64) string {
