@@ -232,7 +232,7 @@ func TestPlanExecAgentConformance(t *testing.T) {
 	), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
 		return ReplanDecision{Done: true}, nil
 	}))
-	gopacttest.RequireAgentConformance(t, gopacttest.AgentConformanceCase{
+	gopacttest.RequireWorkflowAgentConformance(t, gopacttest.AgentConformanceCase{
 		Agent: target, Request: agent.Request{},
 		Validate: func(response agent.Response) error {
 			if len(response.Message.Parts) == 0 {

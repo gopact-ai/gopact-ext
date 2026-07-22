@@ -39,7 +39,7 @@ func TestAgentReturnsFinalResponseAndConforms(t *testing.T) {
 	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
 		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
-	gopacttest.RequireAgentConformance(t, gopacttest.AgentConformanceCase{
+	gopacttest.RequireWorkflowAgentConformance(t, gopacttest.AgentConformanceCase{
 		Agent:   target,
 		Request: agent.Request{Messages: []gopact.Message{gopact.UserMessage("work")}},
 		Validate: func(response agent.Response) error {
