@@ -8,21 +8,27 @@
 
 > **仅支持 Go 1.27+。** 本项目围绕泛型方法构建，也借此庆祝我们眼中 Go 近十年来最具影响力的语言演进之一。
 
-源码联调时，请把 `gopact` 与 `gopact-ext` 并排 clone；提交的 `go.work`
-会联结源码 module，但不会改变发布依赖契约。正式 consumer 使用 release manifest
-中已经通过 clean-consumer 验证的精确 module 版本。
+仓库提交的 `go.work` 会联结本仓库内的全部模块。跨仓 CI 还会用当前
+`gopact` 与示例源码验证兼容性，但不会改变任何正式发布的依赖契约。
+
+目录中的每一项都是独立发版的模块，只依赖实际使用的包：
+
+```bash
+go get github.com/gopact-ai/gopact-ext/agents/react@v0.4.0
+go get github.com/gopact-ai/gopact-ext/models/agnes@v0.2.0
+```
+
+根模块不再充当一次安装全部扩展的聚合包。
 
 ## 发布验证
 
-发布顺序由 manifest 定义；每行声明 module、精确发布版本，以及要在 clean consumer 中编译的包。模块拆分期间的顺序为 `gopact` → `gopact-ext/middleware/byted/fornax` → `gopact-ext/models/openai` → 旧根模块 `gopact-ext` → `gopact-ext/stores` → `gopact-examples`；各领域拥有独立 module 后会移除旧根模块条目。每个精确 module 版本可从已配置的 proxy 获取后递增 prefix；省略 prefix 时检查完整 manifest：
+发布顺序由清单定义；每行声明模块、精确正式版本，以及要在干净消费者中
+编译的包。包名为 `-` 表示该模块没有可供外部直接导入的包。只有下一个精确
+版本已经能从指定代理获取，才可以增加检查前缀；省略前缀时检查完整清单：
 
 ```bash
 ./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 1 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 4 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 5 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count N scripts/release-versions.txt
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
@@ -127,12 +133,14 @@ response, err := target.Invoke(ctx, request, gopact.WithRunID("run-123"))
 
 `workflow.MemoryStore` 只适合测试和短生命周期进程。SQLite Store 适用于单机，或安全共享同一个本地数据库文件的多进程；文件库强制使用 `journal_mode=DELETE`，显式指定其他 journal mode 的 DSN 会被拒绝。旧 WAL 数据库首次转换时必须安排维护窗口，先停止其他 SQLite 连接。SQLite、MySQL、MariaDB、PostgreSQL 都统一为部署阶段执行 `Migrate(dsn)`、应用实例调用 `Open(dsn)`；真正的内存 SQLite 由 `Open` 初始化。多主机部署应使用 MySQL、MariaDB 或 PostgreSQL Store；这些 Store 会在 ownership transaction 内用数据库时钟生成并校验租约到期时间。已有 schema 升级前必须停止并排空全部旧 writer。数据库 advisory lock 只会串行化迁移器，不能让新旧 writer 安全混跑。服务必须调度终态 Run 与独立 journal 清理；极长的 active Run 只能在显式 `AllowHistoryLoss` 后压缩连续的已确认前缀，因为被删的 Retry/Fork/审计历史无法恢复。
 
-## Breaking 迁移
+## 不兼容迁移
 
-本次重建使用各模块的下一个 pre-v1 minor 统一发布，不复用旧 patch 版本。主要入口变化：
+本次重建为受影响模块发布各自 1.0 前的下一个次版本，不复用旧的修订版本。主要入口变化：
 
 | 旧入口 | 新入口 |
 |---|---|
-| `react.New(ChatModel, *tools.Registry, ...)` / `NewModelAgent` | `react.New(agent.Identity, gopact.Model, ...Option)`；tool 通过 `WithTools(...agent.Tool)` 注入 |
-| `agenttool.New(a2a.Agent, ...Option)` | `agenttool.New(gopact.ToolSpec, agent.Agent, agenttool.Adapter)`；child 作为 typed Workflow invokable 执行 |
-| 旧 graph/template 版 `planexec`、`supervisor` | 传入 immutable `agent.Directory` 与各自 Planner/Replanner/Decider；Workflow 保存状态与执行事实 |
+| 把根模块 `github.com/gopact-ai/gopact-ext` 当作扩展合集 | 直接依赖实际使用的 Agent、模型、Store 或中间件模块 |
+| `react.New(ChatModel, *tools.Registry, ...)` / `NewModelAgent` | `react.New(agent.Identity, gopact.Model, ...Option)`；工具通过 `WithTools(...agent.Tool)` 注入 |
+| `agenttool.New(a2a.Agent, ...Option)` | `agenttool.New(gopact.ToolSpec, agent.Agent, agenttool.Adapter)`；子 Agent 作为带类型的 Workflow 调用对象执行 |
+| 旧图/模板版 `planexec`、`supervisor` | 传入不可变的 `agent.Directory` 与各自的 Planner/Replanner/Decider；Workflow 保存状态与执行事实 |
+| `planexec.Planner.Plan(context.Context, planexec.PlanInput)` | `planexec.Planner.Plan(context.Context, agent.Request)`；计划和步骤历史由 `Replanner` 接收 |

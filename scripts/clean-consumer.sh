@@ -39,19 +39,16 @@ while read -r module version package extra; do
 		echo "invalid manifest entry: ${module} ${version:-} ${package:-} ${extra:-}" >&2
 		exit 1
 	fi
-	if [[ "${package}" != "${module}" && "${package}" != "${module}/"* ]]; then
+	if [[ "${package}" != "-" && "${package}" != "${module}" && "${package}" != "${module}/"* ]]; then
 		echo "check package ${package} is outside module ${module}" >&2
 		exit 1
 	fi
-	if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
-		echo "version must be an exact semantic version tag: ${module} ${version}" >&2
+	if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+		echo "version must be an exact stable semantic version tag: ${module} ${version}" >&2
 		exit 1
 	fi
-	if [[ "${version}" == "v0.0.0" ||
-		"${version}" =~ ^v[0-9]+\.0\.0-[0-9]{14}-[0-9a-f]{12}$ ||
-		"${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-0\.[0-9]{14}-[0-9a-f]{12}$ ||
-		"${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*\.0\.[0-9]{14}-[0-9a-f]{12}$ ]]; then
-		echo "placeholder and pseudo-versions are forbidden: ${module} ${version}" >&2
+	if [[ "${version}" == "v0.0.0" ]]; then
+		echo "placeholder versions are forbidden: ${module} ${version}" >&2
 		exit 1
 	fi
 	if [[ -n "${modules[*]-}" ]]; then
@@ -101,6 +98,10 @@ for ((index = 0; index < prefix_count; index++)); do
 	if grep -Eq '^[[:space:]]*replace([[:space:](]|$)' "${module_gomod}"; then
 		echo "tagged module contains a replace directive: ${module}@${version}" >&2
 		exit 1
+	fi
+	if [[ "${package}" == "-" ]]; then
+		GOWORK=off go mod edit -require="${module}@${version}"
+		continue
 	fi
 	GOWORK=off go get "${package}@${version}"
 	if [[ "$(GOWORK=off go list -f '{{.Name}}' "${package}")" == "main" ]]; then

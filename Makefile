@@ -1,9 +1,27 @@
-# The root is source-only while its domains move into independently tagged modules.
-STANDALONE_MODULES := middleware/byted/fornax models/openai stores
-SECURITY_MODULES := . $(STANDALONE_MODULES)
-WORKSPACE_PACKAGES := ./... ./middleware/byted/fornax/... ./models/openai/... ./stores/... ./tests/workflow/...
+# Every extension domain is independently versioned. TIDY_MODULES grows only
+# after a module's same-repository dependencies are available from the proxy.
+WORKSPACE_MODULES := \
+	agents/agenttool \
+	agents/internal \
+	agents/loop \
+	agents/parallel \
+	agents/planexec \
+	agents/react \
+	agents/router \
+	agents/sequential \
+	agents/supervisor \
+	middleware/byted/fornax \
+	models/agnes \
+	models/fake \
+	models/glm \
+	models/openai \
+	stores \
+	tests/workflow
+TIDY_MODULES := . middleware/byted/fornax models/openai stores
+SECURITY_MODULES := . $(filter-out tests/workflow,$(WORKSPACE_MODULES))
+WORKSPACE_PACKAGES := ./... $(addprefix ./,$(addsuffix /...,$(WORKSPACE_MODULES)))
 
-.PHONY: test integration capability fmt-check tidy race vet security dbintegration benchmark
+.PHONY: test integration capability fmt-check module-contract tidy standalone race vet security dbintegration benchmark
 
 test:
 	GOTOOLCHAIN=local go test -count=1 $(WORKSPACE_PACKAGES)
@@ -20,9 +38,19 @@ capability: test integration race vet security
 fmt-check:
 	test -z "$$(gofmt -l .)"
 
+module-contract:
+	./scripts/module-contract_test.sh
+
 tidy:
-	@set -e; for dir in $(STANDALONE_MODULES); do \
+	@set -e; for dir in $(TIDY_MODULES); do \
 		(cd $$dir && GOWORK=off GOTOOLCHAIN=local go mod tidy -diff); \
+	done
+
+standalone:
+	@set -e; for dir in $(TIDY_MODULES); do \
+		echo "standalone $$dir"; \
+		(cd $$dir && GOWORK=off GOTOOLCHAIN=local go test -race -count=1 ./...); \
+		(cd $$dir && GOWORK=off GOTOOLCHAIN=local go vet ./...); \
 	done
 
 race:
