@@ -107,7 +107,7 @@ func New(identity agent.Identity, directory *agent.Directory, childNames []strin
 	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version), workflow.WithMaxParallelism(parallelism))
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	plan := wf.Node("plan", func(_ context.Context, request agent.Request) (agent.Request, error) {
-		return cloneRequest(request), nil
+		return request.Clone(), nil
 	})
 	nodes := make([]*workflow.Node[agent.Request, agent.Response], len(children))
 	for index, child := range children {
@@ -122,21 +122,21 @@ func New(identity agent.Identity, directory *agent.Directory, childNames []strin
 			if err != nil {
 				return agent.Response{}, err
 			}
-			results[index] = BranchResult{Name: children[index].Identity().Name, Response: cloneResponse(response)}
+			results[index] = BranchResult{Name: children[index].Identity().Name, Response: response.Clone()}
 		}
 		response, err := reducer.Reduce(ctx, results)
 		if err != nil {
 			return agent.Response{}, fmt.Errorf("parallel: reduce branches: %w", err)
 		}
-		return cloneResponse(response), nil
+		return response.Clone(), nil
 	})
 	for _, node := range nodes {
 		wf.Edge(node, merge)
 	}
 	plan.Route(func(_ context.Context, request agent.Request) (workflow.Dispatch, error) {
-		dispatch := plan.Once(nodes[0], cloneRequest(request))
+		dispatch := plan.Once(nodes[0], request.Clone())
 		for _, node := range nodes[1:] {
-			dispatch = dispatch.And(plan.Once(node, cloneRequest(request)))
+			dispatch = dispatch.And(plan.Once(node, request.Clone()))
 		}
 		return dispatch.WithSettle(workflow.SettleAll()), nil
 	})
@@ -171,48 +171,8 @@ func cloneBranchResults(results []BranchResult) []BranchResult {
 	}
 	cloned := make([]BranchResult, len(results))
 	for index, result := range results {
-		result.Response = cloneResponse(result.Response)
+		result.Response = result.Response.Clone()
 		cloned[index] = result
-	}
-	return cloned
-}
-
-func cloneRequest(request agent.Request) agent.Request {
-	request.Messages = cloneMessages(request.Messages)
-	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
-	request.Metadata = cloneStringMap(request.Metadata)
-	return request
-}
-
-func cloneResponse(response agent.Response) agent.Response {
-	response.Message = cloneMessage(response.Message)
-	response.Artifacts = append([]gopact.ArtifactRef(nil), response.Artifacts...)
-	response.Metadata = cloneStringMap(response.Metadata)
-	return response
-}
-
-func cloneMessages(messages []gopact.Message) []gopact.Message {
-	if messages == nil {
-		return nil
-	}
-	cloned := make([]gopact.Message, len(messages))
-	for index, message := range messages {
-		cloned[index] = cloneMessage(message)
-	}
-	return cloned
-}
-
-func cloneMessage(message gopact.Message) gopact.Message {
-	return message.Clone()
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
 	}
 	return cloned
 }

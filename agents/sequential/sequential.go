@@ -101,24 +101,10 @@ func (target *Agent) Invoke(ctx context.Context, request agent.Request, options 
 }
 
 func requestFromResponse(response agent.Response) agent.Request {
+	response = response.Clone()
 	return agent.Request{
-		Messages:  []gopact.Message{cloneMessage(response.Message)},
-		Artifacts: append([]gopact.ArtifactRef(nil), response.Artifacts...),
-		Metadata:  cloneStringMap(response.Metadata),
+		Messages:  []gopact.Message{response.Message},
+		Artifacts: response.Artifacts,
+		Metadata:  response.Metadata,
 	}
-}
-
-func cloneMessage(message gopact.Message) gopact.Message {
-	return message.Clone()
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
 }

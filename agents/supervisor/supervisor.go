@@ -132,7 +132,7 @@ func New(identity agent.Identity, directory *agent.Directory, decider Decider, o
 	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
 	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
-	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
+	state := wf.Context(func(request agent.Request) State { return State{Request: request.Clone()} })
 	start := wf.Node("start", func(_ context.Context, _ agent.Request) (signal, error) {
 		return signal{}, nil
 	})
@@ -142,7 +142,7 @@ func New(identity agent.Identity, directory *agent.Directory, decider Decider, o
 			return Decision{}, err
 		}
 		decision, err := decider.Decide(ctx, DecisionInput{
-			Request: cloneRequest(current.Request), Round: current.Round + 1,
+			Request: current.Request.Clone(), Round: current.Round + 1,
 			Results: cloneDelegationResults(current.Results),
 		})
 		if err != nil {
@@ -167,13 +167,13 @@ func New(identity agent.Identity, directory *agent.Directory, decider Decider, o
 		return signal{}, nil
 	})
 	finish := wf.Node("finish", func(_ context.Context, response agent.Response) (agent.Response, error) {
-		return cloneResponse(response), nil
+		return response.Clone(), nil
 	})
 	decide.Route(func(_ context.Context, decision Decision) (workflow.Dispatch, error) {
 		if decision.Kind == DecisionDelegate {
-			return decide.Once(delegate, delegation{Child: decision.Child, Request: cloneRequest(decision.Request)}), nil
+			return decide.Once(delegate, delegation{Child: decision.Child, Request: decision.Request.Clone()}), nil
 		}
-		return decide.Once(finish, cloneResponse(*decision.Response)), nil
+		return decide.Once(finish, decision.Response.Clone()), nil
 	})
 	wf.Entry(start)
 	wf.Edge(start, decide)
@@ -202,7 +202,7 @@ func (target *Agent) Invoke(ctx context.Context, request agent.Request, options 
 	if target == nil || target.workflow == nil {
 		return agent.Response{}, errors.New("supervisor: agent is nil")
 	}
-	return target.workflow.Invoke(ctx, cloneRequest(request), options...)
+	return target.workflow.Invoke(ctx, request.Clone(), options...)
 }
 
 type delegationDispatcher struct{ directory *agent.Directory }
@@ -212,12 +212,12 @@ func (dispatcher delegationDispatcher) Invoke(ctx context.Context, input delegat
 	if !ok || contract.IsNil(child) {
 		return DelegationResult{}, fmt.Errorf("supervisor: child %q is not in the directory", input.Child)
 	}
-	response, err := child.Invoke(ctx, cloneRequest(input.Request), options...)
+	response, err := child.Invoke(ctx, input.Request.Clone(), options...)
 	if err != nil {
 		return DelegationResult{}, fmt.Errorf("supervisor: delegate %q: %w", input.Child, err)
 	}
 	return DelegationResult{
-		Child: input.Child, Request: cloneRequest(input.Request), Response: cloneResponse(response),
+		Child: input.Child, Request: input.Request.Clone(), Response: response.Clone(),
 	}, nil
 }
 
@@ -256,23 +256,23 @@ func (decision Decision) validate() error {
 }
 
 func cloneDecision(decision Decision) Decision {
-	decision.Request = cloneRequest(decision.Request)
+	decision.Request = decision.Request.Clone()
 	if decision.Response != nil {
-		response := cloneResponse(*decision.Response)
+		response := decision.Response.Clone()
 		decision.Response = &response
 	}
 	return decision
 }
 
 func cloneDecisionInput(input DecisionInput) DecisionInput {
-	input.Request = cloneRequest(input.Request)
+	input.Request = input.Request.Clone()
 	input.Results = cloneDelegationResults(input.Results)
 	return input
 }
 
 func cloneDelegationResult(result DelegationResult) DelegationResult {
-	result.Request = cloneRequest(result.Request)
-	result.Response = cloneResponse(result.Response)
+	result.Request = result.Request.Clone()
+	result.Response = result.Response.Clone()
 	return result
 }
 
@@ -283,46 +283,6 @@ func cloneDelegationResults(results []DelegationResult) []DelegationResult {
 	cloned := make([]DelegationResult, len(results))
 	for index, result := range results {
 		cloned[index] = cloneDelegationResult(result)
-	}
-	return cloned
-}
-
-func cloneRequest(request agent.Request) agent.Request {
-	request.Messages = cloneMessages(request.Messages)
-	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
-	request.Metadata = cloneStringMap(request.Metadata)
-	return request
-}
-
-func cloneResponse(response agent.Response) agent.Response {
-	response.Message = cloneMessage(response.Message)
-	response.Artifacts = append([]gopact.ArtifactRef(nil), response.Artifacts...)
-	response.Metadata = cloneStringMap(response.Metadata)
-	return response
-}
-
-func cloneMessages(messages []gopact.Message) []gopact.Message {
-	if messages == nil {
-		return nil
-	}
-	cloned := make([]gopact.Message, len(messages))
-	for index, message := range messages {
-		cloned[index] = cloneMessage(message)
-	}
-	return cloned
-}
-
-func cloneMessage(message gopact.Message) gopact.Message {
-	return message.Clone()
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
 	}
 	return cloned
 }

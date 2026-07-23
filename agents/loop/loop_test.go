@@ -20,7 +20,7 @@ func TestAgentLoopsUntilConditionStops(t *testing.T) {
 		return agent.Response{Message: gopact.UserMessage(input + "!")}, nil
 	})
 	var conditionIterations []int
-	condition := ConditionFunc(func(_ context.Context, iteration Iteration) (Decision, error) {
+	condition := testCondition(func(_ context.Context, iteration Iteration) (Decision, error) {
 		conditionIterations = append(conditionIterations, iteration.Number)
 		iteration.Response.Message.Parts[0].Text = "condition-mutation"
 		if iteration.Number < 3 {
@@ -68,6 +68,27 @@ func TestAgentLoopsUntilConditionStops(t *testing.T) {
 	checkpoint, err := store.Load(context.Background(), "loop-persistence")
 	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
 		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
+	}
+}
+
+func TestRequestFromResponsePreservesOwnedContainerNilness(t *testing.T) {
+	empty := requestFromResponse(agent.Response{
+		Message: gopact.Message{
+			Parts:     []gopact.MessagePart{},
+			ToolCalls: []gopact.ToolCall{},
+		},
+		Artifacts: []gopact.ArtifactRef{},
+		Metadata:  map[string]string{},
+	})
+	if len(empty.Messages) != 1 || empty.Messages[0].Parts == nil || empty.Messages[0].ToolCalls == nil ||
+		empty.Artifacts == nil || empty.Metadata == nil {
+		t.Fatalf("requestFromResponse() collapsed non-nil empty containers: %+v", empty)
+	}
+
+	zero := requestFromResponse(agent.Response{})
+	if len(zero.Messages) != 1 || zero.Messages[0].Parts != nil || zero.Messages[0].ToolCalls != nil ||
+		zero.Artifacts != nil || zero.Metadata != nil {
+		t.Fatalf("requestFromResponse() allocated nil containers: %+v", zero)
 	}
 }
 
@@ -285,6 +306,12 @@ func TestAgentConformance(t *testing.T) {
 			return nil
 		},
 	})
+}
+
+type testCondition func(context.Context, Iteration) (Decision, error)
+
+func (condition testCondition) Evaluate(ctx context.Context, iteration Iteration) (Decision, error) {
+	return condition(ctx, iteration)
 }
 
 type testChild struct {

@@ -142,7 +142,8 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 	)
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State {
-		messages := cloneMessages(request.Messages)
+		request = request.Clone()
+		messages := request.Messages
 		if configuration.instruction != "" {
 			messages = append([]gopact.Message{{
 				Role:  gopact.MessageRoleSystem,
@@ -150,7 +151,7 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 			}}, messages...)
 		}
 		return State{
-			Messages: messages, Artifacts: cloneRefs(request.Artifacts), Metadata: cloneStringMap(request.Metadata),
+			Messages: messages, Artifacts: request.Artifacts, Metadata: request.Metadata,
 		}
 	})
 	prepare := wf.Node("prepare", func(ctx context.Context, _ agent.Request) (gopact.ModelRequest, error) {
@@ -163,7 +164,7 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 		}
 		current.Turn++
 		for _, observation := range current.PendingObservations {
-			current.Messages = append(current.Messages, cloneMessage(observation.Message))
+			current.Messages = append(current.Messages, observation.Message.Clone())
 		}
 		current.PendingObservations = nil
 		if err := state.Set(ctx, current); err != nil {
@@ -193,7 +194,7 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 			return turnResult{}, err
 		}
 		if len(response.Message.Parts) > 0 || response.Message.Role != "" {
-			current.Messages = append(current.Messages, cloneMessage(response.Message))
+			current.Messages = append(current.Messages, response.Message.Clone())
 		}
 		result, err := normalizeTurn(response, &current, configuration.limits)
 		if err != nil {
@@ -248,9 +249,9 @@ func New(identity agent.Identity, model gopact.Model, options ...Option) (*Agent
 		if err != nil {
 			return agent.Response{}, err
 		}
-		return agent.Response{
-			Message: cloneMessage(message), Artifacts: cloneRefs(current.Artifacts), Metadata: cloneStringMap(current.Metadata),
-		}, nil
+		return (agent.Response{
+			Message: message, Artifacts: current.Artifacts, Metadata: current.Metadata,
+		}).Clone(), nil
 	})
 	continueNode := wf.Merge("continue", func(_ context.Context, inputs workflow.Inputs) (continuation, error) {
 		if turn, ok, err := inputs.Lookup(modelNode); err != nil {
@@ -322,7 +323,7 @@ func normalizeTurn(response gopact.ModelResponse, state *State, limits Limits) (
 	}
 	switch intent := response.Intent.(type) {
 	case gopact.FinalIntent:
-		return turnResult{Kind: turnFinal, Message: cloneMessage(response.Message)}, nil
+		return turnResult{Kind: turnFinal, Message: response.Message.Clone()}, nil
 	case *gopact.FinalIntent:
 		return normalizeFinalPointer(intent, response.Message)
 	case gopact.ToolCallIntent:
@@ -357,7 +358,7 @@ func normalizeFinalPointer(intent *gopact.FinalIntent, message gopact.Message) (
 	if intent == nil {
 		return turnResult{}, errors.New("react: nil final intent")
 	}
-	return turnResult{Kind: turnFinal, Message: cloneMessage(message)}, nil
+	return turnResult{Kind: turnFinal, Message: message.Clone()}, nil
 }
 
 func normalizeToolPointer(intent *gopact.ToolCallIntent, message gopact.Message, state *State, limits Limits) (turnResult, error) {
@@ -617,13 +618,9 @@ func cloneMessages(messages []gopact.Message) []gopact.Message {
 	}
 	cloned := make([]gopact.Message, len(messages))
 	for index, message := range messages {
-		cloned[index] = cloneMessage(message)
+		cloned[index] = message.Clone()
 	}
 	return cloned
-}
-
-func cloneMessage(message gopact.Message) gopact.Message {
-	return message.Clone()
 }
 
 func cloneToolSpecs(specs []gopact.ToolSpec) []gopact.ToolSpec {

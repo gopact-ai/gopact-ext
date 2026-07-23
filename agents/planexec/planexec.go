@@ -221,9 +221,9 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 	buildOptions := append([]workflow.BuildOption(nil), configuration.workflowOptions...)
 	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
-	state := wf.Context(func(request agent.Request) State { return State{Request: cloneRequest(request)} })
+	state := wf.Context(func(request agent.Request) State { return State{Request: request.Clone()} })
 	plannerNode := wf.Node("plan", func(ctx context.Context, request agent.Request) (Plan, error) {
-		plan, err := configuration.planner.Plan(ctx, PlanInput{Request: cloneRequest(request)})
+		plan, err := configuration.planner.Plan(ctx, PlanInput{Request: request.Clone()})
 		if err != nil {
 			return Plan{}, fmt.Errorf("planexec: create plan: %w", err)
 		}
@@ -255,7 +255,7 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 		if current.Next >= len(current.Plan.Steps) {
 			return stepInvocation{}, ErrPlanExhausted
 		}
-		return stepInvocation{Step: current.Plan.Steps[current.Next], Request: cloneRequest(current.Request)}, nil
+		return stepInvocation{Step: current.Plan.Steps[current.Next], Request: current.Request.Clone()}, nil
 	})
 	stepNode := wf.AddInvokable("execute-step", stepDispatcher{directory: configuration.directory})
 	record := wf.Node("record-step", func(ctx context.Context, result StepResult) (ReplanInput, error) {
@@ -315,12 +315,12 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 			return agent.Response{}, err
 		}
 		response, err := configuration.reporter.Report(ctx, ReportInput{
-			Request: cloneRequest(current.Request), Plan: clonePlan(current.Plan), Results: cloneStepResults(current.Results),
+			Request: current.Request.Clone(), Plan: clonePlan(current.Plan), Results: cloneStepResults(current.Results),
 		})
 		if err != nil {
 			return agent.Response{}, fmt.Errorf("planexec: report: %w", err)
 		}
-		return cloneResponse(response), nil
+		return response.Clone(), nil
 	})
 	replan.Route(func(_ context.Context, result replanResult) (workflow.Dispatch, error) {
 		if result.Decision.Plan != nil {
@@ -366,7 +366,7 @@ func (target *Agent) Invoke(ctx context.Context, request agent.Request, options 
 	if target == nil || target.workflow == nil {
 		return agent.Response{}, errors.New("planexec: agent is nil")
 	}
-	return target.workflow.Invoke(ctx, cloneRequest(request), options...)
+	return target.workflow.Invoke(ctx, request.Clone(), options...)
 }
 
 type stepDispatcher struct{ directory *agent.Directory }
@@ -376,13 +376,13 @@ func (dispatcher stepDispatcher) Invoke(ctx context.Context, input stepInvocatio
 	if !ok || contract.IsNil(child) {
 		return StepResult{}, fmt.Errorf("planexec: step %q child %q is not in the directory", input.Step.ID, input.Step.AgentName)
 	}
-	response, err := child.Invoke(ctx, cloneRequest(input.Request), options...)
+	response, err := child.Invoke(ctx, input.Request.Clone(), options...)
 	if err != nil {
 		return StepResult{}, fmt.Errorf("planexec: execute step %q: %w", input.Step.ID, err)
 	}
 	step := input.Step
 	step.Status = StepCompleted
-	return StepResult{Step: step, Response: cloneResponse(response)}, nil
+	return StepResult{Step: step, Response: response.Clone()}, nil
 }
 
 func (plan Plan) validate() error {
@@ -418,11 +418,11 @@ func acceptPlan(directory *agent.Directory, plan Plan, previous int) (Plan, erro
 }
 
 func replanInput(state State) ReplanInput {
-	return ReplanInput{Request: cloneRequest(state.Request), Plan: clonePlan(state.Plan), Results: cloneStepResults(state.Results)}
+	return ReplanInput{Request: state.Request.Clone(), Plan: clonePlan(state.Plan), Results: cloneStepResults(state.Results)}
 }
 
 func clonePlanInput(input PlanInput) PlanInput {
-	input.Request = cloneRequest(input.Request)
+	input.Request = input.Request.Clone()
 	if input.Previous != nil {
 		previous := clonePlan(*input.Previous)
 		input.Previous = &previous
@@ -432,14 +432,14 @@ func clonePlanInput(input PlanInput) PlanInput {
 }
 
 func cloneReplanInput(input ReplanInput) ReplanInput {
-	input.Request = cloneRequest(input.Request)
+	input.Request = input.Request.Clone()
 	input.Plan = clonePlan(input.Plan)
 	input.Results = cloneStepResults(input.Results)
 	return input
 }
 
 func cloneReportInput(input ReportInput) ReportInput {
-	input.Request = cloneRequest(input.Request)
+	input.Request = input.Request.Clone()
 	input.Plan = clonePlan(input.Plan)
 	input.Results = cloneStepResults(input.Results)
 	return input
@@ -459,7 +459,7 @@ func clonePlan(plan Plan) Plan {
 }
 
 func cloneStepResult(result StepResult) StepResult {
-	result.Response = cloneResponse(result.Response)
+	result.Response = result.Response.Clone()
 	return result
 }
 
@@ -470,46 +470,6 @@ func cloneStepResults(results []StepResult) []StepResult {
 	cloned := make([]StepResult, len(results))
 	for index, result := range results {
 		cloned[index] = cloneStepResult(result)
-	}
-	return cloned
-}
-
-func cloneRequest(request agent.Request) agent.Request {
-	request.Messages = cloneMessages(request.Messages)
-	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
-	request.Metadata = cloneStringMap(request.Metadata)
-	return request
-}
-
-func cloneResponse(response agent.Response) agent.Response {
-	response.Message = cloneMessage(response.Message)
-	response.Artifacts = append([]gopact.ArtifactRef(nil), response.Artifacts...)
-	response.Metadata = cloneStringMap(response.Metadata)
-	return response
-}
-
-func cloneMessages(messages []gopact.Message) []gopact.Message {
-	if messages == nil {
-		return nil
-	}
-	cloned := make([]gopact.Message, len(messages))
-	for index, message := range messages {
-		cloned[index] = cloneMessage(message)
-	}
-	return cloned
-}
-
-func cloneMessage(message gopact.Message) gopact.Message {
-	return message.Clone()
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
 	}
 	return cloned
 }

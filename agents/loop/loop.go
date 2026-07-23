@@ -120,7 +120,7 @@ func New(identity agent.Identity, child agent.Agent, condition Condition, option
 	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) loopContext {
-		return loopContext{Request: cloneRequest(request)}
+		return loopContext{Request: request.Clone()}
 	})
 	childNode := wf.AddInvokable("child."+child.Identity().Name, gopact.InvokableFunc[agent.Request, agent.Response](
 		func(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
@@ -131,16 +131,16 @@ func New(identity agent.Identity, child agent.Agent, condition Condition, option
 			if current.Iteration >= configuration.maxIterations {
 				return agent.Response{}, ErrMaxIterations
 			}
-			response, err := child.Invoke(ctx, cloneRequest(request), options...)
+			response, err := child.Invoke(ctx, request.Clone(), options...)
 			if err != nil {
 				return agent.Response{}, err
 			}
 			current.Iteration++
-			current.Request = cloneRequest(request)
+			current.Request = request.Clone()
 			if err := state.Set(ctx, current); err != nil {
 				return agent.Response{}, err
 			}
-			return cloneResponse(response), nil
+			return response.Clone(), nil
 		},
 	))
 	conditionNode := wf.Node("condition", func(ctx context.Context, response agent.Response) (conditionResult, error) {
@@ -148,9 +148,9 @@ func New(identity agent.Identity, child agent.Agent, condition Condition, option
 		if err != nil {
 			return conditionResult{}, err
 		}
-		decision, err := condition.Evaluate(ctx, Iteration{
+		decision, err := condition.Evaluate(ctx, cloneIteration(Iteration{
 			Number: current.Iteration, Request: current.Request, Response: response,
-		})
+		}))
 		if err != nil {
 			return conditionResult{}, fmt.Errorf("loop: evaluate condition: %w", err)
 		}
@@ -161,10 +161,10 @@ func New(identity agent.Identity, child agent.Agent, condition Condition, option
 			return conditionResult{}, ErrMaxIterations
 		}
 		next := requestFromResponse(response)
-		return conditionResult{Decision: decision, Response: cloneResponse(response), Next: next}, nil
+		return conditionResult{Decision: decision, Response: response.Clone(), Next: next}, nil
 	})
 	finish := wf.Node("finish", func(_ context.Context, response agent.Response) (agent.Response, error) {
-		return cloneResponse(response), nil
+		return response.Clone(), nil
 	})
 	conditionNode.Route(func(_ context.Context, result conditionResult) (workflow.Dispatch, error) {
 		if result.Decision == DecisionContinue {
@@ -201,58 +201,15 @@ func (target *Agent) Invoke(ctx context.Context, request agent.Request, options 
 }
 
 func requestFromResponse(response agent.Response) agent.Request {
+	response = response.Clone()
 	return agent.Request{
-		Messages: []gopact.Message{cloneMessage(response.Message)}, Artifacts: cloneRefs(response.Artifacts),
-		Metadata: cloneStringMap(response.Metadata),
+		Messages: []gopact.Message{response.Message}, Artifacts: response.Artifacts,
+		Metadata: response.Metadata,
 	}
 }
 
 func cloneIteration(iteration Iteration) Iteration {
-	iteration.Request = cloneRequest(iteration.Request)
-	iteration.Response = cloneResponse(iteration.Response)
+	iteration.Request = iteration.Request.Clone()
+	iteration.Response = iteration.Response.Clone()
 	return iteration
-}
-
-func cloneRequest(request agent.Request) agent.Request {
-	request.Messages = cloneMessages(request.Messages)
-	request.Artifacts = cloneRefs(request.Artifacts)
-	request.Metadata = cloneStringMap(request.Metadata)
-	return request
-}
-
-func cloneResponse(response agent.Response) agent.Response {
-	response.Message = cloneMessage(response.Message)
-	response.Artifacts = cloneRefs(response.Artifacts)
-	response.Metadata = cloneStringMap(response.Metadata)
-	return response
-}
-
-func cloneMessages(messages []gopact.Message) []gopact.Message {
-	if messages == nil {
-		return nil
-	}
-	cloned := make([]gopact.Message, len(messages))
-	for index, message := range messages {
-		cloned[index] = cloneMessage(message)
-	}
-	return cloned
-}
-
-func cloneMessage(message gopact.Message) gopact.Message {
-	return message.Clone()
-}
-
-func cloneRefs(refs []gopact.ArtifactRef) []gopact.ArtifactRef {
-	return append([]gopact.ArtifactRef(nil), refs...)
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
 }
