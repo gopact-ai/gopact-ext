@@ -80,7 +80,14 @@ if [[ "${validate_only}" == true ]]; then
 fi
 
 consumer="$(mktemp -d)"
-trap 'rm -rf "${consumer}"' EXIT
+cleanup() {
+	if [[ -d "${consumer}/module-cache" ]]; then
+		chmod -R u+w "${consumer}/module-cache" || true
+	fi
+	rm -rf "${consumer}"
+}
+trap cleanup EXIT
+export GOMODCACHE="${consumer}/module-cache"
 cd "${consumer}"
 go mod init clean-consumer.example
 
@@ -89,7 +96,13 @@ for ((index = 0; index < prefix_count; index++)); do
 	module="${modules[${index}]}"
 	version="${versions[${index}]}"
 	package="${packages[${index}]}"
-	download="$(GOWORK=off go mod download -json "${module}@${version}")"
+	if ! download="$(
+		GOWORK=off go mod download -json "${module}@${version}" 2>&1
+	)"; then
+		echo "failed to download ${module}@${version}" >&2
+		printf '%s\n' "${download}" >&2
+		exit 1
+	fi
 	module_gomod="$(printf '%s\n' "${download}" | sed -n 's/^[[:space:]]*"GoMod": "\(.*\)",$/\1/p')"
 	if [[ -z "${module_gomod}" || ! -f "${module_gomod}" ]]; then
 		echo "downloaded module has no readable go.mod: ${module}@${version}" >&2

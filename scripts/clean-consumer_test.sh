@@ -62,10 +62,18 @@ EOF
 cat > "${tmp}/fake-bin/go" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1 $2" == "mod init" ]]; then
+	if [[ -n "${CALLER_GOMODCACHE:-}" && "${GOMODCACHE:-}" == "${CALLER_GOMODCACHE}" ]]; then
+		echo "clean consumer reused caller module cache" >&2
+		exit 98
+	fi
 	printf 'module clean-consumer.example\n' > go.mod
 	exit 0
 fi
 if [[ "$1 $2" == "mod download" ]]; then
+	if [[ -n "${DOWNLOAD_FAILURE:-}" ]]; then
+		printf '{"Error":"proxy unavailable"}\n'
+		exit 1
+	fi
 	printf '{\n  "GoMod": "%s",\n  "Version": "%s"\n}\n' \
 		"${TAGGED_GOMOD}" "${DOWNLOAD_VERSION:-v0.2.1}"
 	exit 0
@@ -90,6 +98,19 @@ if PATH="${tmp}/fake-bin:${PATH}" TAGGED_GOMOD="${tmp}/tagged.mod" \
 	echo "expected tagged-module replace rejection" >&2
 	exit 1
 fi
+if download_error="$(
+	PATH="${tmp}/fake-bin:${PATH}" \
+		TAGGED_GOMOD="${tmp}/clean.mod" \
+		DOWNLOAD_FAILURE=1 \
+		"${script_dir}/clean-consumer.sh" --prefix-count 1 "${tmp}/valid.txt" 2>&1
+)"; then
+	echo "expected module download failure" >&2
+	exit 1
+fi
+if [[ "${download_error}" != *"proxy unavailable"* ]]; then
+	echo "module download failure omitted proxy diagnostics" >&2
+	exit 1
+fi
 
 cat > "${tmp}/module-only.txt" <<'EOF'
 github.com/gopact-ai/gopact-ext v0.7.0 -
@@ -98,6 +119,8 @@ PATH="${tmp}/fake-bin:${PATH}" \
 	TAGGED_GOMOD="${tmp}/clean.mod" \
 	DOWNLOAD_VERSION="v0.7.0" \
 	EXPECTED_VERSION="v0.7.0" \
+	GOMODCACHE="${tmp}/warm-module-cache" \
+	CALLER_GOMODCACHE="${tmp}/warm-module-cache" \
 	"${script_dir}/clean-consumer.sh" "${tmp}/module-only.txt" >/dev/null
 
 echo "clean-consumer validation tests passed"
