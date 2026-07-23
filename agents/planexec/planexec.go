@@ -44,11 +44,9 @@ type StepResult struct {
 	Response agent.Response `json:"response"`
 }
 
-// PlanInput is passed to a Planner.
+// PlanInput is passed to the initial Planner.
 type PlanInput struct {
-	Request  agent.Request
-	Previous *Plan
-	Results  []StepResult
+	Request agent.Request
 }
 
 // ReplanInput is passed to a Replanner after a step completes.
@@ -423,11 +421,6 @@ func replanInput(state State) ReplanInput {
 
 func clonePlanInput(input PlanInput) PlanInput {
 	input.Request = input.Request.Clone()
-	if input.Previous != nil {
-		previous := clonePlan(*input.Previous)
-		input.Previous = &previous
-	}
-	input.Results = cloneStepResults(input.Results)
 	return input
 }
 
