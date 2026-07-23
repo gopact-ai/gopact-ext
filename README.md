@@ -8,22 +8,33 @@ Official extensions for the redesigned `gopact` core.
 
 > **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade.
 
-For coordinated source development, clone `gopact` beside `gopact-ext`; the committed
-`go.work` joins the source modules without changing their published dependency contract.
-Published consumers use the exact module versions in the release manifest after they pass
-clean-consumer verification.
+The committed `go.work` joins every module in this repository. Cross-repository CI also
+tests the extension sources against the current `gopact` and example sources without
+changing any published dependency contract.
+
+Extensions are versioned by domain module, and one module may contain several packages.
+Add only the modules that contain the packages you use:
+
+```bash
+go get github.com/gopact-ai/gopact-ext/agents/react@v0.4.0
+go get github.com/gopact-ai/gopact-ext/models/agnes@v0.2.0
+go get github.com/gopact-ai/gopact-ext/stores@v0.2.0
+```
+
+The root module is no longer an umbrella that installs every extension. The
+[release manifest](./scripts/release-versions.txt) lists every domain module and
+its current version.
 
 ## Release verification
 
-The manifest defines the release order. Each row names a module, its exact release version, and a package to compile from a clean consumer. During the module extraction the order is `gopact` → `gopact-ext/middleware/byted/fornax` → `gopact-ext/models/openai` → legacy `gopact-ext` → `gopact-ext/stores` → `gopact-examples`; the legacy root entry will disappear after its domains have standalone modules. Increase the prefix after each exact module version is available through the configured proxy; omitting it checks the full manifest:
+The manifest defines the release order. Each row names a module, its exact stable
+version, and a package to compile from a clean consumer. A `-` package marks a module
+that has no externally importable package. Increase the prefix only after the next exact
+version is available through the configured proxy; omitting it checks the full manifest:
 
 ```bash
 ./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 1 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 2 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 3 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 4 scripts/release-versions.txt
-./scripts/clean-consumer.sh --prefix-count 5 scripts/release-versions.txt
+./scripts/clean-consumer.sh --prefix-count N scripts/release-versions.txt
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
@@ -71,8 +82,12 @@ OpenAI organization usage is API-platform metering and is not the same thing as 
 | [`agents/router`](./agents/router) | Select one child Agent for each request |
 | [`agents/planexec`](./agents/planexec) | Plan, execute, replan, and report |
 | [`agents/supervisor`](./agents/supervisor) | Coordinate delegated child-Agent work |
-| [`agents/deep`](./agents/deep) | Execute explicit long-horizon task plans |
-| [`agents/deepresearch`](./agents/deepresearch) | Discover, verify, and synthesize cited evidence |
+
+The former `agents/deep` and `agents/deepresearch` packages have been removed.
+They were opinionated end-to-end compositions and have no drop-in replacement.
+Applications that still import them can remain on the root module at `v0.6.0`
+while migrating. Finish or drain persisted runs created by those packages before
+upgrading; newer code cannot reconstruct or resume their checkpoints.
 
 ### Stores
 
@@ -127,10 +142,12 @@ Use `workflow.MemoryStore` only for tests and short-lived processes. The SQLite 
 
 ## Breaking migration
 
-This rebuild will ship all affected modules at their next pre-v1 minor rather than reusing an old patch line.
+This rebuild ships all affected modules at their next pre-v1 minor rather than reusing an old patch line.
 
 | Previous entry point | Replacement |
 |---|---|
+| Root `github.com/gopact-ai/gopact-ext` as an extension bundle | Add the domain module that contains the Agent, model, Store, or middleware package you use |
 | `react.New(ChatModel, *tools.Registry, ...)` / `NewModelAgent` | `react.New(agent.Identity, gopact.Model, ...Option)` with tools supplied by `WithTools(...agent.Tool)` |
 | `agenttool.New(a2a.Agent, ...Option)` | `agenttool.New(gopact.ToolSpec, agent.Agent, agenttool.Adapter)`; the child executes as a typed Workflow invokable |
 | graph/template-based `planexec` and `supervisor` | immutable `agent.Directory` plus package Planner/Replanner/Decider contracts; Workflow stores state and execution facts |
+| `planexec.Planner.Plan(context.Context, planexec.PlanInput)` | `planexec.Planner.Plan(context.Context, agent.Request)`; `Replanner` receives the current plan and completed step results |

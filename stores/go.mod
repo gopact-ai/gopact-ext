@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/go-sql-driver/mysql v1.10.0
-	github.com/gopact-ai/gopact v0.1.0
+	github.com/gopact-ai/gopact v0.2.1
 	github.com/libtnb/sqlite v1.2.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0

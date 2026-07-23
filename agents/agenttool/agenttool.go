@@ -37,7 +37,7 @@ func (adapter AdapterFuncs) Input(ctx context.Context, call gopact.ToolCall) (ag
 		return agent.Request{}, errors.New("agenttool: input adapter is nil")
 	}
 	request, err := adapter.InputFunc(ctx, cloneToolCall(call))
-	return cloneRequest(request), err
+	return request.Clone(), err
 }
 
 // Output maps one child Agent response into a tool result.
@@ -45,7 +45,7 @@ func (adapter AdapterFuncs) Output(ctx context.Context, response agent.Response)
 	if adapter.OutputFunc == nil {
 		return gopact.ToolResult{}, errors.New("agenttool: output adapter is nil")
 	}
-	result, err := adapter.OutputFunc(ctx, cloneResponse(response))
+	result, err := adapter.OutputFunc(ctx, response.Clone())
 	return cloneToolResult(result), err
 }
 
@@ -100,11 +100,11 @@ func (tool *Tool) Invoke(ctx context.Context, call gopact.ToolCall, options ...g
 	if err != nil {
 		return nil, fmt.Errorf("agenttool: adapt input: %w", err)
 	}
-	response, err := tool.child.Invoke(ctx, cloneRequest(request), options...)
+	response, err := tool.child.Invoke(ctx, request.Clone(), options...)
 	if err != nil {
 		return nil, fmt.Errorf("agenttool: invoke child: %w", err)
 	}
-	result, err := tool.adapter.Output(ctx, cloneResponse(response))
+	result, err := tool.adapter.Output(ctx, response.Clone())
 	if err != nil {
 		return nil, fmt.Errorf("agenttool: adapt output: %w", err)
 	}
@@ -140,35 +140,6 @@ func cloneToolResult(result gopact.ToolResult) gopact.ToolResult {
 	result.ArtifactRefs = append([]gopact.ArtifactRef(nil), result.ArtifactRefs...)
 	result.EffectRefs = append([]gopact.ArtifactRef(nil), result.EffectRefs...)
 	return result
-}
-
-func cloneRequest(request agent.Request) agent.Request {
-	request.Messages = cloneMessages(request.Messages)
-	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
-	request.Metadata = cloneStringMap(request.Metadata)
-	return request
-}
-
-func cloneResponse(response agent.Response) agent.Response {
-	response.Message = cloneMessage(response.Message)
-	response.Artifacts = append([]gopact.ArtifactRef(nil), response.Artifacts...)
-	response.Metadata = cloneStringMap(response.Metadata)
-	return response
-}
-
-func cloneMessages(messages []gopact.Message) []gopact.Message {
-	if messages == nil {
-		return nil
-	}
-	cloned := make([]gopact.Message, len(messages))
-	for index, message := range messages {
-		cloned[index] = cloneMessage(message)
-	}
-	return cloned
-}
-
-func cloneMessage(message gopact.Message) gopact.Message {
-	return message.Clone()
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

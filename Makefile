@@ -1,9 +1,29 @@
-# The root is source-only while its domains move into independently tagged modules.
-STANDALONE_MODULES := middleware/byted/fornax models/openai stores
-SECURITY_MODULES := . $(STANDALONE_MODULES)
-WORKSPACE_PACKAGES := ./... ./middleware/byted/fornax/... ./models/openai/... ./stores/... ./tests/workflow/...
+# Every extension domain is independently versioned. TIDY_MODULES grows only
+# after a module's same-repository dependencies are available from the proxy.
+WORKSPACE_MODULES := \
+	agents/agenttool \
+	agents/internal \
+	agents/loop \
+	agents/parallel \
+	agents/planexec \
+	agents/react \
+	agents/router \
+	agents/sequential \
+	agents/supervisor \
+	middleware/byted/fornax \
+	models/agnes \
+	models/fake \
+	models/glm \
+	models/openai \
+	stores \
+	tests/workflow
+TIDY_MODULES := . middleware/byted/fornax models/openai stores
+SECURITY_MODULES := . $(filter-out tests/workflow,$(WORKSPACE_MODULES))
+WORKSPACE_PACKAGES := ./... $(addprefix ./,$(addsuffix /...,$(WORKSPACE_MODULES)))
+# Advance only after the next manifest version is available from the public proxy.
+PUBLISHED_PREFIX := 3
 
-.PHONY: test integration capability fmt-check tidy race vet security dbintegration benchmark
+.PHONY: test integration capability fmt-check print-workspace-modules module-contract published tidy standalone race vet security dbintegration benchmark
 
 test:
 	GOTOOLCHAIN=local go test -count=1 $(WORKSPACE_PACKAGES)
@@ -18,11 +38,35 @@ integration:
 capability: test integration race vet security
 
 fmt-check:
-	test -z "$$(gofmt -l .)"
+	@set -e; files="$$(gofmt -l .)"; \
+		test -z "$$files" || { \
+			printf 'files need gofmt:\n%s\n' "$$files"; \
+			exit 1; \
+		}
+
+print-workspace-modules:
+	@printf '%s\n' $(WORKSPACE_MODULES)
+
+module-contract:
+	./scripts/module-contract_test.sh
+
+published:
+	GOENV=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
+		GOPRIVATE=none GONOPROXY=none GONOSUMDB=none \
+		GO111MODULE=on GOFLAGS= GOWORK=off GOTOOLCHAIN=local \
+		./scripts/clean-consumer.sh --prefix-count $(PUBLISHED_PREFIX) \
+		./scripts/release-versions.txt
 
 tidy:
-	@set -e; for dir in $(STANDALONE_MODULES); do \
+	@set -e; for dir in $(TIDY_MODULES); do \
 		(cd $$dir && GOWORK=off GOTOOLCHAIN=local go mod tidy -diff); \
+	done
+
+standalone:
+	@set -e; for dir in $(TIDY_MODULES); do \
+		echo "standalone $$dir"; \
+		(cd $$dir && GOWORK=off GOTOOLCHAIN=local go test -race -count=1 ./...); \
+		(cd $$dir && GOWORK=off GOTOOLCHAIN=local go vet ./...); \
 	done
 
 race:

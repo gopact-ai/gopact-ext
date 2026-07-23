@@ -29,6 +29,16 @@ func (mutatingSelector) Select(_ context.Context, request agent.Request, _ []age
 	return Selection{Child: "worker"}, nil
 }
 
+type candidateMutator struct{}
+
+func (candidateMutator) Select(_ context.Context, _ agent.Request, candidates []agent.Identity) (Selection, error) {
+	if len(candidates) != 1 || candidates[0].Name != "worker" {
+		return Selection{}, errors.New("router test: candidates were mutated by a prior call")
+	}
+	candidates[0].Name = "mutated"
+	return Selection{Child: "worker"}, nil
+}
+
 type capturingChild struct {
 	identity agent.Identity
 	request  agent.Request
@@ -201,6 +211,33 @@ func TestRouterProtectsDurableRequestFromCustomSelectorMutation(t *testing.T) {
 	}
 	if _, exists := child.request.Metadata["mutated"]; exists {
 		t.Fatalf("child metadata = %v, contains selector mutation", child.request.Metadata)
+	}
+}
+
+func TestRouterProtectsCandidatesFromCustomSelectorMutation(t *testing.T) {
+	catalog := agent.NewCatalog()
+	if err := catalog.Add(testChild{
+		identity: agent.Identity{Name: "worker", Description: "works", Version: "v1"},
+		text:     "done",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := catalog.Compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := New(
+		agent.Identity{Name: "router", Description: "routes", Version: "v1"},
+		directory,
+		candidateMutator{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for invocation := range 2 {
+		if _, err := target.Invoke(context.Background(), agent.Request{}); err != nil {
+			t.Fatalf("Invoke() call %d error = %v", invocation+1, err)
+		}
 	}
 }
 

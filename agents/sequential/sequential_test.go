@@ -64,6 +64,27 @@ func TestAgentInvokesChildrenInDeclaredOrder(t *testing.T) {
 	}
 }
 
+func TestRequestFromResponsePreservesOwnedContainerNilness(t *testing.T) {
+	empty := requestFromResponse(agent.Response{
+		Message: gopact.Message{
+			Parts:     []gopact.MessagePart{},
+			ToolCalls: []gopact.ToolCall{},
+		},
+		Artifacts: []gopact.ArtifactRef{},
+		Metadata:  map[string]string{},
+	})
+	if len(empty.Messages) != 1 || empty.Messages[0].Parts == nil || empty.Messages[0].ToolCalls == nil ||
+		empty.Artifacts == nil || empty.Metadata == nil {
+		t.Fatalf("requestFromResponse() collapsed non-nil empty containers: %+v", empty)
+	}
+
+	zero := requestFromResponse(agent.Response{})
+	if len(zero.Messages) != 1 || zero.Messages[0].Parts != nil || zero.Messages[0].ToolCalls != nil ||
+		zero.Artifacts != nil || zero.Metadata != nil {
+		t.Fatalf("requestFromResponse() allocated nil containers: %+v", zero)
+	}
+}
+
 func TestAgentStopsAfterChildFailure(t *testing.T) {
 	boom := errors.New("child failed")
 	var secondCalls int

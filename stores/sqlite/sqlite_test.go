@@ -13,12 +13,11 @@ import (
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact/agent"
+	"github.com/gopact-ai/gopact/gopacttest"
 	"github.com/gopact-ai/gopact/runlog"
 	"github.com/gopact-ai/gopact/workflow"
 	sqlite3 "modernc.org/sqlite/lib"
 )
-
-type persistence interface{ workflow.Store }
 
 func TestMigrateThenOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "explicit-migration.db")
@@ -52,33 +51,62 @@ func TestContextEntryPointsRejectCanceledContext(t *testing.T) {
 	}
 }
 
-func TestWorkflowPersistenceConformance(t *testing.T) {
-	t.Run("memory", func(t *testing.T) {
-		store := workflow.NewMemoryStore()
-		requireWorkflowPersistence(t, store, func(*testing.T) persistence { return store })
+func TestStoreConformance(t *testing.T) {
+	gopacttest.RequireStoreConformance(t, func(t *testing.T) workflow.Store {
+		return openTestStore(t)
 	})
-	t.Run("sqlite", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "workflow.db")
-		if err := Migrate(path); err != nil {
-			t.Fatal(err)
+}
+
+func TestWorkflowResumeAndSnapshotPersistAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workflow.db")
+	if err := Migrate(path); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if store == nil {
+			return
 		}
-		store, err := Open(path)
-		if err != nil {
-			t.Fatal(err)
+		if err := store.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
 		}
-		defer func() { _ = store.Close() }()
-		requireWorkflowPersistence(t, store, func(t *testing.T) persistence {
-			t.Helper()
-			if err := store.Close(); err != nil {
-				t.Fatal(err)
-			}
-			store, err = Open(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return store
-		})
 	})
+
+	bodyCalls := 0
+	interrupt := true
+	wf := persistenceWorkflow(store, &bodyCalls, &interrupt)
+	_, err = wf.Invoke(t.Context(), "input", gopact.WithRunID("reopen-run"))
+	var interrupted workflow.InterruptError
+	if !errors.As(err, &interrupted) {
+		t.Fatalf("Invoke() error = %v, want interrupt", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wf = persistenceWorkflow(store, &bodyCalls, &interrupt)
+	output, err := wf.Invoke(t.Context(), "", workflow.WithResume(workflow.ResumeRequest{
+		RunID:        "reopen-run",
+		CheckpointID: interrupted.CheckpointID,
+		Resolutions: []workflow.InterruptResolution{{
+			InterruptID: "approval",
+			PayloadRef:  "resolution://approved",
+		}},
+	}))
+	if err != nil || output != "input-done" || bodyCalls != 1 {
+		t.Fatalf("Resume() = %q, %v, calls %d; want input-done, nil, 1", output, err, bodyCalls)
+	}
+	snapshot, err := wf.Snapshot(t.Context(), workflow.SnapshotRequest{RunID: "reopen-run"})
+	if err != nil || len(snapshot.Timeline) == 0 || len(snapshot.Checkpoints) == 0 {
+		t.Fatalf("Snapshot() = %+v, %v, want timeline and checkpoints", snapshot, err)
+	}
 }
 
 func TestStoreRenewLease(t *testing.T) {
@@ -796,39 +824,7 @@ func leaseCheckpoint(runID string) workflow.CheckpointRecord {
 	}
 }
 
-func requireWorkflowPersistence(t *testing.T, store persistence, reopen func(*testing.T) persistence) {
-	t.Helper()
-	bodyCalls := 0
-	interrupt := true
-	wf := persistenceWorkflow(store, &bodyCalls, &interrupt)
-	_, err := wf.Invoke(context.Background(), "input", gopact.WithRunID("store-run"))
-	var interrupted workflow.InterruptError
-	if !errors.As(err, &interrupted) {
-		t.Fatalf("Invoke() error = %v, want interrupt", err)
-	}
-	store = reopen(t)
-	wf = persistenceWorkflow(store, &bodyCalls, &interrupt)
-	output, err := wf.Invoke(context.Background(), "", workflow.WithResume(workflow.ResumeRequest{
-		RunID: "store-run", CheckpointID: interrupted.CheckpointID,
-		Resolutions: []workflow.InterruptResolution{{InterruptID: "approval", PayloadRef: "resolution://approved"}},
-	}))
-	if err != nil || output != "input-done" || bodyCalls != 1 {
-		t.Fatalf("Resume() = %q, %v, calls %d", output, err, bodyCalls)
-	}
-	snapshot, err := wf.Snapshot(context.Background(), workflow.SnapshotRequest{RunID: "store-run"})
-	if err != nil || len(snapshot.Timeline) == 0 || len(snapshot.Checkpoints) == 0 {
-		t.Fatalf("Snapshot() = %+v, %v, want durable timeline and checkpoints", snapshot, err)
-	}
-	empty, err := store.ListCheckpoints(context.Background(), workflow.CheckpointHistoryRequest{
-		RunID: "store-run", AfterVersion: 1 << 60,
-	})
-	if err != nil || len(empty) != 0 {
-		t.Fatalf("ListCheckpoints(after end) = %+v, %v, want empty history", empty, err)
-	}
-	requireRunLogSemantics(t, store)
-}
-
-func persistenceWorkflow(store persistence, bodyCalls *int, interrupt *bool) *workflow.Workflow[string, string] {
+func persistenceWorkflow(store workflow.Store, bodyCalls *int, interrupt *bool) *workflow.Workflow[string, string] {
 	wf := workflow.New[string, string](
 		"store-conformance", workflow.WithTopologyVersion("v1"),
 		workflow.WithStore(store),
@@ -849,27 +845,6 @@ func persistenceWorkflow(store persistence, bodyCalls *int, interrupt *bool) *wo
 	wf.Entry(work)
 	wf.Exit(work)
 	return wf
-}
-
-func requireRunLogSemantics(t *testing.T, log runlog.Log) {
-	t.Helper()
-	record := runlog.Record{
-		SessionID: "session-1", RunID: "log-run", Sequence: 1, EventType: "test", Source: "test", Timestamp: time.Now().UTC(),
-	}
-	if err := log.Append(context.Background(), record); err != nil {
-		t.Fatal(err)
-	}
-	if err := log.Append(context.Background(), record); err != nil {
-		t.Fatalf("idempotent Append() error = %v", err)
-	}
-	record.Summary = "conflict"
-	if err := log.Append(context.Background(), record); !errors.Is(err, runlog.ErrConflict) {
-		t.Fatalf("conflicting Append() error = %v, want ErrConflict", err)
-	}
-	records, err := log.List(context.Background(), runlog.Query{RunID: "log-run"})
-	if err != nil || len(records) != 1 {
-		t.Fatalf("List() = %+v, %v, want one record", records, err)
-	}
 }
 
 func TestSessionRunLogPersistsAcrossReopen(t *testing.T) {

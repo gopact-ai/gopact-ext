@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact-ext/agents/internal/contract"
@@ -31,7 +32,7 @@ func (selector SelectorFunc) Select(ctx context.Context, request agent.Request, 
 	if selector == nil {
 		return Selection{}, errors.New("router: selector is nil")
 	}
-	return selector(ctx, cloneRequest(request), append([]agent.Identity(nil), candidates...))
+	return selector(ctx, request.Clone(), slices.Clone(candidates))
 }
 
 type routeResult struct {
@@ -82,7 +83,7 @@ func New(identity agent.Identity, directory *agent.Directory, selector Selector,
 	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	selectNode := wf.Node("select", func(ctx context.Context, request agent.Request) (routeResult, error) {
-		selection, err := selector.Select(ctx, cloneRequest(request), candidates)
+		selection, err := selector.Select(ctx, request.Clone(), slices.Clone(candidates))
 		if err != nil {
 			return routeResult{}, fmt.Errorf("router: select child: %w", err)
 		}
@@ -92,7 +93,7 @@ func New(identity agent.Identity, directory *agent.Directory, selector Selector,
 		if child, ok := directory.Lookup(selection.Child); !ok || contract.IsNil(child) {
 			return routeResult{}, fmt.Errorf("router: selected child %q is not in the directory", selection.Child)
 		}
-		return routeResult{Request: cloneRequest(request), Selection: selection}, nil
+		return routeResult{Request: request.Clone(), Selection: selection}, nil
 	})
 	children := make(map[string]*workflow.Node[agent.Request, agent.Response], len(candidates))
 	for _, candidate := range candidates {
@@ -127,33 +128,4 @@ func (target *Agent) Invoke(ctx context.Context, request agent.Request, options 
 		return agent.Response{}, errors.New("router: agent is nil")
 	}
 	return target.workflow.Invoke(ctx, request, options...)
-}
-
-func cloneRequest(request agent.Request) agent.Request {
-	request.Messages = cloneMessages(request.Messages)
-	request.Artifacts = append([]gopact.ArtifactRef(nil), request.Artifacts...)
-	request.Metadata = cloneStringMap(request.Metadata)
-	return request
-}
-
-func cloneMessages(messages []gopact.Message) []gopact.Message {
-	if messages == nil {
-		return nil
-	}
-	cloned := make([]gopact.Message, len(messages))
-	for index, message := range messages {
-		cloned[index] = message.Clone()
-	}
-	return cloned
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
 }

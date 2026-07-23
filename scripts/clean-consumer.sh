@@ -39,19 +39,16 @@ while read -r module version package extra; do
 		echo "invalid manifest entry: ${module} ${version:-} ${package:-} ${extra:-}" >&2
 		exit 1
 	fi
-	if [[ "${package}" != "${module}" && "${package}" != "${module}/"* ]]; then
+	if [[ "${package}" != "-" && "${package}" != "${module}" && "${package}" != "${module}/"* ]]; then
 		echo "check package ${package} is outside module ${module}" >&2
 		exit 1
 	fi
-	if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
-		echo "version must be an exact semantic version tag: ${module} ${version}" >&2
+	if [[ ! "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+		echo "version must be an exact stable semantic version tag: ${module} ${version}" >&2
 		exit 1
 	fi
-	if [[ "${version}" == "v0.0.0" ||
-		"${version}" =~ ^v[0-9]+\.0\.0-[0-9]{14}-[0-9a-f]{12}$ ||
-		"${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-0\.[0-9]{14}-[0-9a-f]{12}$ ||
-		"${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*\.0\.[0-9]{14}-[0-9a-f]{12}$ ]]; then
-		echo "placeholder and pseudo-versions are forbidden: ${module} ${version}" >&2
+	if [[ "${version}" == "v0.0.0" ]]; then
+		echo "placeholder versions are forbidden: ${module} ${version}" >&2
 		exit 1
 	fi
 	if [[ -n "${modules[*]-}" ]]; then
@@ -83,7 +80,18 @@ if [[ "${validate_only}" == true ]]; then
 fi
 
 consumer="$(mktemp -d)"
-trap 'rm -rf "${consumer}"' EXIT
+cleanup() {
+	if [[ -d "${consumer}/module-cache" ]]; then
+		chmod -R u+w "${consumer}/module-cache" || true
+	fi
+	rm -rf "${consumer}"
+}
+trap cleanup EXIT
+export GOMODCACHE="${consumer}/module-cache"
+export GO111MODULE=on
+export GOENV=off
+export GOFLAGS=
+export GOWORK=off
 cd "${consumer}"
 go mod init clean-consumer.example
 
@@ -92,7 +100,13 @@ for ((index = 0; index < prefix_count; index++)); do
 	module="${modules[${index}]}"
 	version="${versions[${index}]}"
 	package="${packages[${index}]}"
-	download="$(GOWORK=off go mod download -json "${module}@${version}")"
+	if ! download="$(
+		go mod download -json "${module}@${version}" 2>&1
+	)"; then
+		echo "failed to download ${module}@${version}" >&2
+		printf '%s\n' "${download}" >&2
+		exit 1
+	fi
 	module_gomod="$(printf '%s\n' "${download}" | sed -n 's/^[[:space:]]*"GoMod": "\(.*\)",$/\1/p')"
 	if [[ -z "${module_gomod}" || ! -f "${module_gomod}" ]]; then
 		echo "downloaded module has no readable go.mod: ${module}@${version}" >&2
@@ -102,9 +116,13 @@ for ((index = 0; index < prefix_count; index++)); do
 		echo "tagged module contains a replace directive: ${module}@${version}" >&2
 		exit 1
 	fi
-	GOWORK=off go get "${package}@${version}"
-	if [[ "$(GOWORK=off go list -f '{{.Name}}' "${package}")" == "main" ]]; then
-		GOWORK=off go test -run '^$' "${package}"
+	if [[ "${package}" == "-" ]]; then
+		go mod edit -require="${module}@${version}"
+		continue
+	fi
+	go get "${package}@${version}"
+	if [[ "$(go list -f '{{.Name}}' "${package}")" == "main" ]]; then
+		go test -run '^$' "${package}"
 	else
 		imports+=("${package}")
 	fi
@@ -129,12 +147,12 @@ fi
 for ((index = 0; index < prefix_count; index++)); do
 	module="${modules[${index}]}"
 	version="${versions[${index}]}"
-	selected="$(GOWORK=off go list -m -f '{{.Version}}{{if .Replace}} replace{{end}}' "${module}")"
+	selected="$(go list -m -f '{{.Version}}{{if .Replace}} replace{{end}}' "${module}")"
 	if [[ "${selected}" != "${version}" ]]; then
 		echo "selected ${module} ${selected}; want ${version}" >&2
 		exit 1
 	fi
 done
 
-GOWORK=off go mod verify
-GOWORK=off go test ./...
+go mod verify
+go test ./...

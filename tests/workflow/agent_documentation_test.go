@@ -10,8 +10,6 @@ import (
 func TestPublicAgentModuleDocumentation(t *testing.T) {
 	modules := []string{
 		"agenttool",
-		"deep",
-		"deepresearch",
 		"loop",
 		"parallel",
 		"planexec",
