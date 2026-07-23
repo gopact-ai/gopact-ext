@@ -187,7 +187,7 @@ func TestDeepAgentConformance(t *testing.T) {
 	})), PlannerFunc(func(context.Context, PlanInput) ([]Task, error) {
 		return []Task{{ID: "t1", Description: "work", AgentName: "worker"}}, nil
 	}))
-	gopacttest.RequireAgentConformance(t, gopacttest.AgentConformanceCase{
+	gopacttest.RequireWorkflowAgentConformance(t, gopacttest.AgentConformanceCase{
 		Agent: target, Request: agent.Request{},
 		Validate: func(response agent.Response) error {
 			if len(response.Message.Parts) == 0 {

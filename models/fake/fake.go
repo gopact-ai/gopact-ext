@@ -52,7 +52,7 @@ func New(opts ...Option) *Model {
 // NewRequest returns a request copied from the model default template.
 func (m *Model) NewRequest(messages ...gopact.Message) gopact.ModelRequest {
 	req := m.defaultRequest
-	req.Messages = append([]gopact.Message(nil), messages...)
+	req.Messages = cloneMessages(messages)
 	req.Tools = append([]gopact.ToolSpec(nil), m.defaultRequest.Tools...)
 	req.Modalities = append([]gopact.Modality(nil), m.defaultRequest.Modalities...)
 	req.Stop = append([]string(nil), m.defaultRequest.Stop...)
@@ -70,6 +70,17 @@ func (m *Model) NewRequest(messages ...gopact.Message) gopact.ModelRequest {
 		}
 	}
 	return req
+}
+
+func cloneMessages(messages []gopact.Message) []gopact.Message {
+	if messages == nil {
+		return nil
+	}
+	cloned := make([]gopact.Message, len(messages))
+	for index, message := range messages {
+		cloned[index] = message.Clone()
+	}
+	return cloned
 }
 
 // Invoke returns the configured response and emits a message delta event.

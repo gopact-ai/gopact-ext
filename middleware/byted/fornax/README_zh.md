@@ -22,6 +22,8 @@ tracedAgent := middleware.Use(target)
 response, err := tracedAgent.Invoke(ctx, request)
 ```
 
+默认只上报运行元数据，不上报 Agent 消息、model 请求与响应、tool arguments、结果 preview、流式输出或详细错误信息。
+
 ## 完整配置
 
 ```go
@@ -34,6 +36,7 @@ middleware, err := fornax.New(ctx, fornax.Config{
 	PSM:      "your.service.psm", // 可选；默认 unknown_psm
 	UserID:   "default-user",
 	DeviceID: "default-device",
+	CaptureContent: false, // 安全默认值；开启前先阅读“内容采集”
 	Metadata: map[string]string{
 		"tenant": "tenant-1",
 	},
@@ -46,6 +49,12 @@ defer middleware.Close(context.Background())
 tracedAgent := middleware.Use(target)
 response, err := tracedAgent.Invoke(ctx, request)
 ```
+
+## 内容采集
+
+只有 application 明确批准把请求与响应内容导出到 Fornax 时，才设置 `CaptureContent: true`。开启后，root、Agent、model 与 tool span 会包含 `cozeloop.input` 和 `cozeloop.output`，其中可能有消息、tool schema 与 arguments、结果 preview，以及聚合后的流式输出。它还会开启原始 error attribute，因为 provider error 可能包含响应 payload。零值为 `false`；本模块不提供单次请求覆盖，避免因 context 传播错误意外开启采集。
+
+关闭内容采集时仍保留运行元数据：span 层级、run/session/node 标识、model/tool 名称、tool call ID、token 用量、finish reason、错误状态、耗时和 application 显式提供的 tags。原始 error 仍会返回给 application。
 
 ## 单次请求标签
 
@@ -82,6 +91,6 @@ Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。Workflo
 | `ToolCall.ID` | typed tool span 上的 `tool_call_id` | 标识模型请求的工具调用，不是 OTel Span ID。 |
 | OTel Trace ID / Span ID | OTLP 原生 ID | 从输入 context 继承或由 OTel 生成，不从 RunID、SessionID 派生。 |
 
-Trace input/output 遵循 Fornax 的 4 MB 字段限制；超限值不再附加到 span，并在 `cut_off` 中标记。流式 chunk 仍会完整转发给应用，不受该上报限制影响。
+开启内容采集时，Trace input/output 遵循 Fornax 的 4 MB 字段限制；超限值不再附加到 span，并在 `cut_off` 中标记。流式 chunk 仍会完整转发给应用，不受该上报限制影响。关闭内容采集时，middleware 不会为 trace 聚合流式内容。
 
-核心 Workflow event 契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型/工具结果。支持 component observation 的 Agent 可以额外发出实时 typed model/tool observation；该 middleware 会用这些 observation 富化同一个节点 span，填入真实的请求、响应、token 用量、模型名、tool call ID 和工具结果。模型或工具 adapter 没有发出的字段不会被虚构。
+核心 Workflow event 契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型/工具结果。支持 component observation 的 Agent 可以额外发出实时 typed model/tool observation；middleware 始终用其中的运行元数据富化同一个节点 span，只有开启内容采集后才上报请求、响应和工具结果 payload。模型或工具 adapter 没有发出的字段不会被虚构。

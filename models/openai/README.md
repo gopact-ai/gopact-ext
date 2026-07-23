@@ -35,6 +35,8 @@ vectors, err := model.Embed(ctx, gopact.EmbeddingRequest{
 
 An empty default generation model is valid so applications can fetch `ListModels` before asking the user to choose. Generation calls still require a model on the request. `GetModel` retrieves one model by ID. `ListModels` and `Embed` also satisfy the provider-neutral core interfaces, so an application can discover them through type assertions rather than importing this package at every call site.
 
+In a custom model-tool loop, retain the complete `ModelResponse.Message`, execute its `ToolCalls`, and append one `tool` message per result with the originating `ToolCallID`. Outputs may be appended in any order because association is explicit.
+
 ## Runtime API surface
 
 | Area | Methods |

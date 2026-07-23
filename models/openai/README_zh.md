@@ -35,6 +35,8 @@ vectors, err := model.Embed(ctx, gopact.EmbeddingRequest{
 
 默认生成模型可以留空，让应用在询问用户前先调用 `ListModels`；真正发起生成时仍必须在 request 上设置模型。`GetModel` 可按 ID 读取单个模型。`ListModels` 与 `Embed` 同时满足 core 的 provider-neutral 接口，应用可以通过类型断言发现能力，不必让每个调用点都依赖本包。
 
+自定义 model-tool loop 必须保留完整的 `ModelResponse.Message`，执行其中的 `ToolCalls`，并为每个结果追加一条携带原始 `ToolCallID` 的 `tool` message。关联由 ID 明确表达，因此结果可以按任意顺序追加。
+
 ## Runtime API 范围
 
 | 领域 | 方法 |

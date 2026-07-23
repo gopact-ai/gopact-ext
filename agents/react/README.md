@@ -12,7 +12,7 @@ Use it when a model must own the next-action decision and completed model turns 
 
 ## Execution model
 
-The observable graph starts with `prepare → model`. A final response follows `model → finish`; repair follows `model → continue → prepare`; tools follow `model → continue → dispatch-tools → tool → observe-tools → continue`. From there, `continue` returns to `dispatch-tools` while another batch remains, otherwise it returns to `prepare` for the next model turn. Typed Workflow state holds the turn, messages, pending observations, tool calls, artifacts, and metadata. `prepare` consumes pending observations once and builds the exact model request with configured tool specs. Direct tools in one batch run concurrently while retaining model call order; invokable tools are serial barriers. `WithLimits` bounds turns, total tool calls, and parallel direct tools.
+The observable graph starts with `prepare → model`. A final response follows `model → finish`; repair follows `model → continue → prepare`; tools follow `model → continue → dispatch-tools → tool → observe-tools → continue`. From there, `continue` returns to `dispatch-tools` while another batch remains, otherwise it returns to `prepare` for the next model turn. Typed Workflow state holds the turn, messages, pending observations, tool calls, artifacts, and metadata. `prepare` consumes pending observations once and builds the exact model request with configured tool specs. Direct tools in one batch run concurrently; every observation retains its originating call ID even when completion order differs, while invokable tools remain serial barriers. `WithLimits` bounds turns, total tool calls, and parallel direct tools.
 
 ## Example
 

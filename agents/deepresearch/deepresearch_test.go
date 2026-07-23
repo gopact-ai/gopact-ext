@@ -254,7 +254,7 @@ func TestDeepResearchAgentConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gopacttest.RequireAgentConformance(t, gopacttest.AgentConformanceCase{
+	gopacttest.RequireWorkflowAgentConformance(t, gopacttest.AgentConformanceCase{
 		Agent: target, Request: agent.Request{},
 		Validate: func(response agent.Response) error {
 			if len(response.Message.Parts) == 0 {

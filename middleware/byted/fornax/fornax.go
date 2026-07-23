@@ -90,6 +90,10 @@ type Config struct {
 	DeviceID string
 	// Metadata attaches custom string tags to exported spans.
 	Metadata map[string]string
+	// CaptureContent enables trace input/output payloads, including messages,
+	// model and tool arguments, responses, result previews, and verbose error details.
+	// It defaults to false.
+	CaptureContent bool
 }
 
 type contextConfig struct {
@@ -139,9 +143,10 @@ func contextOrBackground(ctx context.Context) context.Context {
 
 // Middleware wraps Agents with Fornax tracing.
 type Middleware struct {
-	provider *sdktrace.TracerProvider
-	tracer   trace.Tracer
-	tags     []attribute.KeyValue
+	provider       *sdktrace.TracerProvider
+	tracer         trace.Tracer
+	tags           []attribute.KeyValue
+	captureContent bool
 
 	closeOnce sync.Once
 	closeErr  error
@@ -165,6 +170,7 @@ type authConfig struct {
 	userID         string
 	deviceID       string
 	metadata       map[string]string
+	captureContent bool
 }
 
 func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
@@ -191,7 +197,11 @@ func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
 		spaceID:        spaceID,
 		serviceName:    effectivePSM(config.psm),
 	}
-	return newMiddleware(sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter)), traceTags(config)), nil
+	return newMiddleware(
+		sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter)),
+		traceTags(config),
+		config.captureContent,
+	), nil
 }
 
 func authenticate(ctx context.Context, config Config) (authConfig, error) {
@@ -250,6 +260,7 @@ func authenticateWithHost(ctx context.Context, config Config, host string) (auth
 		userID:         config.UserID,
 		deviceID:       config.DeviceID,
 		metadata:       copyMetadata(config.Metadata),
+		captureContent: config.CaptureContent,
 	}, nil
 }
 
@@ -668,8 +679,11 @@ func validateSpaceID(spaceID string) error {
 	return nil
 }
 
-func newMiddleware(provider *sdktrace.TracerProvider, tags []attribute.KeyValue) *Middleware {
-	return &Middleware{provider: provider, tracer: provider.Tracer(instrumentationName), tags: tags}
+func newMiddleware(provider *sdktrace.TracerProvider, tags []attribute.KeyValue, capture bool) *Middleware {
+	return &Middleware{
+		provider: provider, tracer: provider.Tracer(instrumentationName), tags: tags,
+		captureContent: capture,
+	}
 }
 
 // Use wraps target with Fornax tracing.
@@ -725,8 +739,8 @@ func (a *tracedAgent) Invoke(ctx context.Context, request agent.Request, options
 
 	options = append(options, gopact.WithEventSink(sink))
 	response, err = a.target.Invoke(spanCtx, request, options...)
-	finishAgent(agentSpan, response, err)
-	finishRoot(root, response, err, inputCutOff)
+	finishAgent(agentSpan, response, err, a.middleware.captureContent)
+	finishRoot(root, response, err, inputCutOff, a.middleware.captureContent)
 	return response, err
 }
 
@@ -751,12 +765,16 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 		attribute.String("agent_name", name),
 	}
 	attributes = append(attributes, tags...)
-	input, inputCutOff := traceJSON(fornaxQueryInput(request))
-	if input != "" {
-		attributes = append(attributes, attribute.String(inputAttribute, input))
-	}
-	if inputCutOff {
-		attributes = append(attributes, attribute.String(cutOffAttribute, `["input"]`))
+	inputCutOff := false
+	if a.middleware.captureContent {
+		input, cutOff := traceJSON(fornaxQueryInput(request))
+		inputCutOff = cutOff
+		if input != "" {
+			attributes = append(attributes, attribute.String(inputAttribute, input))
+		}
+		if inputCutOff {
+			attributes = append(attributes, attribute.String(cutOffAttribute, `["input"]`))
+		}
 	}
 	rootCtx, root := a.middleware.tracer.Start(ctx, name, trace.WithAttributes(attributes...))
 	agentCtx, agentSpan := a.middleware.tracer.Start(rootCtx, name, trace.WithAttributes(
@@ -765,16 +783,21 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 			attribute.String("agent_name", name),
 		}, tags...)...,
 	))
-	setTraceJSON(agentSpan, inputAttribute, agentInput(request), new(bool))
-	return agentCtx, root, agentSpan, newEventSink(a.middleware.tracer, agentCtx, root, agentSpan, tags), inputCutOff, nil
+	if a.middleware.captureContent {
+		setTraceJSON(agentSpan, inputAttribute, agentInput(request), new(bool))
+	}
+	return agentCtx, root, agentSpan, newEventSink(a.middleware, agentCtx, root, agentSpan, tags), inputCutOff, nil
 }
 
-func finishRoot(root trace.Span, output any, err error, inputCutOff bool) {
+func finishRoot(root trace.Span, output any, err error, inputCutOff, capture bool) {
 	if err != nil {
-		markError(root, err)
+		markError(root, err, capture)
 		return
 	}
 	root.SetAttributes(attribute.Int(statusAttribute, 0))
+	if !capture {
+		return
+	}
 	var rootOutput any
 	switch response := output.(type) {
 	case agent.Response:
@@ -791,13 +814,15 @@ func finishRoot(root trace.Span, output any, err error, inputCutOff bool) {
 	}
 }
 
-func finishAgent(span trace.Span, response agent.Response, err error) {
+func finishAgent(span trace.Span, response agent.Response, err error, capture bool) {
 	if err != nil {
-		markError(span, err)
+		markError(span, err, capture)
 		return
 	}
 	span.SetAttributes(attribute.Int(statusAttribute, 0))
-	setTraceJSON(span, outputAttribute, agentOutput(response), new(bool))
+	if capture {
+		setTraceJSON(span, outputAttribute, agentOutput(response), new(bool))
+	}
 }
 
 func traceJSON(value any) (string, bool) {
@@ -838,7 +863,7 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 			yield(agent.Chunk{}, err)
 			return
 		}
-		output := newStreamOutput()
+		output := newStreamOutput(a.middleware.captureContent)
 		var streamErr error
 		completed := false
 		defer func() {
@@ -849,8 +874,8 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 				}
 			}
 			response := output.response()
-			finishAgent(agentSpan, response, streamErr)
-			finishRoot(root, response, streamErr, inputCutOff)
+			finishAgent(agentSpan, response, streamErr, a.middleware.captureContent)
+			finishRoot(root, response, streamErr, inputCutOff, a.middleware.captureContent)
 			if output.truncated {
 				setCutOff(root, inputCutOff, true)
 			}
@@ -876,16 +901,17 @@ func (a *tracedStreamingAgent) InvokeStream(ctx context.Context, request agent.R
 }
 
 type streamOutput struct {
-	text      strings.Builder
-	truncated bool
+	captureContent bool
+	text           strings.Builder
+	truncated      bool
 }
 
-func newStreamOutput() *streamOutput {
-	return &streamOutput{}
+func newStreamOutput(capture bool) *streamOutput {
+	return &streamOutput{captureContent: capture}
 }
 
 func (o *streamOutput) add(chunk agent.Chunk) {
-	if o.truncated {
+	if !o.captureContent || o.truncated {
 		return
 	}
 	text := streamChunkText(chunk)
@@ -1086,12 +1112,7 @@ func modelInput(request gopact.ModelRequest) modelInputPayload {
 
 func modelOutput(response gopact.ModelResponse) modelOutputPayload {
 	message := modelMessage(response.Message)
-	if intent, ok := response.Intent.(gopact.ToolCallIntent); ok {
-		message.ToolCalls = modelToolCalls(intent.Calls)
-	}
-	if intent, ok := response.Intent.(*gopact.ToolCallIntent); ok && intent != nil {
-		message.ToolCalls = modelToolCalls(intent.Calls)
-	}
+	message.ToolCalls = modelToolCalls(response.Message.ToolCalls)
 	return modelOutputPayload{Choices: []modelChoicePayload{{
 		FinishReason: response.FinishReason,
 		Index:        0,
@@ -1223,11 +1244,12 @@ type nodeSpanState struct {
 }
 
 type eventSink struct {
-	tracer  trace.Tracer
-	rootCtx context.Context
-	root    trace.Span
-	agent   trace.Span
-	tags    []attribute.KeyValue
+	tracer         trace.Tracer
+	rootCtx        context.Context
+	root           trace.Span
+	agent          trace.Span
+	tags           []attribute.KeyValue
+	captureContent bool
 
 	mu          sync.Mutex
 	rootRunID   string
@@ -1236,10 +1258,11 @@ type eventSink struct {
 	nodes       map[string]nodeSpanState
 }
 
-func newEventSink(tracer trace.Tracer, rootCtx context.Context, root, agent trace.Span, tags []attribute.KeyValue) *eventSink {
+func newEventSink(m *Middleware, rootCtx context.Context, root, agent trace.Span, tags []attribute.KeyValue) *eventSink {
 	return &eventSink{
-		tracer: tracer, rootCtx: rootCtx, root: root, agent: agent, tags: tags,
-		runs: make(map[string]spanState), nodes: make(map[string]nodeSpanState),
+		tracer: m.tracer, rootCtx: rootCtx, root: root, agent: agent, tags: tags,
+		captureContent: m.captureContent,
+		runs:           make(map[string]spanState), nodes: make(map[string]nodeSpanState),
 	}
 }
 
@@ -1306,7 +1329,7 @@ func (s *eventSink) finishRun(event gopact.Event) {
 	if event.Type == workflow.EventWorkflowCompleted {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, errors.New(event.Type))
+		markError(state.span, errors.New(event.Type), s.captureContent)
 	}
 	if state.root {
 		return
@@ -1347,7 +1370,7 @@ func (s *eventSink) finishNode(event gopact.Event) {
 	if (event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped) && !state.failed {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, errors.New(event.Type))
+		markError(state.span, errors.New(event.Type), s.captureContent)
 	}
 	state.span.End(trace.WithTimestamp(eventTime(event)))
 	delete(s.nodes, key)
@@ -1361,7 +1384,7 @@ func (s *eventSink) finish(err error) {
 	defer s.mu.Unlock()
 	for key, state := range s.nodes {
 		if err != nil {
-			markError(state.span, err)
+			markError(state.span, err, s.captureContent)
 		}
 		state.span.End()
 		delete(s.nodes, key)
@@ -1371,14 +1394,14 @@ func (s *eventSink) finish(err error) {
 			continue
 		}
 		if err != nil {
-			markError(state.span, err)
+			markError(state.span, err, s.captureContent)
 		}
 		state.span.End()
 		delete(s.runs, runID)
 	}
 	if s.directModel != nil {
 		if err != nil {
-			markError(s.directModel.span, err)
+			markError(s.directModel.span, err, s.captureContent)
 		}
 		s.directModel.span.End()
 		s.directModel = nil
@@ -1396,18 +1419,18 @@ func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent)
 		s.emitDirectModelEvent(event)
 		return nil
 	}
-	updateModelSpan(&state, event)
+	updateModelSpan(&state, event, s.captureContent)
 	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
 	s.nodes[key] = state
 	return nil
 }
 
-func updateModelSpan(state *nodeSpanState, event gopact.ModelEvent) {
+func updateModelSpan(state *nodeSpanState, event gopact.ModelEvent, capture bool) {
 	switch event.Type {
 	case gopact.ModelEventCallStarted:
-		startModelSpan(state.span, event.Request, &state.inputCutOff)
+		startModelSpan(state.span, event.Request, &state.inputCutOff, capture)
 	case gopact.ModelEventCallFinished:
-		if finishModelSpan(state.span, event, &state.outputCutOff) {
+		if finishModelSpan(state.span, event, &state.outputCutOff, capture) {
 			state.failed = true
 		}
 	case gopact.ModelEventUsage:
@@ -1428,14 +1451,14 @@ func (s *eventSink) emitDirectModelEvent(event gopact.ModelEvent) {
 			append([]attribute.KeyValue{attribute.String(spanTypeAttribute, modelSpanType)}, s.tags...)...,
 		))
 		state := &nodeSpanState{span: span}
-		updateModelSpan(state, event)
+		updateModelSpan(state, event, s.captureContent)
 		s.directModel = state
 		return
 	}
 	if s.directModel == nil {
 		return
 	}
-	updateModelSpan(s.directModel, event)
+	updateModelSpan(s.directModel, event, s.captureContent)
 	setCutOff(s.directModel.span, s.directModel.inputCutOff, s.directModel.outputCutOff)
 	if event.Type != gopact.ModelEventCallFinished {
 		return
@@ -1447,25 +1470,27 @@ func (s *eventSink) emitDirectModelEvent(event gopact.ModelEvent) {
 	s.directModel = nil
 }
 
-func startModelSpan(span trace.Span, request *gopact.ModelRequest, inputCutOff *bool) {
+func startModelSpan(span trace.Span, request *gopact.ModelRequest, inputCutOff *bool, capture bool) {
 	span.SetAttributes(attribute.String(spanTypeAttribute, modelSpanType))
 	if request == nil {
 		return
 	}
-	setTraceJSON(span, inputAttribute, modelInput(*request), inputCutOff)
+	if capture {
+		setTraceJSON(span, inputAttribute, modelInput(*request), inputCutOff)
+	}
 	if request.Model != "" {
 		span.SetAttributes(attribute.String(modelNameAttribute, request.Model))
 	}
 }
 
-func finishModelSpan(span trace.Span, event gopact.ModelEvent, outputCutOff *bool) bool {
+func finishModelSpan(span trace.Span, event gopact.ModelEvent, outputCutOff *bool, capture bool) bool {
 	if event.Response != nil {
-		setModelResponseAttributes(span, *event.Response, outputCutOff)
+		setModelResponseAttributes(span, *event.Response, outputCutOff, capture)
 	}
 	if event.Err == nil {
 		return false
 	}
-	markError(span, event.Err)
+	markError(span, event.Err, capture)
 	return true
 }
 
@@ -1486,17 +1511,21 @@ func (s *eventSink) EmitToolEvent(ctx context.Context, event gopact.ToolEvent) e
 			attribute.String(toolNameAttribute, event.Call.Name),
 			attribute.String(toolCallIDAttribute, event.Call.ID),
 		)
-		setTraceJSON(state.span, inputAttribute, toolInput(event.Call), &state.inputCutOff)
+		if s.captureContent {
+			setTraceJSON(state.span, inputAttribute, toolInput(event.Call), &state.inputCutOff)
+		}
 	case gopact.ToolEventCallFinished:
-		setTraceJSON(state.span, outputAttribute, toolOutput(event.Outcome), &state.outputCutOff)
+		if s.captureContent {
+			setTraceJSON(state.span, outputAttribute, toolOutput(event.Outcome), &state.outputCutOff)
+		}
 		if event.Err != nil {
-			markError(state.span, event.Err)
+			markError(state.span, event.Err, s.captureContent)
 			state.failed = true
 		} else if _, failed := event.Outcome.(gopact.ToolErrorOutcome); failed {
-			markError(state.span, errors.New("tool error outcome"))
+			markError(state.span, errors.New("tool error outcome"), s.captureContent)
 			state.failed = true
 		} else if value, failed := event.Outcome.(*gopact.ToolErrorOutcome); failed && value != nil {
-			markError(state.span, errors.New("tool error outcome"))
+			markError(state.span, errors.New("tool error outcome"), s.captureContent)
 			state.failed = true
 		}
 	}
@@ -1531,8 +1560,10 @@ func activeNodeKeys(info workflow.RunInfo) []string {
 	return keys
 }
 
-func setModelResponseAttributes(span trace.Span, response gopact.ModelResponse, outputCutOff *bool) {
-	setTraceJSON(span, outputAttribute, modelOutput(response), outputCutOff)
+func setModelResponseAttributes(span trace.Span, response gopact.ModelResponse, outputCutOff *bool, capture bool) {
+	if capture {
+		setTraceJSON(span, outputAttribute, modelOutput(response), outputCutOff)
+	}
 	setUsageAttributes(span, response.Usage)
 	if response.FinishReason != "" {
 		span.SetAttributes(attribute.String(finishReasonAttribute, response.FinishReason))
@@ -1639,11 +1670,11 @@ func eventTime(event gopact.Event) time.Time {
 	return event.Timestamp
 }
 
-func markError(span trace.Span, err error) {
-	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
-	span.SetAttributes(
-		attribute.String("error", err.Error()),
-		attribute.Int(statusAttribute, failedStatusCode),
-	)
+func markError(span trace.Span, err error, detail bool) {
+	span.SetStatus(codes.Error, "")
+	span.SetAttributes(attribute.Int(statusAttribute, failedStatusCode))
+	if !detail {
+		return
+	}
+	span.SetAttributes(attribute.String("error", err.Error()))
 }

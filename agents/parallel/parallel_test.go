@@ -283,7 +283,7 @@ func TestAgentConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gopacttest.RequireAgentConformance(t, gopacttest.AgentConformanceCase{
+	gopacttest.RequireWorkflowAgentConformance(t, gopacttest.AgentConformanceCase{
 		Agent: target, Request: agent.Request{Messages: []gopact.Message{gopact.UserMessage("work")}},
 		Validate: func(response agent.Response) error {
 			if len(response.Message.Parts) != 1 || response.Message.Parts[0].Text != "done" {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact/agent"
+	"github.com/gopact-ai/gopact/gopacttest"
 	"github.com/gopact-ai/gopact/workflow"
 )
 
@@ -89,6 +90,40 @@ func TestRouterInvokesOnlySelectedChild(t *testing.T) {
 	if err != nil || checkpoint.Status != workflow.CheckpointCompleted {
 		t.Fatalf("Load() = %+v, %v, want completed checkpoint", checkpoint, err)
 	}
+}
+
+func TestRouterAgentConformance(t *testing.T) {
+	catalog := agent.NewCatalog()
+	child := testChild{identity: agent.Identity{
+		Name: "worker", Description: "handles routed work", Version: "v1",
+	}, text: "done"}
+	if err := catalog.Add(child); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := catalog.Compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := New(
+		agent.Identity{Name: "router", Description: "routes one request", Version: "v1"},
+		directory,
+		SelectorFunc(func(context.Context, agent.Request, []agent.Identity) (Selection, error) {
+			return Selection{Child: "worker"}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gopacttest.RequireWorkflowAgentConformance(t, gopacttest.AgentConformanceCase{
+		Agent:   target,
+		Request: agent.Request{Messages: []gopact.Message{gopact.UserMessage("work")}},
+		Validate: func(response agent.Response) error {
+			if len(response.Message.Parts) != 1 || response.Message.Parts[0].Text != "done" {
+				return errors.New("unexpected response")
+			}
+			return nil
+		},
+	})
 }
 
 func requireEventOrder(t *testing.T, events []gopact.Event, wanted ...string) {

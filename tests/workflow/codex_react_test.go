@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact-ext/agents/react"
@@ -33,13 +35,19 @@ func TestCodexModelRunsReactToolRoundTrip(t *testing.T) {
 		}
 		if calls.Add(1) == 1 {
 			writeCodexSSE(t, w,
-				`{"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call","status":"completed","name":"lookup","arguments":"{\"q\":\"answer\"}","call_id":"call_1"}}`,
+				`{"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call","status":"completed","name":"slow","arguments":"{\"q\":\"first\"}","call_id":"call_1"}}`,
+				`{"type":"response.output_item.done","item":{"id":"fc_2","type":"function_call","status":"completed","name":"fast","arguments":"{\"q\":\"second\"}","call_id":"call_2"}}`,
 				`{"type":"response.completed","response":{"id":"resp-tool"}}`,
 			)
 			return
 		}
-		if len(request.Input) != 3 || request.Input[2].Type != "function_call_output" ||
-			request.Input[2].CallID != "call_1" || request.Input[2].Output != "42" {
+		outputs := make(map[string]string)
+		for _, item := range request.Input {
+			if item.Type == "function_call_output" {
+				outputs[item.CallID] = item.Output
+			}
+		}
+		if len(outputs) != 2 || outputs["call_1"] != "slow-result" || outputs["call_2"] != "fast-result" {
 			t.Errorf("tool continuation input = %+v", request.Input)
 		}
 		writeCodexSSE(t, w,
@@ -59,15 +67,26 @@ func TestCodexModelRunsReactToolRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codex.New() error = %v", err)
 	}
+	fastFinished := make(chan struct{})
 	target, err := react.New(
 		agent.Identity{Name: "codex-react-test", Description: "tests Codex tools", Version: "v1"},
 		model,
-		react.WithTools(codexLookupTool{}),
+		react.WithTools(
+			codexTool{name: "slow", output: "slow-result", wait: fastFinished},
+			codexTool{name: "fast", output: "fast-result"},
+		),
 	)
 	if err != nil {
 		t.Fatalf("react.New() error = %v", err)
 	}
-	response, err := target.Invoke(t.Context(), agent.Request{Messages: []gopact.Message{gopact.UserMessage("look it up")}})
+	sink := &toolCompletionSink{fastFinished: fastFinished}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	response, err := target.Invoke(
+		ctx,
+		agent.Request{Messages: []gopact.Message{gopact.UserMessage("look it up")}},
+		gopact.WithEventSink(sink),
+	)
 	if err != nil {
 		t.Fatalf("Agent.Invoke() error = %v", err)
 	}
@@ -77,24 +96,67 @@ func TestCodexModelRunsReactToolRoundTrip(t *testing.T) {
 	if calls.Load() != 2 {
 		t.Fatalf("model calls = %d, want 2", calls.Load())
 	}
+	completed := sink.completedCalls()
+	if len(completed) != 2 || completed[0] != "call_2" || completed[1] != "call_1" {
+		t.Fatalf("tool completion order = %v, want fast before slow", completed)
+	}
 }
 
-type codexLookupTool struct{}
+type codexTool struct {
+	name   string
+	output string
+	wait   <-chan struct{}
+}
 
-func (codexLookupTool) Spec() gopact.ToolSpec {
+func (tool codexTool) Spec() gopact.ToolSpec {
 	return gopact.ToolSpec{
-		Name:        "lookup",
+		Name:        tool.name,
 		Description: "returns the answer",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
 	}
 }
 
-func (codexLookupTool) ExecuteTool(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
+func (tool codexTool) ExecuteTool(ctx context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
+	if tool.wait != nil {
+		select {
+		case <-tool.wait:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	return gopact.ToolResultOutcome{
 		CallID: call.ID,
 		Name:   call.Name,
-		Result: gopact.ToolResult{Preview: "42"},
+		Result: gopact.ToolResult{Preview: tool.output},
 	}, nil
+}
+
+type toolCompletionSink struct {
+	mu           sync.Mutex
+	completed    []string
+	fastFinished chan struct{}
+	fastOnce     sync.Once
+}
+
+func (*toolCompletionSink) Emit(context.Context, gopact.Event) error { return nil }
+
+func (sink *toolCompletionSink) EmitToolEvent(_ context.Context, event gopact.ToolEvent) error {
+	if event.Type != gopact.ToolEventCallFinished {
+		return nil
+	}
+	sink.mu.Lock()
+	sink.completed = append(sink.completed, event.Call.ID)
+	sink.mu.Unlock()
+	if event.Call.ID == "call_2" {
+		sink.fastOnce.Do(func() { close(sink.fastFinished) })
+	}
+	return nil
+}
+
+func (sink *toolCompletionSink) completedCalls() []string {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return append([]string(nil), sink.completed...)
 }
 
 func writeCodexSSE(t *testing.T, w http.ResponseWriter, events ...string) {

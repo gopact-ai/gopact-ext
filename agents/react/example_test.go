@@ -32,10 +32,10 @@ func (*exampleModel) Invoke(_ context.Context, request gopact.ModelRequest, _ ..
 		}
 	}
 	return gopact.ModelResponse{
-		Message: gopact.Message{Role: "assistant"},
-		Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{{
+		Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{{
 			ID: "lookup-1", Name: "lookup",
 		}}},
+		Intent: gopact.ToolCallIntent{},
 	}, nil
 }
 

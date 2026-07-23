@@ -6,13 +6,12 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 Official extensions for the redesigned `gopact` core.
 
-> **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade. Until Go 1.27 is officially released, it requires a development toolchain and should be treated as a preview, not a stable release.
+> **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade.
 
-Until the coordinated RC modules are published, this repository is a source-development
-checkout: clone `gopact` beside `gopact-ext`; the committed `go.work` joins the source
-modules without changing their published dependency contract. A standalone clone is
-supported only after the corresponding exact module versions are available through the
-configured Go proxy and have passed clean-consumer verification.
+For coordinated source development, clone `gopact` beside `gopact-ext`; the committed
+`go.work` joins the source modules without changing their published dependency contract.
+Published consumers use the exact module versions in the release manifest after they pass
+clean-consumer verification.
 
 ## Release verification
 
@@ -28,7 +27,7 @@ The manifest defines the release order. Each row names a module, its exact relea
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
-The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, duplicate modules, packages outside their module, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. During staged publication, only a successful prefix is release evidence. RCs remain production-evaluation candidates until Go 1.27 stable gates and burn-in pass.
+The script starts from an empty consumer, checks exact selected versions, and rejects missing modules, duplicate modules, packages outside their module, consumer or tagged-module `replace` directives, pseudo-versions, and `v0.0.0`. `--validate-only` checks manifest structure without downloading tags. During staged publication, only a successful prefix is release evidence.
 
 ## Extension catalog
 

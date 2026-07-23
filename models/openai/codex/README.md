@@ -115,7 +115,7 @@ target, err := react.New(
 )
 ```
 
-A custom model-tool loop must append the complete `ModelResponse.Message` to history unchanged, then append one `tool` message for each `ToolCallIntent.Calls` entry in the same order. Response-state parts are opaque and must never be rendered as user text.
+A custom model-tool loop must append the complete `ModelResponse.Message` to history unchanged, execute each `ModelResponse.Message.ToolCalls` entry, then append one `tool` message whose `ToolCallID` matches the originating call. Tool outputs may be appended in any order because association is explicit. Response-state parts are opaque and must never be rendered as user text.
 
 Image/audio input, hosted Codex tools, sampling controls (`temperature`, `top_p`, `stop`, and `seed`), and gopact output protocols are not implemented; requests using them fail explicitly.
 

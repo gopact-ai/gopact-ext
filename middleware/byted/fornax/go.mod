@@ -3,7 +3,7 @@ module github.com/gopact-ai/gopact-ext/middleware/byted/fornax
 go 1.27
 
 require (
-	github.com/gopact-ai/gopact v0.1.0-rc.4
+	github.com/gopact-ai/gopact v0.1.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0

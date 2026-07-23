@@ -142,8 +142,7 @@ func cloneMessages(messages []gopact.Message) []gopact.Message {
 	}
 	cloned := make([]gopact.Message, len(messages))
 	for index, message := range messages {
-		message.Parts = append([]gopact.MessagePart(nil), message.Parts...)
-		cloned[index] = message
+		cloned[index] = message.Clone()
 	}
 	return cloned
 }
