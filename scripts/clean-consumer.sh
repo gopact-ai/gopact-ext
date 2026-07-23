@@ -79,15 +79,18 @@ if [[ "${validate_only}" == true ]]; then
 	exit 0
 fi
 
-consumer="$(mktemp -d)"
+sandbox="$(mktemp -d)"
+consumer="${sandbox}/consumer"
+module_cache="${sandbox}/module-cache"
 cleanup() {
-	if [[ -d "${consumer}/module-cache" ]]; then
-		chmod -R u+w "${consumer}/module-cache" || true
+	if [[ -d "${module_cache}" ]]; then
+		chmod -R u+w "${module_cache}" || true
 	fi
-	rm -rf "${consumer}"
+	rm -rf "${sandbox}"
 }
 trap cleanup EXIT
-export GOMODCACHE="${consumer}/module-cache"
+mkdir "${consumer}"
+export GOMODCACHE="${module_cache}"
 export GO111MODULE=on
 export GOENV=off
 export GOFLAGS=
@@ -127,6 +130,7 @@ for ((index = 0; index < prefix_count; index++)); do
 		imports+=("${package}")
 	fi
 done
+go mod download all
 
 {
 	echo 'package cleanconsumer'
@@ -138,6 +142,8 @@ done
 		echo ')'
 	fi
 } > consumer_test.go
+
+go test -mod=mod ./...
 
 if grep -Eq '^[[:space:]]*replace([[:space:](]|$)' go.mod; then
 	echo "clean consumer unexpectedly contains a replace directive" >&2
@@ -155,4 +161,3 @@ for ((index = 0; index < prefix_count; index++)); do
 done
 
 go mod verify
-go test ./...
