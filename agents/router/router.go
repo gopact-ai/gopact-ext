@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact-ext/agents/internal/contract"
@@ -31,7 +32,7 @@ func (selector SelectorFunc) Select(ctx context.Context, request agent.Request, 
 	if selector == nil {
 		return Selection{}, errors.New("router: selector is nil")
 	}
-	return selector(ctx, request.Clone(), append([]agent.Identity(nil), candidates...))
+	return selector(ctx, request.Clone(), slices.Clone(candidates))
 }
 
 type routeResult struct {
@@ -82,7 +83,7 @@ func New(identity agent.Identity, directory *agent.Directory, selector Selector,
 	buildOptions = append(buildOptions, workflow.WithTopologyVersion(identity.Version))
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	selectNode := wf.Node("select", func(ctx context.Context, request agent.Request) (routeResult, error) {
-		selection, err := selector.Select(ctx, request.Clone(), candidates)
+		selection, err := selector.Select(ctx, request.Clone(), slices.Clone(candidates))
 		if err != nil {
 			return routeResult{}, fmt.Errorf("router: select child: %w", err)
 		}
