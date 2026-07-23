@@ -29,6 +29,9 @@ TIDY_MODULES := \
 	agents/sequential \
 	agents/supervisor \
 	middleware/byted/fornax \
+	models/agnes \
+	models/fake \
+	models/glm \
 	models/openai \
 	stores
 SECURITY_MODULES := . $(filter-out tests/workflow,$(WORKSPACE_MODULES))
@@ -92,7 +95,7 @@ security:
 	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found; install golang.org/x/vuln/cmd/govulncheck@v1.5.0"; exit 1; }
 	@set -e; for dir in $(SECURITY_MODULES); do \
 		echo "govulncheck $$dir"; \
-		(cd $$dir && GOTOOLCHAIN=local govulncheck ./...); \
+		(cd $$dir && GOWORK=off GOTOOLCHAIN=local govulncheck ./...); \
 	done
 
 dbintegration:
