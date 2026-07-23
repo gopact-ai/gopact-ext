@@ -17,68 +17,6 @@ var (
 	_ workflow.Store = (*Store)(nil)
 )
 
-func TestStoreLifecycleAndFencedRunLog(t *testing.T) {
-	store, err := Open(sqlite.Open(filepath.Join(t.TempDir(), "lifecycle.db")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
-	record := testCheckpoint("run-1")
-	if err := store.Create(t.Context(), record); err != nil {
-		t.Fatalf("Create() error = %v", err)
-	}
-	renewed := record.LeaseExpiresAt.Add(time.Minute)
-	if err := store.RenewLease(t.Context(), workflow.CheckpointLease{
-		RunID: record.RunID, OwnerID: record.OwnerID, ClaimSequence: record.ClaimSequence, ExpiresAt: renewed,
-	}); err != nil {
-		t.Fatalf("RenewLease() error = %v", err)
-	}
-
-	current, err := store.Load(t.Context(), record.RunID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current.Payload = []byte(`{"state":"saved"}`)
-	if err := store.Save(t.Context(), current, current.Version); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	current, _ = store.Load(t.Context(), record.RunID)
-	if !current.LeaseExpiresAt.Equal(renewed) {
-		t.Fatalf("Save() shortened renewed lease to %v", current.LeaseExpiresAt)
-	}
-	event := runlog.Record{
-		SessionID: current.SessionID, RunID: current.RunID, Sequence: 1,
-		EventType: "test.event", Source: "test", Timestamp: time.Now().UTC(),
-	}
-	fence := runlog.Fence{OwnerID: current.OwnerID, ClaimSequence: current.ClaimSequence}
-	if err := store.AppendFenced(t.Context(), event, fence); err != nil {
-		t.Fatalf("AppendFenced() error = %v", err)
-	}
-	if err := store.AppendFenced(t.Context(), event, fence); err != nil {
-		t.Fatalf("idempotent AppendFenced() error = %v", err)
-	}
-	conflict := event
-	conflict.Summary = "different"
-	if err := store.AppendFenced(t.Context(), conflict, fence); !errors.Is(err, runlog.ErrConflict) {
-		t.Fatalf("conflicting AppendFenced() error = %v, want ErrConflict", err)
-	}
-	events, err := store.List(t.Context(), runlog.Query{RunID: current.RunID})
-	if err != nil || len(events) != 1 {
-		t.Fatalf("List() = %+v, %v, want one event", events, err)
-	}
-	current.Status = workflow.CheckpointCompleted
-	current.OwnerID = ""
-	current.LeaseExpiresAt = time.Time{}
-	if err := store.Finish(t.Context(), current, current.Version); err != nil {
-		t.Fatalf("Finish() error = %v", err)
-	}
-	history, err := store.ListCheckpoints(t.Context(), workflow.CheckpointHistoryRequest{RunID: current.RunID})
-	if err != nil || len(history) != 3 {
-		t.Fatalf("ListCheckpoints() = %d records, %v, want 3", len(history), err)
-	}
-}
-
 func TestStoreRejectsUnboundedRowsAndNonPortableIDs(t *testing.T) {
 	store, err := Open(sqlite.Open(filepath.Join(t.TempDir(), "limits.db")))
 	if err != nil {

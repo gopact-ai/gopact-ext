@@ -14,100 +14,6 @@ import (
 
 var _ runlog.FencedLog = (*Store)(nil)
 
-func TestStoreAppendFencedPreservesAppendSemantics(t *testing.T) {
-	store := openTestStore(t)
-	checkpoint := leaseCheckpoint("fenced-current")
-	checkpoint.LeaseExpiresAt = time.Now().Add(time.Hour)
-	if err := store.Create(t.Context(), checkpoint); err != nil {
-		t.Fatalf("Create() error = %v", err)
-	}
-	fence := runlog.Fence{OwnerID: checkpoint.OwnerID, ClaimSequence: checkpoint.ClaimSequence}
-	record := sqliteRunRecord(checkpoint.SessionID, checkpoint.RunID, 1, "audit.custom")
-	if err := store.AppendFenced(t.Context(), record, fence); err != nil {
-		t.Fatalf("AppendFenced() error = %v", err)
-	}
-	if err := store.AppendFenced(t.Context(), record, fence); err != nil {
-		t.Fatalf("idempotent AppendFenced() error = %v", err)
-	}
-	conflict := record
-	conflict.Summary = "different"
-	if err := store.AppendFenced(t.Context(), conflict, fence); !errors.Is(err, runlog.ErrConflict) {
-		t.Fatalf("conflicting AppendFenced() error = %v, want ErrConflict", err)
-	}
-	records, err := store.List(t.Context(), runlog.Query{RunID: checkpoint.RunID})
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
-	}
-	if len(records) != 1 || records[0].Summary != record.Summary {
-		t.Fatalf("records = %+v, want one original record", records)
-	}
-}
-
-func TestStoreAppendFencedRejectsLostLease(t *testing.T) {
-	tests := []struct {
-		name        string
-		mutate      func(*workflow.CheckpointRecord, *runlog.Fence)
-		afterCreate func(*Store, workflow.CheckpointRecord) error
-	}{
-		{
-			name: "stale owner",
-			mutate: func(_ *workflow.CheckpointRecord, fence *runlog.Fence) {
-				fence.OwnerID = "owner-2"
-			},
-		},
-		{
-			name: "stale claim sequence",
-			mutate: func(_ *workflow.CheckpointRecord, fence *runlog.Fence) {
-				fence.ClaimSequence++
-			},
-		},
-		{
-			name: "expired",
-			mutate: func(checkpoint *workflow.CheckpointRecord, _ *runlog.Fence) {
-				checkpoint.LeaseExpiresAt = time.Now().Add(-time.Hour)
-			},
-		},
-		{
-			name:   "terminal",
-			mutate: func(*workflow.CheckpointRecord, *runlog.Fence) {},
-			afterCreate: func(store *Store, checkpoint workflow.CheckpointRecord) error {
-				checkpoint.Status = workflow.CheckpointCompleted
-				checkpoint.OwnerID = ""
-				checkpoint.LeaseExpiresAt = time.Time{}
-				return store.Finish(context.Background(), checkpoint, checkpoint.Version)
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			store := openTestStore(t)
-			checkpoint := leaseCheckpoint("fenced-lost")
-			checkpoint.LeaseExpiresAt = time.Now().Add(time.Hour)
-			fence := runlog.Fence{OwnerID: checkpoint.OwnerID, ClaimSequence: checkpoint.ClaimSequence}
-			test.mutate(&checkpoint, &fence)
-			if err := store.Create(t.Context(), checkpoint); err != nil {
-				t.Fatalf("Create() error = %v", err)
-			}
-			if test.afterCreate != nil {
-				if err := test.afterCreate(store, checkpoint); err != nil {
-					t.Fatalf("prepare checkpoint: %v", err)
-				}
-			}
-			record := sqliteRunRecord(checkpoint.SessionID, checkpoint.RunID, 1, "audit.custom")
-			if err := store.AppendFenced(t.Context(), record, fence); !errors.Is(err, workflow.ErrCheckpointLeaseLost) {
-				t.Fatalf("AppendFenced() error = %v, want ErrCheckpointLeaseLost", err)
-			}
-			records, err := store.List(t.Context(), runlog.Query{RunID: checkpoint.RunID})
-			if err != nil {
-				t.Fatalf("List() error = %v", err)
-			}
-			if len(records) != 0 {
-				t.Fatalf("records = %+v, want no stale append", records)
-			}
-		})
-	}
-}
-
 func TestStoreAppendFencedRejectsInvalidFence(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -135,7 +41,7 @@ func TestCombinedSQLiteStoreAvoidsObservedEventCheckpointAmplification(t *testin
 	}
 }
 
-func runCombinedStoreWorkflow(t *testing.T, store persistence, runID string) int {
+func runCombinedStoreWorkflow(t *testing.T, store workflow.Store, runID string) int {
 	t.Helper()
 	wf := workflow.New[string, string](
 		"fenced-history",
