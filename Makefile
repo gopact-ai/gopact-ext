@@ -51,8 +51,9 @@ module-contract:
 	./scripts/module-contract_test.sh
 
 published:
-	GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
-		GOPRIVATE= GONOPROXY= GONOSUMDB= GOWORK=off GOTOOLCHAIN=local \
+	GOENV=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
+		GOPRIVATE=none GONOPROXY=none GONOSUMDB=none \
+		GOWORK=off GOTOOLCHAIN=local \
 		./scripts/clean-consumer.sh --prefix-count $(PUBLISHED_PREFIX) \
 		./scripts/release-versions.txt
 

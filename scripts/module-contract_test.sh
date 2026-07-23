@@ -52,6 +52,22 @@ for replacement in \
 	fi
 done
 
+published_recipe="$(make -n --no-print-directory published)"
+for environment in \
+	"GOENV=off" \
+	"GOPROXY=https://proxy.golang.org" \
+	"GOSUMDB=sum.golang.org" \
+	"GOPRIVATE=none" \
+	"GONOPROXY=none" \
+	"GONOSUMDB=none" \
+	"GOWORK=off" \
+	"GOTOOLCHAIN=local"; do
+	if [[ "${published_recipe}" != *"${environment}"* ]]; then
+		echo "published target: missing strict environment ${environment}" >&2
+		exit 1
+	fi
+done
+
 : > "${tmp}/publishable-modules.txt"
 while read -r module_dir; do
 	modfile="${module_dir}/go.mod"
