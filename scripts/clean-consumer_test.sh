@@ -91,6 +91,11 @@ if [[ "$1 $2" == "mod init" ]]; then
 fi
 if [[ "$1 $2" == "mod download" ]]; then
 	if [[ "${3:-}" == "all" ]]; then
+		if [[ -n "${EXPECTED_GRAPH_REQUIRE:-}" ]] &&
+			! grep -Fqx "${EXPECTED_GRAPH_REQUIRE}" go.mod; then
+			echo "clean consumer downloaded an incomplete module graph" >&2
+			exit 91
+		fi
 		[[ -z "${GRAPH_DOWNLOAD_RECORD:-}" ]] || : > "${GRAPH_DOWNLOAD_RECORD}"
 		exit 0
 	fi
@@ -108,12 +113,20 @@ if [[ "$1 $2" == "mod edit" ]]; then
 	exit 0
 fi
 if [[ "$1 $2" == "list -m" ]]; then
+	if [[ -n "${REQUIRE_POST_TEST_VERSION_CHECK:-}" &&
+		! -f "${MOD_UPDATE_RECORD}" ]]; then
+		echo "clean consumer checked versions before module graph updates" >&2
+		exit 90
+	fi
 	printf '%s\n' "${EXPECTED_VERSION}"
 	exit 0
 fi
 if [[ "$1" == "test" && -n "${REQUIRE_MOD_UPDATE:-}" && "${2:-}" != "-mod=mod" ]]; then
 	echo "clean consumer did not allow module graph updates" >&2
 	exit 93
+fi
+if [[ "$1" == "test" && -n "${MOD_UPDATE_RECORD:-}" ]]; then
+	: > "${MOD_UPDATE_RECORD}"
 fi
 if [[ "$1 $2" == "mod verify" || "$1" == "test" ]]; then
 	exit 0
@@ -144,6 +157,7 @@ cat > "${tmp}/module-only.txt" <<'EOF'
 github.com/gopact-ai/gopact-ext v0.7.0 -
 EOF
 graph_download_record="${tmp}/module-graph-downloaded"
+mod_update_record="${tmp}/module-graph-updated"
 PATH="${tmp}/fake-bin:${PATH}" \
 	TAGGED_GOMOD="${tmp}/clean.mod" \
 	DOWNLOAD_VERSION="v0.7.0" \
@@ -158,7 +172,10 @@ PATH="${tmp}/fake-bin:${PATH}" \
 	CALLER_GO111MODULE=off \
 	GOENV="${tmp}/hostile-goenv" \
 	CALLER_GOENV="${tmp}/hostile-goenv" \
+	EXPECTED_GRAPH_REQUIRE="require github.com/gopact-ai/gopact-ext v0.7.0" \
 	GRAPH_DOWNLOAD_RECORD="${graph_download_record}" \
+	MOD_UPDATE_RECORD="${mod_update_record}" \
+	REQUIRE_POST_TEST_VERSION_CHECK=1 \
 	REQUIRE_MOD_UPDATE=1 \
 	REQUIRE_EXTERNAL_CACHE=1 \
 	"${script_dir}/clean-consumer.sh" "${tmp}/module-only.txt" >/dev/null
