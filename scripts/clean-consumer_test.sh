@@ -8,8 +8,8 @@ trap 'rm -rf "${tmp}"' EXIT
 cat > "${tmp}/valid.txt" <<'EOF'
 github.com/gopact-ai/gopact v0.2.1 github.com/gopact-ai/gopact
 github.com/gopact-ai/gopact-ext/models/openai v0.6.0 github.com/gopact-ai/gopact-ext/models/openai/codex
-github.com/gopact-ai/gopact-ext v0.7.0 -
-github.com/gopact-ai/gopact-ext/agents/internal v0.1.0 -
+github.com/gopact-ai/gopact-ext v0.7.0 github.com/gopact-ai/gopact-ext/internal/carveout
+github.com/gopact-ai/gopact-ext/agents/internal v0.1.0 github.com/gopact-ai/gopact-ext/agents/internal/contract
 github.com/gopact-ai/gopact-ext/stores v0.2.0 github.com/gopact-ai/gopact-ext/stores/sqlite
 github.com/gopact-ai/gopact-examples v0.2.0 github.com/gopact-ai/gopact-examples/quickstart/model-basic
 EOF
@@ -48,6 +48,9 @@ sed '2s#github.com/gopact-ai/gopact-ext/models/openai/codex$#example.com/outside
 	"${tmp}/valid.txt" > "${tmp}/outside-package.txt"
 expect_rejection "${tmp}/outside-package.txt"
 
+sed '3s#[^ ]*$#-#' "${tmp}/valid.txt" > "${tmp}/missing-package.txt"
+expect_rejection "${tmp}/missing-package.txt"
+
 sed -n '1p;1p' "${tmp}/valid.txt" > "${tmp}/duplicate.txt"
 expect_rejection "${tmp}/duplicate.txt"
 
@@ -62,6 +65,10 @@ EOF
 cat > "${tmp}/fake-bin/go" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1 $2" == "mod init" ]]; then
+	if [[ "${3:-}" != "github.com/gopact-ai/gopact-ext/agents/releasecheck" ]]; then
+		echo "clean consumer used an invalid module path" >&2
+		exit 89
+	fi
 	if [[ -n "${REQUIRE_EXTERNAL_CACHE:-}" && "${GOMODCACHE}" == "${PWD}/"* ]]; then
 		echo "clean consumer placed module cache inside the consumer module" >&2
 		exit 92
@@ -86,7 +93,7 @@ if [[ "$1 $2" == "mod init" ]]; then
 		echo "clean consumer reused caller Go environment" >&2
 		exit 94
 	fi
-	printf 'module clean-consumer.example\n' > go.mod
+	printf 'module %s\n' "$3" > go.mod
 	exit 0
 fi
 if [[ "$1 $2" == "mod download" ]]; then
@@ -107,9 +114,18 @@ if [[ "$1 $2" == "mod download" ]]; then
 		"${TAGGED_GOMOD}" "${DOWNLOAD_VERSION:-v0.2.1}"
 	exit 0
 fi
-if [[ "$1 $2" == "mod edit" ]]; then
-	requirement="${3#-require=}"
-	printf 'require %s %s\n' "${requirement%@*}" "${requirement##*@}" >> go.mod
+if [[ "$1" == "get" ]]; then
+	if [[ -n "${PACKAGE_FAILURE:-}" ]]; then
+		echo "module found, but does not contain the requested package" >&2
+		exit 88
+	fi
+	if [[ -n "${EXPECTED_GRAPH_REQUIRE:-}" ]]; then
+		printf '%s\n' "${EXPECTED_GRAPH_REQUIRE}" >> go.mod
+	fi
+	exit 0
+fi
+if [[ "$1 $2" == "list -f" ]]; then
+	printf 'library\n'
 	exit 0
 fi
 if [[ "$1 $2" == "list -m" ]]; then
@@ -153,8 +169,22 @@ if [[ "${download_error}" != *"proxy unavailable"* ]]; then
 	exit 1
 fi
 
-cat > "${tmp}/module-only.txt" <<'EOF'
-github.com/gopact-ai/gopact-ext v0.7.0 -
+if package_error="$(
+	PATH="${tmp}/fake-bin:${PATH}" \
+		TAGGED_GOMOD="${tmp}/clean.mod" \
+		PACKAGE_FAILURE=1 \
+		"${script_dir}/clean-consumer.sh" --prefix-count 1 "${tmp}/valid.txt" 2>&1
+)"; then
+	echo "expected missing package failure" >&2
+	exit 1
+fi
+if [[ "${package_error}" != *"does not contain the requested package"* ]]; then
+	echo "missing package failure omitted package diagnostics" >&2
+	exit 1
+fi
+
+cat > "${tmp}/compiled-package.txt" <<'EOF'
+github.com/gopact-ai/gopact-ext v0.7.0 github.com/gopact-ai/gopact-ext/internal/carveout
 EOF
 graph_download_record="${tmp}/module-graph-downloaded"
 mod_update_record="${tmp}/module-graph-updated"
@@ -178,7 +208,7 @@ PATH="${tmp}/fake-bin:${PATH}" \
 	REQUIRE_POST_TEST_VERSION_CHECK=1 \
 	REQUIRE_MOD_UPDATE=1 \
 	REQUIRE_EXTERNAL_CACHE=1 \
-	"${script_dir}/clean-consumer.sh" "${tmp}/module-only.txt" >/dev/null
+	"${script_dir}/clean-consumer.sh" "${tmp}/compiled-package.txt" >/dev/null
 if [[ ! -f "${graph_download_record}" ]]; then
 	echo "clean consumer did not download the completed module graph" >&2
 	exit 1

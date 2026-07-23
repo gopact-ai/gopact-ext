@@ -39,7 +39,11 @@ while read -r module version package extra; do
 		echo "invalid manifest entry: ${module} ${version:-} ${package:-} ${extra:-}" >&2
 		exit 1
 	fi
-	if [[ "${package}" != "-" && "${package}" != "${module}" && "${package}" != "${module}/"* ]]; then
+	if [[ "${package}" == "-" ]]; then
+		echo "release module must name a package to compile: ${module}" >&2
+		exit 1
+	fi
+	if [[ "${package}" != "${module}" && "${package}" != "${module}/"* ]]; then
 		echo "check package ${package} is outside module ${module}" >&2
 		exit 1
 	fi
@@ -96,7 +100,7 @@ export GOENV=off
 export GOFLAGS=
 export GOWORK=off
 cd "${consumer}"
-go mod init clean-consumer.example
+go mod init github.com/gopact-ai/gopact-ext/agents/releasecheck
 
 imports=()
 for ((index = 0; index < prefix_count; index++)); do
@@ -118,10 +122,6 @@ for ((index = 0; index < prefix_count; index++)); do
 	if grep -Eq '^[[:space:]]*replace([[:space:](]|$)' "${module_gomod}"; then
 		echo "tagged module contains a replace directive: ${module}@${version}" >&2
 		exit 1
-	fi
-	if [[ "${package}" == "-" ]]; then
-		go mod edit -require="${module}@${version}"
-		continue
 	fi
 	go get "${package}@${version}"
 	if [[ "$(go list -f '{{.Name}}' "${package}")" == "main" ]]; then
