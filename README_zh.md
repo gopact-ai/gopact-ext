@@ -6,12 +6,11 @@
 
 `gopact` 新设计下的官方扩展仓库。
 
-> **仅支持 Go 1.27+。** 本项目围绕泛型方法构建，也借此庆祝我们眼中 Go 近十年来最具影响力的语言演进之一。Go 1.27 正式发布前，本项目需要开发版工具链，应视为预览而非稳定版本。
+> **仅支持 Go 1.27+。** 本项目围绕泛型方法构建，也借此庆祝我们眼中 Go 近十年来最具影响力的语言演进之一。
 
-在协调发布各 RC 模块之前，本仓库采用源码联调布局：请把 `gopact` 与
-`gopact-ext` 并排 clone；提交的 `go.work` 会联结源码 module，但不会改变发布依赖契约。
-只有对应的精确 module 版本可从已配置的 Go proxy 获取并通过 clean-consumer 验证后，
-才支持单独 clone 本仓库。
+源码联调时，请把 `gopact` 与 `gopact-ext` 并排 clone；提交的 `go.work`
+会联结源码 module，但不会改变发布依赖契约。正式 consumer 使用 release manifest
+中已经通过 clean-consumer 验证的精确 module 版本。
 
 ## 发布验证
 
@@ -27,7 +26,7 @@
 ./scripts/clean-consumer.sh scripts/release-versions.txt
 ```
 
-脚本从空 consumer 开始，校验实际选择的精确版本，并拒绝缺失或重复模块、越出所属 module 的检查包、consumer 或 tagged module 中的 `replace`、pseudo-version 和 `v0.0.0`。`--validate-only` 只检查 manifest 结构，不下载 tag。分阶段发布时，只有成功通过的 prefix 才能作为发布证据。只有 Go 1.27 stable 门禁与 RC burn-in 通过后，才能称为 production-ready。
+脚本从空 consumer 开始，校验实际选择的精确版本，并拒绝缺失或重复模块、越出所属 module 的检查包、consumer 或 tagged module 中的 `replace`、pseudo-version 和 `v0.0.0`。`--validate-only` 只检查 manifest 结构，不下载 tag。分阶段发布时，只有成功通过的 prefix 才能作为发布证据。
 
 ## 扩展目录
 
