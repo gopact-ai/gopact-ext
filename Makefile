@@ -21,7 +21,7 @@ TIDY_MODULES := . agents/internal middleware/byted/fornax models/openai stores
 SECURITY_MODULES := . $(filter-out tests/workflow,$(WORKSPACE_MODULES))
 WORKSPACE_PACKAGES := ./... $(addprefix ./,$(addsuffix /...,$(WORKSPACE_MODULES)))
 # Advance only after the next manifest version is available from the public proxy.
-PUBLISHED_PREFIX := 4
+PUBLISHED_PREFIX := 5
 
 .PHONY: test integration capability fmt-check print-workspace-modules module-contract published tidy standalone race vet security dbintegration benchmark
 
