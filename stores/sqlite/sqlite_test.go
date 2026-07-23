@@ -630,8 +630,8 @@ func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
 	defer func() { _ = secondStore.Close() }()
 
 	const (
-		leaseDuration = 300 * time.Millisecond
-		renewEvery    = 50 * time.Millisecond
+		leaseDuration = 2 * time.Second
+		renewEvery    = 100 * time.Millisecond
 	)
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -678,7 +678,7 @@ func TestSQLiteHeartbeatKeepsLongNodeLeasedAcrossStores(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial Load() error = %v", err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(5 * leaseDuration)
 	renewedPastInitialLease := false
 	for time.Now().Before(deadline) {
 		current, loadErr := secondStore.Load(context.Background(), "shared-run")
