@@ -24,6 +24,7 @@ TIDY_MODULES := \
 	agents/loop \
 	agents/parallel \
 	agents/planexec \
+	agents/react \
 	agents/router \
 	agents/sequential \
 	agents/supervisor \
