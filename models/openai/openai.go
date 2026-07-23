@@ -267,15 +267,12 @@ func (c *Model) Invoke(ctx context.Context, req gopact.ModelRequest, opts ...gop
 	if err := c.emitDelta(ctx, cfg.ModelEventSinks, text); err != nil {
 		return gopact.ModelResponse{}, err
 	}
-	intent, err := c.responseIntent(out.Choices[0].Message)
+	message, intent, err := c.responseMessage(out.Choices[0].Message)
 	if err != nil {
 		return gopact.ModelResponse{}, err
 	}
 	return gopact.ModelResponse{
-		Message: gopact.Message{
-			Role:  gopact.MessageRoleAssistant,
-			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: text}},
-		},
+		Message:      message,
 		Intent:       intent,
 		Usage:        out.Usage.toGopact(),
 		FinishReason: out.Choices[0].FinishReason,
@@ -546,13 +543,9 @@ func (c *Model) newChatRequest(req gopact.ModelRequest, stream bool) (chatReques
 	if err := validateModelRequest(req, true); err != nil {
 		return chatRequest{}, err
 	}
-	messages := make([]chatMessage, 0, len(req.Messages))
-	for _, msg := range req.Messages {
-		content, err := messageText(msg)
-		if err != nil {
-			return chatRequest{}, err
-		}
-		messages = append(messages, chatMessage{Role: msg.Role, Content: content})
+	messages, err := encodeChatMessages(req.Messages)
+	if err != nil {
+		return chatRequest{}, err
 	}
 	body := chatRequest{
 		Model:       req.Model,
@@ -631,15 +624,129 @@ func validateModelRequest(req gopact.ModelRequest, required bool) error {
 }
 
 func validateMessages(messages []gopact.Message) error {
-	for _, message := range messages {
-		if message.Role == "" {
-			return errors.New("openai: message role is required")
-		}
-		if _, err := messageText(message); err != nil {
-			return err
-		}
+	_, err := encodeChatMessages(messages)
+	return err
+}
+
+type chatMessageEncoder struct {
+	pending   map[string]struct{}
+	completed map[string]struct{}
+	seenCalls map[string]struct{}
+}
+
+func encodeChatMessages(messages []gopact.Message) ([]chatMessage, error) {
+	encoder := chatMessageEncoder{
+		pending:   make(map[string]struct{}),
+		completed: make(map[string]struct{}),
+		seenCalls: make(map[string]struct{}),
 	}
-	return nil
+	encoded := make([]chatMessage, 0, len(messages))
+	for index, message := range messages {
+		item, err := encoder.encode(index, message)
+		if err != nil {
+			return nil, err
+		}
+		encoded = append(encoded, item)
+	}
+	if len(encoder.pending) > 0 {
+		return nil, fmt.Errorf("openai: %d tool call(s) have no tool output", len(encoder.pending))
+	}
+	return encoded, nil
+}
+
+func (encoder *chatMessageEncoder) encode(index int, message gopact.Message) (chatMessage, error) {
+	if message.Role == "" {
+		return chatMessage{}, fmt.Errorf("openai: message %d role is required", index)
+	}
+	if message.Role == gopact.MessageRoleTool {
+		return encoder.encodeToolMessage(index, message)
+	}
+	if len(encoder.pending) > 0 {
+		return chatMessage{}, fmt.Errorf("openai: %d tool call(s) before message %d have no tool output", len(encoder.pending), index)
+	}
+	return encoder.encodeModelMessage(index, message)
+}
+
+func (encoder *chatMessageEncoder) encodeModelMessage(index int, message gopact.Message) (chatMessage, error) {
+	if message.ToolCallID != "" {
+		return chatMessage{}, fmt.Errorf("openai: message %d tool call id is only valid on tool messages", index)
+	}
+	if len(message.ToolCalls) > 0 && message.Role != gopact.MessageRoleAssistant {
+		return chatMessage{}, fmt.Errorf("openai: message %d tool calls are only valid on assistant messages", index)
+	}
+	content, err := messageText(message)
+	if err != nil {
+		return chatMessage{}, err
+	}
+	calls, err := encoder.encodeToolCalls(index, message.ToolCalls)
+	if err != nil {
+		return chatMessage{}, err
+	}
+	return chatMessage{Role: message.Role, Content: content, ToolCalls: calls}, nil
+}
+
+func (encoder *chatMessageEncoder) encodeToolMessage(index int, message gopact.Message) (chatMessage, error) {
+	if len(message.ToolCalls) > 0 {
+		return chatMessage{}, fmt.Errorf("openai: tool message %d must not contain tool calls", index)
+	}
+	if message.ToolCallID == "" {
+		return chatMessage{}, fmt.Errorf("openai: tool message %d requires a tool call id", index)
+	}
+	if _, duplicate := encoder.completed[message.ToolCallID]; duplicate {
+		return chatMessage{}, fmt.Errorf("openai: tool message %d has duplicate tool output for %q", index, message.ToolCallID)
+	}
+	if _, exists := encoder.pending[message.ToolCallID]; !exists {
+		return chatMessage{}, fmt.Errorf("openai: tool message %d references unknown tool call %q", index, message.ToolCallID)
+	}
+	content, err := messageText(message)
+	if err != nil {
+		return chatMessage{}, err
+	}
+	delete(encoder.pending, message.ToolCallID)
+	encoder.completed[message.ToolCallID] = struct{}{}
+	return chatMessage{Role: message.Role, Content: content, ToolCallID: message.ToolCallID}, nil
+}
+
+func (encoder *chatMessageEncoder) encodeToolCalls(index int, calls []gopact.ToolCall) ([]chatToolCall, error) {
+	if len(calls) == 0 {
+		return nil, nil
+	}
+	encoded := make([]chatToolCall, 0, len(calls))
+	for _, call := range calls {
+		arguments, err := encoder.validateToolCall(index, call)
+		if err != nil {
+			return nil, err
+		}
+		encoder.seenCalls[call.ID] = struct{}{}
+		encoder.pending[call.ID] = struct{}{}
+		encoded = append(encoded, chatToolCall{
+			ID:   call.ID,
+			Type: "function",
+			Function: chatToolFunction{
+				Name: call.Name, Arguments: arguments,
+			},
+		})
+	}
+	return encoded, nil
+}
+
+func (encoder *chatMessageEncoder) validateToolCall(index int, call gopact.ToolCall) (string, error) {
+	if call.ID == "" || call.Name == "" {
+		return "", fmt.Errorf("openai: assistant message %d tool call id and name are required", index)
+	}
+	if _, duplicate := encoder.seenCalls[call.ID]; duplicate {
+		return "", fmt.Errorf("openai: duplicate tool call id %q", call.ID)
+	}
+	if call.ArgumentsRef != "" {
+		return "", fmt.Errorf("openai: tool call %q arguments ref is not supported", call.ID)
+	}
+	if len(call.Arguments) == 0 {
+		return "{}", nil
+	}
+	if !json.Valid(call.Arguments) {
+		return "", fmt.Errorf("openai: tool call %q has invalid arguments", call.ID)
+	}
+	return string(call.Arguments), nil
 }
 
 func validateTools(tools []gopact.ToolSpec) error {
@@ -704,28 +811,33 @@ func messageText(msg gopact.Message) (string, error) {
 	return b.String(), nil
 }
 
-func (c *Model) responseIntent(message chatMessage) (gopact.ModelIntent, error) {
+func (c *Model) responseMessage(message chatMessage) (gopact.Message, gopact.ModelIntent, error) {
+	response := gopact.Message{
+		Role:  gopact.MessageRoleAssistant,
+		Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: message.Content}},
+	}
 	if len(message.ToolCalls) == 0 {
-		return gopact.FinalIntent{}, nil
+		return response, gopact.FinalIntent{}, nil
 	}
 	calls := make([]gopact.ToolCall, 0, len(message.ToolCalls))
 	seen := make(map[string]struct{}, len(message.ToolCalls))
 	for _, call := range message.ToolCalls {
 		if call.ID == "" || call.Function.Name == "" {
-			return nil, errors.New("openai: tool call id and name are required")
+			return gopact.Message{}, nil, errors.New("openai: tool call id and name are required")
 		}
 		if _, exists := seen[call.ID]; exists {
-			return nil, fmt.Errorf("openai: duplicate tool call id %q", call.ID)
+			return gopact.Message{}, nil, fmt.Errorf("openai: duplicate tool call id %q", call.ID)
 		}
 		if !json.Valid([]byte(call.Function.Arguments)) {
-			return nil, fmt.Errorf("openai: tool arguments for %q are invalid JSON", call.Function.Name)
+			return gopact.Message{}, nil, fmt.Errorf("openai: tool arguments for %q are invalid JSON", call.Function.Name)
 		}
 		seen[call.ID] = struct{}{}
 		calls = append(calls, gopact.ToolCall{
 			ID: call.ID, Name: call.Function.Name, Arguments: json.RawMessage(call.Function.Arguments), SourceRef: c.provider,
 		})
 	}
-	return gopact.ToolCallIntent{Calls: calls}, nil
+	response.ToolCalls = calls
+	return response, gopact.ToolCallIntent{}, nil
 }
 
 func cloneModelRequest(req gopact.ModelRequest) gopact.ModelRequest {
@@ -746,19 +858,7 @@ func cloneModelRequest(req gopact.ModelRequest) gopact.ModelRequest {
 func cloneMessages(messages []gopact.Message) []gopact.Message {
 	cloned := make([]gopact.Message, len(messages))
 	for index, message := range messages {
-		message.Parts = cloneMessageParts(message.Parts)
-		cloned[index] = message
-	}
-	return cloned
-}
-
-func cloneMessageParts(parts []gopact.MessagePart) []gopact.MessagePart {
-	cloned := append([]gopact.MessagePart(nil), parts...)
-	for index := range cloned {
-		if cloned[index].Ref != nil {
-			ref := *cloned[index].Ref
-			cloned[index].Ref = &ref
-		}
+		cloned[index] = message.Clone()
 	}
 	return cloned
 }
@@ -827,9 +927,10 @@ type chatRequest struct {
 }
 
 type chatMessage struct {
-	Role      string         `json:"role"`
-	Content   string         `json:"content,omitempty"`
-	ToolCalls []chatToolCall `json:"tool_calls,omitempty"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
 type chatResponse struct {

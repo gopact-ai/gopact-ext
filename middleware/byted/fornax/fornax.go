@@ -1112,12 +1112,7 @@ func modelInput(request gopact.ModelRequest) modelInputPayload {
 
 func modelOutput(response gopact.ModelResponse) modelOutputPayload {
 	message := modelMessage(response.Message)
-	if intent, ok := response.Intent.(gopact.ToolCallIntent); ok {
-		message.ToolCalls = modelToolCalls(intent.Calls)
-	}
-	if intent, ok := response.Intent.(*gopact.ToolCallIntent); ok && intent != nil {
-		message.ToolCalls = modelToolCalls(intent.Calls)
-	}
+	message.ToolCalls = modelToolCalls(response.Message.ToolCalls)
 	return modelOutputPayload{Choices: []modelChoicePayload{{
 		FinishReason: response.FinishReason,
 		Index:        0,

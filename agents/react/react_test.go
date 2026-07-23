@@ -113,11 +113,11 @@ func TestAgentEmitsComponentEvents(t *testing.T) {
 func TestAgentExecutesMultipleToolsAndReturnsStableFeedback(t *testing.T) {
 	model := &scriptedModel{responses: []gopact.ModelResponse{
 		{
-			Message: gopact.Message{Role: "assistant"},
-			Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{
+			Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{
 				{ID: "call-1", Name: "slow"},
 				{ID: "call-2", Name: "fast"},
 			}},
+			Intent: gopact.ToolCallIntent{},
 		},
 		finalResponse("done"),
 	}}
@@ -148,19 +148,27 @@ func TestAgentExecutesMultipleToolsAndReturnsStableFeedback(t *testing.T) {
 		t.Fatalf("model requests = %d, want 2", len(requests))
 	}
 	last := requests[1].Messages
-	if len(last) < 2 || last[len(last)-2].Parts[0].Text != "slow-result" ||
-		last[len(last)-1].Parts[0].Text != "fast-result" {
-		t.Fatalf("second request messages = %+v, want call order feedback", last)
+	feedback := make(map[string]string)
+	for _, message := range last {
+		if message.Role == gopact.MessageRoleTool {
+			feedback[message.ToolCallID] = message.Parts[0].Text
+		}
+	}
+	if !reflect.DeepEqual(feedback, map[string]string{
+		"call-1": "slow-result",
+		"call-2": "fast-result",
+	}) {
+		t.Fatalf("second request feedback = %+v, want CallID associations", feedback)
 	}
 }
 
 func TestAgentFeedsUnknownToolAsTypedRejection(t *testing.T) {
 	model := &scriptedModel{responses: []gopact.ModelResponse{
 		{
-			Message: gopact.Message{Role: "assistant"},
-			Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{{
+			Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{{
 				ID: "call-1", Name: "missing",
 			}}},
+			Intent: gopact.ToolCallIntent{},
 		},
 		finalResponse("recovered"),
 	}}
@@ -182,8 +190,8 @@ func TestAgentFeedsUnknownToolAsTypedRejection(t *testing.T) {
 
 func TestAgentConsumesOnlyPendingObservations(t *testing.T) {
 	model := &scriptedModel{responses: []gopact.ModelResponse{
-		{Message: gopact.Message{Role: "assistant"}, Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{{ID: "call-1", Name: "lookup"}}}},
-		{Message: gopact.Message{Role: "assistant"}, Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{{ID: "call-2", Name: "lookup"}}}},
+		{Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{{ID: "call-1", Name: "lookup"}}}, Intent: gopact.ToolCallIntent{}},
+		{Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{{ID: "call-2", Name: "lookup"}}}, Intent: gopact.ToolCallIntent{}},
 		finalResponse("done"),
 	}}
 	tool := directTool("lookup", func(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
@@ -365,12 +373,12 @@ func TestAgentHandlesRepairAndRejectsRefusal(t *testing.T) {
 func TestAgentResumesInterruptedAgentToolWithoutReplayingCompletedWork(t *testing.T) {
 	model := &scriptedModel{responses: []gopact.ModelResponse{
 		{
-			Message: gopact.Message{Role: "assistant"},
-			Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{
+			Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{
 				{ID: "call-before", Name: "before"},
 				{ID: "call-child", Name: "delegate"},
 				{ID: "call-after", Name: "after"},
 			}},
+			Intent: gopact.ToolCallIntent{},
 		},
 		finalResponse("done"),
 	}}
@@ -433,8 +441,27 @@ func TestAgentResumesInterruptedAgentToolWithoutReplayingCompletedWork(t *testin
 	if response.Message.Parts[0].Text != "done" || beforeCalls != 1 || childRuns != 1 || afterCalls != 1 {
 		t.Fatalf("response/calls = %+v/%d/%d/%d, want done and 1/1/1", response, beforeCalls, childRuns, afterCalls)
 	}
-	if len(model.Requests()) != 2 {
-		t.Fatalf("model requests = %d, want no model replay", len(model.Requests()))
+	requests := model.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("model requests = %d, want no model replay", len(requests))
+	}
+	var resumedCalls []gopact.ToolCall
+	resumedOutputs := make(map[string]struct{})
+	for _, message := range requests[1].Messages {
+		if message.Role == gopact.MessageRoleAssistant {
+			resumedCalls = append(resumedCalls, message.ToolCalls...)
+		}
+		if message.Role == gopact.MessageRoleTool {
+			resumedOutputs[message.ToolCallID] = struct{}{}
+		}
+	}
+	if len(resumedCalls) != 3 || len(resumedOutputs) != 3 {
+		t.Fatalf("resumed transcript = calls %+v, outputs %+v; want three durable associations", resumedCalls, resumedOutputs)
+	}
+	for _, call := range resumedCalls {
+		if _, exists := resumedOutputs[call.ID]; !exists {
+			t.Fatalf("resumed transcript has no output for call %q", call.ID)
+		}
 	}
 }
 
@@ -471,10 +498,10 @@ func TestAgentResumeDoesNotRepeatCommittedWorkflowTurn(t *testing.T) {
 func TestAgentAppliesInstructionOnceAcrossTurns(t *testing.T) {
 	model := &scriptedModel{responses: []gopact.ModelResponse{
 		{
-			Message: gopact.Message{Role: "assistant"},
-			Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{{
+			Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{{
 				ID: "call-1", Name: "lookup",
 			}}},
+			Intent: gopact.ToolCallIntent{},
 		},
 		finalResponse("done"),
 	}}
@@ -546,13 +573,51 @@ func TestAgentRejectsEmptyToolCallIntent(t *testing.T) {
 	}
 }
 
+func TestAgentRejectsInconsistentToolTranscript(t *testing.T) {
+	call := gopact.ToolCall{ID: "call-1", Name: "lookup"}
+	tests := []struct {
+		name     string
+		response gopact.ModelResponse
+		want     string
+	}{
+		{
+			name: "calls with final intent",
+			response: gopact.ModelResponse{
+				Message: gopact.Message{Role: gopact.MessageRoleAssistant, ToolCalls: []gopact.ToolCall{call}},
+				Intent:  gopact.FinalIntent{},
+			},
+			want: "has assistant tool calls",
+		},
+		{
+			name: "calls on user message",
+			response: gopact.ModelResponse{
+				Message: gopact.Message{Role: gopact.MessageRoleUser, ToolCalls: []gopact.ToolCall{call}},
+				Intent:  gopact.ToolCallIntent{},
+			},
+			want: "is not assistant",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target, err := New(testIdentity(), &scriptedModel{responses: []gopact.ModelResponse{test.response}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := target.Invoke(context.Background(), agent.Request{}); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Invoke() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestAgentValidatesWholeToolIntentBeforeExecution(t *testing.T) {
 	t.Run("duplicate ids across batches", func(t *testing.T) {
 		model := &scriptedModel{responses: []gopact.ModelResponse{{
-			Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{
+			Message: gopact.Message{Role: gopact.MessageRoleAssistant, ToolCalls: []gopact.ToolCall{
 				{ID: "duplicate", Name: "direct"},
 				{ID: "duplicate", Name: "run"},
 			}},
+			Intent: gopact.ToolCallIntent{},
 		}}}
 		var directCalls, runCalls int
 		direct := directTool("direct", func(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
@@ -574,10 +639,11 @@ func TestAgentValidatesWholeToolIntentBeforeExecution(t *testing.T) {
 
 	t.Run("invalid remaining arguments before interrupt", func(t *testing.T) {
 		model := &scriptedModel{responses: []gopact.ModelResponse{{
-			Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{
+			Message: gopact.Message{Role: gopact.MessageRoleAssistant, ToolCalls: []gopact.ToolCall{
 				{ID: "delegate", Name: "delegate"},
 				{ID: "invalid", Name: "after", Arguments: []byte(`{"value":`)},
 			}},
+			Intent: gopact.ToolCallIntent{},
 		}}}
 		var delegateCalls int
 		delegate := &resultRunTool{spec: gopact.ToolSpec{Name: "delegate"}, calls: &delegateCalls}
@@ -801,10 +867,10 @@ func finalResponse(text string) gopact.ModelResponse {
 func toolThenFinalModel(name string) *scriptedModel {
 	return &scriptedModel{responses: []gopact.ModelResponse{
 		{
-			Message: gopact.Message{Role: "assistant"},
-			Intent: gopact.ToolCallIntent{Calls: []gopact.ToolCall{{
+			Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{{
 				ID: "call-1", Name: name,
 			}}},
+			Intent: gopact.ToolCallIntent{},
 		},
 		finalResponse("done"),
 	}}

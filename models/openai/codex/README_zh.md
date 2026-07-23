@@ -115,7 +115,7 @@ target, err := react.New(
 )
 ```
 
-自定义 model-tool loop 必须把完整的 `ModelResponse.Message` 原样追加到 history，再按照 `ToolCallIntent.Calls` 的顺序逐个追加 `tool` message。response-state part 是不透明状态，禁止作为用户文本渲染。
+自定义 model-tool loop 必须把完整的 `ModelResponse.Message` 原样追加到 history，执行其中的每个 `ModelResponse.Message.ToolCalls`，再为每个调用追加一条 `ToolCallID` 与原调用一致的 `tool` message。关联已经由 ID 明确表达，因此 tool output 可以按任意顺序追加。response-state part 是不透明状态，禁止作为用户文本渲染。
 
 当前未实现 image/audio 输入、Codex 托管 tool、采样控制（`temperature`、`top_p`、`stop`、`seed`）以及 gopact output protocol；使用这些能力的请求会显式失败。
 

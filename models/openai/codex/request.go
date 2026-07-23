@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,12 @@ func (item responseInputItem) MarshalJSON() ([]byte, error) {
 		return append([]byte(nil), item.raw...), nil
 	}
 	type wire responseInputItem
+	if item.Type == "function_call_output" {
+		return json.Marshal(struct {
+			wire
+			Output string `json:"output"`
+		}{wire: wire(item), Output: item.Output})
+	}
 	return json.Marshal(wire(item))
 }
 
@@ -141,16 +148,18 @@ func newResponsesRequest(request gopact.ModelRequest) (responsesRequest, error) 
 
 func encodeMessages(messages []gopact.Message) (string, []responseInputItem, error) {
 	encoder := messageEncoder{
-		input:   make([]responseInputItem, 0, len(messages)),
-		seenIDs: make(map[string]struct{}),
+		input:     make([]responseInputItem, 0, len(messages)),
+		pending:   make(map[string]struct{}),
+		completed: make(map[string]struct{}),
+		seenIDs:   make(map[string]struct{}),
 	}
 	for messageIndex, message := range messages {
 		if err := encoder.addMessage(messageIndex, message); err != nil {
 			return "", nil, err
 		}
 	}
-	if len(encoder.pendingIDs) > 0 {
-		return "", nil, fmt.Errorf("codex: %d function call(s) have no tool output", len(encoder.pendingIDs))
+	if len(encoder.pending) > 0 {
+		return "", nil, fmt.Errorf("codex: %d function call(s) have no tool output", len(encoder.pending))
 	}
 	return strings.Join(encoder.instructions, "\n\n"), encoder.input, nil
 }
@@ -158,24 +167,36 @@ func encodeMessages(messages []gopact.Message) (string, []responseInputItem, err
 type messageEncoder struct {
 	instructions []string
 	input        []responseInputItem
-	pendingIDs   []string
+	pending      map[string]struct{}
+	completed    map[string]struct{}
 	seenIDs      map[string]struct{}
 }
 
 type encodedPart struct {
 	content *responseContent
 	state   *responseInputItem
+	call    *gopact.ToolCall
 }
 
 type messageRun struct {
 	encoder *messageEncoder
 	role    string
 	content []responseContent
+	calls   []gopact.ToolCall
 }
 
 func (encoder *messageEncoder) addMessage(index int, message gopact.Message) error {
 	if err := validateMessageRole(message.Role); err != nil {
 		return err
+	}
+	if len(message.ToolCalls) > 0 && message.Role != gopact.MessageRoleAssistant {
+		return fmt.Errorf("codex: message %d tool calls are only valid on assistant messages", index)
+	}
+	if message.ToolCallID != "" && message.Role != gopact.MessageRoleTool {
+		return fmt.Errorf("codex: message %d tool call id is only valid on tool messages", index)
+	}
+	if message.Role != gopact.MessageRoleTool && len(encoder.pending) > 0 {
+		return fmt.Errorf("codex: %d function call(s) before message %d have no tool output", len(encoder.pending), index)
 	}
 	switch message.Role {
 	case gopact.MessageRoleSystem:
@@ -209,8 +230,14 @@ func (encoder *messageEncoder) addInstruction(index int, message gopact.Message)
 }
 
 func (encoder *messageEncoder) addToolOutput(index int, message gopact.Message) error {
-	if len(encoder.pendingIDs) == 0 {
-		return fmt.Errorf("codex: tool message %d has no pending function call", index)
+	if message.ToolCallID == "" {
+		return fmt.Errorf("codex: tool message %d requires a tool call id", index)
+	}
+	if _, duplicate := encoder.completed[message.ToolCallID]; duplicate {
+		return fmt.Errorf("codex: tool message %d has duplicate tool output for %q", index, message.ToolCallID)
+	}
+	if _, exists := encoder.pending[message.ToolCallID]; !exists {
+		return fmt.Errorf("codex: tool message %d references unknown function call %q", index, message.ToolCallID)
 	}
 	value, err := plainMessageText(message)
 	if err != nil {
@@ -218,10 +245,11 @@ func (encoder *messageEncoder) addToolOutput(index int, message gopact.Message) 
 	}
 	encoder.input = append(encoder.input, responseInputItem{
 		Type:   "function_call_output",
-		CallID: encoder.pendingIDs[0],
+		CallID: message.ToolCallID,
 		Output: value,
 	})
-	encoder.pendingIDs = encoder.pendingIDs[1:]
+	delete(encoder.pending, message.ToolCallID)
+	encoder.completed[message.ToolCallID] = struct{}{}
 	return nil
 }
 
@@ -239,7 +267,7 @@ func (encoder *messageEncoder) addModelMessage(index int, message gopact.Message
 		run.add(encoded)
 	}
 	run.flush()
-	return nil
+	return encoder.addToolCalls(index, message.ToolCalls, run.calls)
 }
 
 func (run *messageRun) add(part encodedPart) {
@@ -250,6 +278,9 @@ func (run *messageRun) add(part encodedPart) {
 	run.flush()
 	if part.state != nil {
 		run.encoder.input = append(run.encoder.input, *part.state)
+	}
+	if part.call != nil {
+		run.calls = append(run.calls, *part.call)
 	}
 }
 
@@ -290,22 +321,88 @@ func (encoder *messageEncoder) statePart(msgIndex, partIndex int, role, value st
 	if err != nil {
 		return encodedPart{}, fmt.Errorf("codex: message %d part %d: %w", msgIndex, partIndex, err)
 	}
-	if err := encoder.recordCall(state); err != nil {
-		return encodedPart{}, err
+	encoded := encodedPart{state: &item}
+	if state.Type == "function_call" {
+		call := gopact.ToolCall{
+			ID: state.CallID, Name: state.Name, Arguments: json.RawMessage(state.Arguments),
+		}
+		encoded.call = &call
 	}
-	return encodedPart{state: &item}, nil
+	return encoded, nil
 }
 
-func (encoder *messageEncoder) recordCall(state responseState) error {
-	if state.Type != "function_call" {
-		return nil
+func (encoder *messageEncoder) addToolCalls(index int, calls, opaque []gopact.ToolCall) error {
+	opaqueByID, err := indexOpaqueCalls(opaque)
+	if err != nil {
+		return err
 	}
-	if _, exists := encoder.seenIDs[state.CallID]; exists {
-		return fmt.Errorf("codex: duplicate function call id %q", state.CallID)
+	for _, call := range calls {
+		if err := encoder.addToolCall(index, call, opaqueByID); err != nil {
+			return err
+		}
+		delete(opaqueByID, call.ID)
 	}
-	encoder.seenIDs[state.CallID] = struct{}{}
-	encoder.pendingIDs = append(encoder.pendingIDs, state.CallID)
+	for id := range opaqueByID {
+		return fmt.Errorf("codex: opaque function call %q has no canonical tool call", id)
+	}
 	return nil
+}
+
+func indexOpaqueCalls(calls []gopact.ToolCall) (map[string]gopact.ToolCall, error) {
+	indexed := make(map[string]gopact.ToolCall, len(calls))
+	for _, call := range calls {
+		if _, duplicate := indexed[call.ID]; duplicate {
+			return nil, fmt.Errorf("codex: duplicate opaque function call id %q", call.ID)
+		}
+		indexed[call.ID] = call
+	}
+	return indexed, nil
+}
+
+func (encoder *messageEncoder) addToolCall(index int, call gopact.ToolCall, opaque map[string]gopact.ToolCall) error {
+	arguments, err := encoder.validateToolCall(index, call)
+	if err != nil {
+		return err
+	}
+	if state, exists := opaque[call.ID]; exists {
+		if state.Name != call.Name || !equalJSON(state.Arguments, []byte(arguments)) {
+			return fmt.Errorf("codex: opaque function call %q conflicts with canonical tool call", call.ID)
+		}
+	} else {
+		encoder.input = append(encoder.input, responseInputItem{
+			Type: "function_call", Name: call.Name, Arguments: arguments, CallID: call.ID,
+		})
+	}
+	encoder.seenIDs[call.ID] = struct{}{}
+	encoder.pending[call.ID] = struct{}{}
+	return nil
+}
+
+func (encoder *messageEncoder) validateToolCall(index int, call gopact.ToolCall) (string, error) {
+	if call.ID == "" || call.Name == "" {
+		return "", fmt.Errorf("codex: assistant message %d tool call id and name are required", index)
+	}
+	if _, duplicate := encoder.seenIDs[call.ID]; duplicate {
+		return "", fmt.Errorf("codex: duplicate function call id %q", call.ID)
+	}
+	if call.ArgumentsRef != "" {
+		return "", fmt.Errorf("codex: tool call %q arguments ref is not supported", call.ID)
+	}
+	if len(call.Arguments) == 0 {
+		return "{}", nil
+	}
+	if !json.Valid(call.Arguments) {
+		return "", fmt.Errorf("codex: tool call %q has invalid arguments", call.ID)
+	}
+	return string(call.Arguments), nil
+}
+
+func equalJSON(left, right []byte) bool {
+	var compactLeft, compactRight bytes.Buffer
+	if json.Compact(&compactLeft, left) != nil || json.Compact(&compactRight, right) != nil {
+		return false
+	}
+	return bytes.Equal(compactLeft.Bytes(), compactRight.Bytes())
 }
 
 type responseState struct {
@@ -546,20 +643,7 @@ func cloneMessages(messages []gopact.Message) []gopact.Message {
 }
 
 func cloneMessage(message gopact.Message) gopact.Message {
-	message.Parts = append([]gopact.MessagePart(nil), message.Parts...)
-	for index, part := range message.Parts {
-		message.Parts[index] = cloneMessagePart(part)
-	}
-	return message
-}
-
-func cloneMessagePart(part gopact.MessagePart) gopact.MessagePart {
-	if part.Ref == nil {
-		return part
-	}
-	ref := *part.Ref
-	part.Ref = &ref
-	return part
+	return message.Clone()
 }
 
 func cloneToolSpecs(tools []gopact.ToolSpec) []gopact.ToolSpec {

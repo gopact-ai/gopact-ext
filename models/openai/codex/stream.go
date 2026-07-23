@@ -502,7 +502,8 @@ func (result *streamResult) responseIntent(message gopact.Message) (gopact.Model
 	case len(result.calls) > 0 && result.refusal.Len() > 0:
 		return nil, message, errors.New("codex: response contains both tool calls and a refusal")
 	case len(result.calls) > 0:
-		return gopact.ToolCallIntent{Calls: cloneToolCalls(result.calls)}, message, nil
+		message.ToolCalls = cloneToolCalls(result.calls)
+		return gopact.ToolCallIntent{}, message, nil
 	case result.refusal.Len() > 0:
 		return result.refusalIntent(message)
 	default:
