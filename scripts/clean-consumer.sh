@@ -89,6 +89,7 @@ cleanup() {
 trap cleanup EXIT
 export GOMODCACHE="${consumer}/module-cache"
 export GO111MODULE=on
+export GOENV=off
 export GOFLAGS=
 export GOWORK=off
 cd "${consumer}"

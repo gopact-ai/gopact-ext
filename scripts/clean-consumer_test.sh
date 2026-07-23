@@ -78,6 +78,10 @@ if [[ "$1 $2" == "mod init" ]]; then
 		echo "clean consumer reused caller module mode" >&2
 		exit 95
 	fi
+	if [[ -n "${CALLER_GOENV:-}" && "${GOENV:-}" != "off" ]]; then
+		echo "clean consumer reused caller Go environment" >&2
+		exit 94
+	fi
 	printf 'module clean-consumer.example\n' > go.mod
 	exit 0
 fi
@@ -139,6 +143,8 @@ PATH="${tmp}/fake-bin:${PATH}" \
 	CALLER_GOFLAGS="-mod=vendor" \
 	GO111MODULE=off \
 	CALLER_GO111MODULE=off \
+	GOENV="${tmp}/hostile-goenv" \
+	CALLER_GOENV="${tmp}/hostile-goenv" \
 	"${script_dir}/clean-consumer.sh" "${tmp}/module-only.txt" >/dev/null
 
 echo "clean-consumer validation tests passed"
