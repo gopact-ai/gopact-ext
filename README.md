@@ -28,9 +28,11 @@ its current version.
 ## Release verification
 
 The manifest defines the release order. Each row names a module, its exact stable
-version, and a package to compile from a clean consumer. A `-` package marks a module
-that has no externally importable package. Increase the prefix only after the next exact
-version is available through the configured proxy; omitting it checks the full manifest:
+version, and a package to compile from a clean consumer. Every row must name a real
+package. The verifier uses a controlled module path below the extension Agent namespace,
+so it can compile the repository's `internal` release anchors without making them public.
+Increase the prefix only after the next exact version is available through the configured
+proxy; omitting it checks the full manifest:
 
 ```bash
 ./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt

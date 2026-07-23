@@ -39,7 +39,7 @@ if ! diff -u "${tmp}/modules.txt" "${tmp}/makefile-modules.txt"; then
 fi
 
 if [[ "$(grep -c '=>' go.work)" -ne 3 ]]; then
-	echo "go.work must replace exactly the three unpublished dependency anchors" >&2
+	echo "go.work must replace exactly the three source workspace anchors" >&2
 	exit 1
 fi
 for replacement in \
