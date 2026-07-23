@@ -35,7 +35,6 @@ jobs:
           path: source/gopact
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          # ponytail: setup-go does not publish 1.27.0 yet; switch once available.
           go-version: '1.27.0-rc.2'
           cache-dependency-path: |
             source/gopact-ext/go.sum
@@ -134,8 +133,14 @@ jobs:
           path: source/gopact
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          # ponytail: setup-go does not publish 1.27.0 yet; switch once available.
           go-version: '1.27.0-rc.2'
           cache-dependency-path: source/gopact-ext/stores/go.sum
       - run: make dbintegration
         working-directory: source/gopact-ext
+
+  source-compatibility:
+    uses: gopact-ai/gopact-examples/.github/workflows/source-compatibility.yml@8765cfb5ae0036e4cdef1016b8c161fa4467880b
+    with:
+      core_ref: main
+      ext_ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      examples_ref: main
