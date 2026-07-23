@@ -1676,7 +1676,5 @@ func markError(span trace.Span, err error, detail bool) {
 	if !detail {
 		return
 	}
-	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
 	span.SetAttributes(attribute.String("error", err.Error()))
 }

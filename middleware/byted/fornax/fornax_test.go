@@ -767,14 +767,16 @@ func assertErrorMetadata(t *testing.T, span tracetest.SpanStub) {
 func assertErrorDetail(t *testing.T, span tracetest.SpanStub, want bool) {
 	t.Helper()
 	detail := stringAttribute(span.Attributes, "error")
+	uploaded := uploadSpanFrom(span.Snapshot(), "space", "service")
+	wireDetail := uploaded.TagsString["error"]
 	if want {
-		if detail == "" || span.Status.Description == "" || len(span.Events) == 0 {
-			t.Fatalf("%s error detail is incomplete: attribute=%q status=%q events=%d", span.Name, detail, span.Status.Description, len(span.Events))
+		if detail == "" || wireDetail == "" {
+			t.Fatalf("%s error detail is incomplete: attribute=%q wire=%q", span.Name, detail, wireDetail)
 		}
 		return
 	}
-	if detail != "" || span.Status.Description != "" || len(span.Events) != 0 {
-		t.Fatalf("%s error detail leaked: attribute=%q status=%q events=%d", span.Name, detail, span.Status.Description, len(span.Events))
+	if detail != "" || wireDetail != "" {
+		t.Fatalf("%s error detail leaked: attribute=%q wire=%q", span.Name, detail, wireDetail)
 	}
 }
 
