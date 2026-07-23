@@ -66,6 +66,18 @@ if [[ "$1 $2" == "mod init" ]]; then
 		echo "clean consumer reused caller module cache" >&2
 		exit 98
 	fi
+	if [[ -n "${CALLER_GOWORK:-}" && "${GOWORK:-}" != "off" ]]; then
+		echo "clean consumer reused caller workspace" >&2
+		exit 97
+	fi
+	if [[ -n "${CALLER_GOFLAGS:-}" && -n "${GOFLAGS:-}" ]]; then
+		echo "clean consumer reused caller Go flags" >&2
+		exit 96
+	fi
+	if [[ -n "${CALLER_GO111MODULE:-}" && "${GO111MODULE:-}" != "on" ]]; then
+		echo "clean consumer reused caller module mode" >&2
+		exit 95
+	fi
 	printf 'module clean-consumer.example\n' > go.mod
 	exit 0
 fi
@@ -121,6 +133,12 @@ PATH="${tmp}/fake-bin:${PATH}" \
 	EXPECTED_VERSION="v0.7.0" \
 	GOMODCACHE="${tmp}/warm-module-cache" \
 	CALLER_GOMODCACHE="${tmp}/warm-module-cache" \
+	GOWORK="${tmp}/hostile.work" \
+	CALLER_GOWORK="${tmp}/hostile.work" \
+	GOFLAGS="-mod=vendor" \
+	CALLER_GOFLAGS="-mod=vendor" \
+	GO111MODULE=off \
+	CALLER_GO111MODULE=off \
 	"${script_dir}/clean-consumer.sh" "${tmp}/module-only.txt" >/dev/null
 
 echo "clean-consumer validation tests passed"

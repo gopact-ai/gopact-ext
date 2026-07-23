@@ -53,7 +53,7 @@ module-contract:
 published:
 	GOENV=off GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
 		GOPRIVATE=none GONOPROXY=none GONOSUMDB=none \
-		GOWORK=off GOTOOLCHAIN=local \
+		GO111MODULE=on GOFLAGS= GOWORK=off GOTOOLCHAIN=local \
 		./scripts/clean-consumer.sh --prefix-count $(PUBLISHED_PREFIX) \
 		./scripts/release-versions.txt
 

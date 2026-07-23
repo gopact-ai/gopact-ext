@@ -88,6 +88,9 @@ cleanup() {
 }
 trap cleanup EXIT
 export GOMODCACHE="${consumer}/module-cache"
+export GO111MODULE=on
+export GOFLAGS=
+export GOWORK=off
 cd "${consumer}"
 go mod init clean-consumer.example
 
@@ -97,7 +100,7 @@ for ((index = 0; index < prefix_count; index++)); do
 	version="${versions[${index}]}"
 	package="${packages[${index}]}"
 	if ! download="$(
-		GOWORK=off go mod download -json "${module}@${version}" 2>&1
+		go mod download -json "${module}@${version}" 2>&1
 	)"; then
 		echo "failed to download ${module}@${version}" >&2
 		printf '%s\n' "${download}" >&2
@@ -113,12 +116,12 @@ for ((index = 0; index < prefix_count; index++)); do
 		exit 1
 	fi
 	if [[ "${package}" == "-" ]]; then
-		GOWORK=off go mod edit -require="${module}@${version}"
+		go mod edit -require="${module}@${version}"
 		continue
 	fi
-	GOWORK=off go get "${package}@${version}"
-	if [[ "$(GOWORK=off go list -f '{{.Name}}' "${package}")" == "main" ]]; then
-		GOWORK=off go test -run '^$' "${package}"
+	go get "${package}@${version}"
+	if [[ "$(go list -f '{{.Name}}' "${package}")" == "main" ]]; then
+		go test -run '^$' "${package}"
 	else
 		imports+=("${package}")
 	fi
@@ -143,12 +146,12 @@ fi
 for ((index = 0; index < prefix_count; index++)); do
 	module="${modules[${index}]}"
 	version="${versions[${index}]}"
-	selected="$(GOWORK=off go list -m -f '{{.Version}}{{if .Replace}} replace{{end}}' "${module}")"
+	selected="$(go list -m -f '{{.Version}}{{if .Replace}} replace{{end}}' "${module}")"
 	if [[ "${selected}" != "${version}" ]]; then
 		echo "selected ${module} ${selected}; want ${version}" >&2
 		exit 1
 	fi
 done
 
-GOWORK=off go mod verify
-GOWORK=off go test ./...
+go mod verify
+go test ./...

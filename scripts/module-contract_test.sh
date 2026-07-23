@@ -60,6 +60,8 @@ for environment in \
 	"GOPRIVATE=none" \
 	"GONOPROXY=none" \
 	"GONOSUMDB=none" \
+	"GO111MODULE=on" \
+	"GOFLAGS=" \
 	"GOWORK=off" \
 	"GOTOOLCHAIN=local"; do
 	if [[ "${published_recipe}" != *"${environment}"* ]]; then
