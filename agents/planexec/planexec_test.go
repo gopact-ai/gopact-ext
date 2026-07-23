@@ -35,7 +35,7 @@ func TestPlanExecRunsReplacementPlanThroughWorkflowFacts(t *testing.T) {
 	target, err := New(
 		testIdentity(),
 		WithDirectory(directory),
-		WithPlanner(PlannerFunc(func(_ context.Context, input PlanInput) (Plan, error) {
+		WithPlanner(PlannerFunc(func(_ context.Context, _ agent.Request) (Plan, error) {
 			plannerCalls++
 			return testPlan("p1", 1, "s1"), nil
 		})),
@@ -86,6 +86,57 @@ func TestPlanExecRunsReplacementPlanThroughWorkflowFacts(t *testing.T) {
 	}
 }
 
+func TestPlanExecIsolatesRequestFromCustomPlanner(t *testing.T) {
+	request := agent.Request{
+		Messages: []gopact.Message{gopact.UserMessage("input")},
+		Metadata: map[string]string{"source": "caller"},
+	}
+	target := newTestAgent(
+		t,
+		testDirectory(t, countedChild("worker", new(int))),
+		requestMutatingPlanner{},
+		ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
+			return ReplanDecision{Done: true}, nil
+		}),
+	)
+
+	response, err := target.Invoke(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Message.Parts[0].Text; got != "done:input" {
+		t.Fatalf("response text = %q, want %q", got, "done:input")
+	}
+	if got := request.Messages[0].Parts[0].Text; got != "input" {
+		t.Fatalf("caller message = %q, want %q", got, "input")
+	}
+	if got := request.Metadata["source"]; got != "caller" {
+		t.Fatalf("caller metadata = %q, want %q", got, "caller")
+	}
+}
+
+func TestPlannerFuncIsolatesRequest(t *testing.T) {
+	request := agent.Request{
+		Messages: []gopact.Message{gopact.UserMessage("input")},
+		Metadata: map[string]string{"source": "caller"},
+	}
+	planner := PlannerFunc(func(_ context.Context, input agent.Request) (Plan, error) {
+		input.Messages[0].Parts[0].Text = "mutated"
+		input.Metadata["source"] = "planner"
+		return testPlan("p1", 1, "s1"), nil
+	})
+
+	if _, err := planner.Plan(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got := request.Messages[0].Parts[0].Text; got != "input" {
+		t.Fatalf("caller message = %q, want %q", got, "input")
+	}
+	if got := request.Metadata["source"]; got != "caller" {
+		t.Fatalf("caller metadata = %q, want %q", got, "caller")
+	}
+}
+
 func TestPlanExecRejectsInvalidPlansBeforeStepExecution(t *testing.T) {
 	tests := []struct {
 		name string
@@ -100,7 +151,7 @@ func TestPlanExecRejectsInvalidPlansBeforeStepExecution(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			childCalls := 0
 			target := newTestAgent(t, testDirectory(t, countedChild("worker", &childCalls)), PlannerFunc(
-				func(context.Context, PlanInput) (Plan, error) { return tt.plan, nil },
+				func(context.Context, agent.Request) (Plan, error) { return tt.plan, nil },
 			), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
 				return ReplanDecision{Done: true}, nil
 			}))
@@ -114,7 +165,7 @@ func TestPlanExecRejectsInvalidPlansBeforeStepExecution(t *testing.T) {
 
 func TestPlanExecRejectsNonMonotonicReplacement(t *testing.T) {
 	target := newTestAgent(t, testDirectory(t, countedChild("worker", new(int))), PlannerFunc(
-		func(context.Context, PlanInput) (Plan, error) { return testPlan("p1", 1, "s1"), nil },
+		func(context.Context, agent.Request) (Plan, error) { return testPlan("p1", 1, "s1"), nil },
 	), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
 		plan := testPlan("p2", 1, "s2")
 		return ReplanDecision{Plan: &plan}, nil
@@ -144,7 +195,7 @@ func TestPlanExecResumesInterruptedStepWithoutReplanningOrReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := newTestAgent(t, testDirectory(t, child), PlannerFunc(func(context.Context, PlanInput) (Plan, error) {
+	target := newTestAgent(t, testDirectory(t, child), PlannerFunc(func(context.Context, agent.Request) (Plan, error) {
 		plannerCalls++
 		return testPlan("p1", 1, "s1"), nil
 	}), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
@@ -173,7 +224,7 @@ func TestPlanExecResumeDoesNotRepeatCommittedNodes(t *testing.T) {
 		t.Run(nodeID, func(t *testing.T) {
 			var childCalls, plannerCalls int
 			target := newTestAgent(t, testDirectory(t, countedChild("worker", &childCalls)), PlannerFunc(
-				func(context.Context, PlanInput) (Plan, error) {
+				func(context.Context, agent.Request) (Plan, error) {
 					plannerCalls++
 					return testPlan("p1", 1, "s1"), nil
 				},
@@ -208,7 +259,9 @@ func TestPlanExecResumeDoesNotRepeatCommittedNodes(t *testing.T) {
 func TestPlanExecEnforcesTransitionLimit(t *testing.T) {
 	target, err := New(
 		testIdentity(), WithDirectory(testDirectory(t, countedChild("worker", new(int)))),
-		WithPlanner(PlannerFunc(func(context.Context, PlanInput) (Plan, error) { return testPlan("p1", 1, "s1"), nil })),
+		WithPlanner(PlannerFunc(func(context.Context, agent.Request) (Plan, error) {
+			return testPlan("p1", 1, "s1"), nil
+		})),
 		WithReplanner(ReplannerFunc(func(_ context.Context, input ReplanInput) (ReplanDecision, error) {
 			plan := testPlan("next", input.Plan.Version+1, "next-step")
 			return ReplanDecision{Plan: &plan}, nil
@@ -228,7 +281,7 @@ func TestPlanExecAgentConformance(t *testing.T) {
 		return agent.Response{Message: gopact.UserMessage("done")}, nil
 	})
 	target := newTestAgent(t, testDirectory(t, child), PlannerFunc(
-		func(context.Context, PlanInput) (Plan, error) { return testPlan("p1", 1, "s1"), nil },
+		func(context.Context, agent.Request) (Plan, error) { return testPlan("p1", 1, "s1"), nil },
 	), ReplannerFunc(func(context.Context, ReplanInput) (ReplanDecision, error) {
 		return ReplanDecision{Done: true}, nil
 	}))
@@ -246,6 +299,14 @@ func TestPlanExecAgentConformance(t *testing.T) {
 type testAgentChild struct {
 	identity agent.Identity
 	invoke   func(context.Context, agent.Request) (agent.Response, error)
+}
+
+type requestMutatingPlanner struct{}
+
+func (requestMutatingPlanner) Plan(_ context.Context, request agent.Request) (Plan, error) {
+	request.Messages[0].Parts[0].Text = "mutated"
+	request.Metadata["source"] = "planner"
+	return testPlan("p1", 1, "s1"), nil
 }
 
 func testChild(name string, invoke func(context.Context, agent.Request) (agent.Response, error)) agent.Agent {

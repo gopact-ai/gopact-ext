@@ -381,7 +381,7 @@ func TestIntegrationPlanExecAgentUsesWorkflowPlanAndChildRun(t *testing.T) {
 			target, err := planexec.New(
 				agent.Identity{Name: "planexec-" + tt.name, Description: "plans one real provider step", Version: "v1"},
 				planexec.WithDirectory(directory),
-				planexec.WithPlanner(planexec.PlannerFunc(func(context.Context, planexec.PlanInput) (planexec.Plan, error) {
+				planexec.WithPlanner(planexec.PlannerFunc(func(context.Context, agent.Request) (planexec.Plan, error) {
 					return planexec.Plan{ID: "provider-plan", Version: 1, Steps: []planexec.Step{{
 						ID: "answer", Description: "answer with the provider", AgentName: providerIdentity.Name,
 					}}}, nil

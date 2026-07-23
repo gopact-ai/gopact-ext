@@ -44,11 +44,6 @@ type StepResult struct {
 	Response agent.Response `json:"response"`
 }
 
-// PlanInput is passed to the initial Planner.
-type PlanInput struct {
-	Request agent.Request
-}
-
 // ReplanInput is passed to a Replanner after a step completes.
 type ReplanInput struct {
 	Request agent.Request
@@ -72,18 +67,18 @@ type ReportInput struct {
 
 // Planner creates the initial typed plan.
 type Planner interface {
-	Plan(context.Context, PlanInput) (Plan, error)
+	Plan(context.Context, agent.Request) (Plan, error)
 }
 
 // PlannerFunc adapts a planner function.
-type PlannerFunc func(context.Context, PlanInput) (Plan, error)
+type PlannerFunc func(context.Context, agent.Request) (Plan, error)
 
 // Plan calls the wrapped planner with an isolated input copy.
-func (planner PlannerFunc) Plan(ctx context.Context, input PlanInput) (Plan, error) {
+func (planner PlannerFunc) Plan(ctx context.Context, request agent.Request) (Plan, error) {
 	if planner == nil {
 		return Plan{}, errors.New("planexec: planner is nil")
 	}
-	return planner(ctx, clonePlanInput(input))
+	return planner(ctx, request.Clone())
 }
 
 // Replanner evaluates progress and may replace the remaining plan.
@@ -221,7 +216,7 @@ func New(identity agent.Identity, options ...Option) (*Agent, error) {
 	wf := workflow.New[agent.Request, agent.Response](identity.Name, buildOptions...)
 	state := wf.Context(func(request agent.Request) State { return State{Request: request.Clone()} })
 	plannerNode := wf.Node("plan", func(ctx context.Context, request agent.Request) (Plan, error) {
-		plan, err := configuration.planner.Plan(ctx, PlanInput{Request: request.Clone()})
+		plan, err := configuration.planner.Plan(ctx, request.Clone())
 		if err != nil {
 			return Plan{}, fmt.Errorf("planexec: create plan: %w", err)
 		}
@@ -417,11 +412,6 @@ func acceptPlan(directory *agent.Directory, plan Plan, previous int) (Plan, erro
 
 func replanInput(state State) ReplanInput {
 	return ReplanInput{Request: state.Request.Clone(), Plan: clonePlan(state.Plan), Results: cloneStepResults(state.Results)}
-}
-
-func clonePlanInput(input PlanInput) PlanInput {
-	input.Request = input.Request.Clone()
-	return input
 }
 
 func cloneReplanInput(input ReplanInput) ReplanInput {

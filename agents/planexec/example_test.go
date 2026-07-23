@@ -40,7 +40,7 @@ func ExampleNew() {
 	target, err := planexec.New(
 		agent.Identity{Name: "release-manager", Description: "plans release verification", Version: "v1"},
 		planexec.WithDirectory(directory),
-		planexec.WithPlanner(planexec.PlannerFunc(func(context.Context, planexec.PlanInput) (planexec.Plan, error) {
+		planexec.WithPlanner(planexec.PlannerFunc(func(context.Context, agent.Request) (planexec.Plan, error) {
 			return planexec.Plan{
 				ID:      "release",
 				Version: 1,
