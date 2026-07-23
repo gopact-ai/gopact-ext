@@ -71,8 +71,12 @@ OpenAI organization usage is API-platform metering and is not the same thing as 
 | [`agents/router`](./agents/router) | Select one child Agent for each request |
 | [`agents/planexec`](./agents/planexec) | Plan, execute, replan, and report |
 | [`agents/supervisor`](./agents/supervisor) | Coordinate delegated child-Agent work |
-| [`agents/deep`](./agents/deep) | Execute explicit long-horizon task plans |
-| [`agents/deepresearch`](./agents/deepresearch) | Discover, verify, and synthesize cited evidence |
+
+The former `agents/deep` and `agents/deepresearch` packages have been removed.
+They were opinionated end-to-end compositions and have no drop-in replacement.
+Applications that still import them can remain on the root module at `v0.6.0`
+while migrating. Finish or drain persisted runs created by those packages before
+upgrading; newer code cannot reconstruct or resume their checkpoints.
 
 ### Stores
 
