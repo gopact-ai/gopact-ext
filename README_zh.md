@@ -11,14 +11,16 @@
 仓库提交的 `go.work` 会联结本仓库内的全部模块。跨仓 CI 还会用当前
 `gopact` 与示例源码验证兼容性，但不会改变任何正式发布的依赖契约。
 
-目录中的每一项都是独立发版的模块，只依赖实际使用的包：
+扩展按领域拆分为独立发版的模块，一个模块可以包含多个包。只添加实际所需包所属的模块：
 
 ```bash
 go get github.com/gopact-ai/gopact-ext/agents/react@v0.4.0
 go get github.com/gopact-ai/gopact-ext/models/agnes@v0.2.0
+go get github.com/gopact-ai/gopact-ext/stores@v0.2.0
 ```
 
-根模块不再充当一次安装全部扩展的聚合包。
+根模块不再充当一次安装全部扩展的聚合包。各领域模块的当前版本见
+[发布清单](./scripts/release-versions.txt)。
 
 ## 发布验证
 
@@ -139,8 +141,8 @@ response, err := target.Invoke(ctx, request, gopact.WithRunID("run-123"))
 
 | 旧入口 | 新入口 |
 |---|---|
-| 把根模块 `github.com/gopact-ai/gopact-ext` 当作扩展合集 | 直接依赖实际使用的 Agent、模型、Store 或中间件模块 |
+| 把根模块 `github.com/gopact-ai/gopact-ext` 当作扩展合集 | 添加实际使用的 Agent、模型、Store 或中间件包所属的领域模块 |
 | `react.New(ChatModel, *tools.Registry, ...)` / `NewModelAgent` | `react.New(agent.Identity, gopact.Model, ...Option)`；工具通过 `WithTools(...agent.Tool)` 注入 |
 | `agenttool.New(a2a.Agent, ...Option)` | `agenttool.New(gopact.ToolSpec, agent.Agent, agenttool.Adapter)`；子 Agent 作为带类型的 Workflow 调用对象执行 |
 | 旧图/模板版 `planexec`、`supervisor` | 传入不可变的 `agent.Directory` 与各自的 Planner/Replanner/Decider；Workflow 保存状态与执行事实 |
-| `planexec.Planner.Plan(context.Context, planexec.PlanInput)` | `planexec.Planner.Plan(context.Context, agent.Request)`；计划和步骤历史由 `Replanner` 接收 |
+| `planexec.Planner.Plan(context.Context, planexec.PlanInput)` | `planexec.Planner.Plan(context.Context, agent.Request)`；`Replanner` 接收当前计划和已完成步骤的结果 |

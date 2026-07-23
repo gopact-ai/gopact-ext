@@ -12,14 +12,18 @@ The committed `go.work` joins every module in this repository. Cross-repository 
 tests the extension sources against the current `gopact` and example sources without
 changing any published dependency contract.
 
-Each catalog entry is an independently versioned module. Depend on the packages you use:
+Extensions are versioned by domain module, and one module may contain several packages.
+Add only the modules that contain the packages you use:
 
 ```bash
 go get github.com/gopact-ai/gopact-ext/agents/react@v0.4.0
 go get github.com/gopact-ai/gopact-ext/models/agnes@v0.2.0
+go get github.com/gopact-ai/gopact-ext/stores@v0.2.0
 ```
 
-The root module is no longer an umbrella that installs every extension.
+The root module is no longer an umbrella that installs every extension. The
+[release manifest](./scripts/release-versions.txt) lists every domain module and
+its current version.
 
 ## Release verification
 
@@ -142,8 +146,8 @@ This rebuild ships all affected modules at their next pre-v1 minor rather than r
 
 | Previous entry point | Replacement |
 |---|---|
-| Root `github.com/gopact-ai/gopact-ext` as an extension bundle | Require each Agent, model, Store, or middleware module directly |
+| Root `github.com/gopact-ai/gopact-ext` as an extension bundle | Add the domain module that contains the Agent, model, Store, or middleware package you use |
 | `react.New(ChatModel, *tools.Registry, ...)` / `NewModelAgent` | `react.New(agent.Identity, gopact.Model, ...Option)` with tools supplied by `WithTools(...agent.Tool)` |
 | `agenttool.New(a2a.Agent, ...Option)` | `agenttool.New(gopact.ToolSpec, agent.Agent, agenttool.Adapter)`; the child executes as a typed Workflow invokable |
 | graph/template-based `planexec` and `supervisor` | immutable `agent.Directory` plus package Planner/Replanner/Decider contracts; Workflow stores state and execution facts |
-| `planexec.Planner.Plan(context.Context, planexec.PlanInput)` | `planexec.Planner.Plan(context.Context, agent.Request)`; plan and step history are available to `Replanner` |
+| `planexec.Planner.Plan(context.Context, planexec.PlanInput)` | `planexec.Planner.Plan(context.Context, agent.Request)`; `Replanner` receives the current plan and completed step results |
