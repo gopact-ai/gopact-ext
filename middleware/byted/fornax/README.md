@@ -31,7 +31,7 @@ middleware, err := fornax.New(ctx, fornax.Config{
 	AK:      ak,
 	SK:      sk,
 	SpaceID: "12345", // optional; verifies the authenticated workspace
-	Region: "CN", // optional; use SG, US, Asia-SouthEastBD, or I18N-DEV as needed
+	Region: "CN", // optional; also BOE, SG, BOEI18N, US, Asia-SouthEastBD, or I18N-DEV
 	Endpoint: "https://fornax.bytedance.net/open-api/observability/traces/ingest", // optional override
 	PSM:      "your.service.psm", // optional; defaults to unknown_psm
 	UserID:   "default-user",
@@ -54,7 +54,7 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 Set `CaptureContent: true` only when the application has explicitly approved exporting request and response content to Fornax. When enabled, the exporter may populate the top-level `input` and `output` fields on root and Agent spans, and on model or tool spans when the corresponding component events are emitted. Payloads can include messages, tool schemas and arguments, result previews, and aggregated streaming output. Raw errors are exported as the `tags_string["error"]` value. The zero value is `false`, and there is no per-request override.
 
-Values deliberately placed in `Config.Metadata`, `agent.Request.Metadata`, or `WithMetadata` are exported as tags regardless of `CaptureContent`.
+Non-empty, non-reserved keys deliberately placed in `Config.Metadata`, `agent.Request.Metadata`, or `WithMetadata` are exported as tags regardless of `CaptureContent`. Non-empty `UserID` and `DeviceID` values are also exported regardless of that setting.
 
 Metadata remains available when content capture is disabled: span hierarchy, run/session/node identifiers, model and tool names, tool call IDs, token usage, finish reason, error status, latency, and application-provided tags. The original error is still returned to the application.
 
@@ -71,9 +71,9 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 `Use` preserves `InvokeStream` when the target's dynamic type implements `agent.StreamingAgent`; use `UseStreaming` when the target is statically typed as `agent.StreamingAgent`. Streaming is traced through completion, failure, or consumer cancellation.
 
-`AK` and `SK` are the Fornax space credentials. `Region` is optional and is passed explicitly to the Fornax authentication and trace endpoints instead of relying on `FORNAX_CUSTOM_REGION`. `SpaceID` is optional; when provided, it must match the workspace resolved from AK/SK. `Endpoint` is an advanced override for the complete Fornax trace ingest URL. `PSM` is sent in the Fornax authentication body and exported as span `service_name` plus the `psm` tag; when omitted it defaults to `unknown_psm`, matching the Fornax SDK fallback. `UserID`, `DeviceID`, and `Metadata` are exported as string tags on every reported span, and can be overridden per request with `WithUserID`, `WithDeviceID`, and `WithMetadata`.
+`AK` and `SK` are the Fornax space credentials. `Region` is optional and selects the authentication host and default trace ingest URL; supported values are `CN`, `BOE`, `SG`, `BOEI18N`, `US`, `Asia-SouthEastBD`, and `I18N-DEV`, while empty or unrecognized values use `CN`. `SpaceID` is optional; when provided, it must match the workspace resolved from AK/SK. `Endpoint` is an advanced override for the complete Fornax trace ingest URL; authentication still uses `Region`. `PSM` is sent in the Fornax authentication body and exported as span `service_name` plus the `psm` tag; when omitted it defaults to `unknown_psm`, matching the Fornax SDK fallback. `UserID`, `DeviceID`, and accepted `Metadata` entries are exported as string tags on every reported span, and can be overridden per request with `WithUserID`, `WithDeviceID`, and `WithMetadata`.
 
-The Agent invocation is reported as `fornax_query`, with an `Agent` span under it. Workflow RunID and SessionID are mapped to Fornax `message_id` and `thread_id`. Nested Workflow runs are reported as `Agent`; nodes named `model` and `tool` use their corresponding Fornax span types, and other nodes use `graph`. Existing event sinks passed to `Invoke` remain attached. Call `Close` during application shutdown to flush pending spans.
+The Agent invocation is reported as `fornax_query`, with an `Agent` span under it. Invocation RunID and SessionID from `RunOptions` become Fornax `message_id` and `thread_id`; Workflow lifecycle events additionally attach `gopact.run_id` to each Workflow span. Nested Workflow runs are reported as `Agent`; nodes named `model` and `tool` use their corresponding Fornax span types, and other nodes use `graph`. Existing event sinks passed to `Invoke` remain attached. Call `Close` during application shutdown to flush pending spans.
 
 ## ID correspondence
 
@@ -95,6 +95,6 @@ The Agent invocation is reported as `fornax_query`, with an `Agent` span under i
 
 This module sends Fornax trace-ingest JSON, not OTLP. The internal `cozeloop.span_type`, `cozeloop.input`, `cozeloop.output`, and `cozeloop.status_code` attributes become the top-level `span_type`, `input`, `output`, and `status_code` fields. Other attributes are written to the corresponding `tags_string`, `tags_long`, `tags_double`, or `tags_bool` map.
 
-When content capture is enabled, each encoded input or output field is limited to 4 MiB (4,194,304 bytes). Oversized fields are omitted. The root span records invocation-level omissions in `cut_off`, while model and tool node spans record their own omissions. Streaming chunks are still forwarded to the application without truncation. When capture is disabled, the middleware does not aggregate streaming content for tracing.
+When content capture is enabled, each encoded input or output field is limited to 4 MiB (4,194,304 bytes). Oversized non-streaming fields are omitted. For streaming output, aggregation stops before the next chunk would exceed the budget; an already aggregated prefix is exported only if its encoded response still fits. The root span records invocation-level truncation in `tags_string["cut_off"]`, while model and tool node spans record their own truncation. Every streaming chunk is still forwarded to the application in full. When capture is disabled, the middleware does not aggregate streaming content for tracing.
 
 The core Workflow event contract contains lifecycle metadata rather than provider request bodies, token usage, or model and tool results. When a Workflow node is active, typed model or tool observations enrich that node span. Model observations emitted without an active node are reported in a dedicated model span; tool observations without an active node are ignored. Content payloads are exported only when `CaptureContent` is enabled, and fields not emitted by an adapter are not synthesized.

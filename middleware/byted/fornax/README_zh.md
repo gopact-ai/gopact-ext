@@ -31,7 +31,7 @@ middleware, err := fornax.New(ctx, fornax.Config{
 	AK:      ak,
 	SK:      sk,
 	SpaceID: "12345", // 可选；校验 AK/SK 鉴权得到的 workspace
-	Region: "CN", // 可选；按需使用 SG、US、Asia-SouthEastBD 或 I18N-DEV
+	Region: "CN", // 可选；还支持 BOE、SG、BOEI18N、US、Asia-SouthEastBD 和 I18N-DEV
 	Endpoint: "https://fornax.bytedance.net/open-api/observability/traces/ingest", // 可选覆盖
 	PSM:      "your.service.psm", // 可选；默认 unknown_psm
 	UserID:   "default-user",
@@ -52,9 +52,9 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 ## 内容采集
 
-只有应用明确批准把请求与响应内容导出到 Fornax 时，才设置 `CaptureContent: true`。开启后，exporter 可能填充 root 和 Agent span 的顶层 `input`、`output` 字段；收到相应组件事件时，也会填充 model 或 tool span。内容可能包括消息、工具定义与参数、结果预览，以及聚合后的流式输出。原始错误会写入 `tags_string["error"]`。该配置的零值为 `false`，不支持按单次请求覆盖。
+只有应用明确批准把请求与响应内容导出到 Fornax 时，才设置 `CaptureContent: true`。开启后，导出器可能填充根 span 和 Agent span 的顶层 `input`、`output` 字段；收到相应组件事件时，也会填充 model 或 tool span。内容可能包括消息、工具定义与参数、结果预览，以及聚合后的流式输出。原始错误会写入 `tags_string["error"]`。该配置的零值为 `false`，不支持按单次请求覆盖。
 
-应用主动放入 `Config.Metadata`、`agent.Request.Metadata` 或 `WithMetadata` 的值始终会作为 tag 上报，不受 `CaptureContent` 控制。
+应用主动放入 `Config.Metadata`、`agent.Request.Metadata` 或 `WithMetadata`，且键名非空、未被保留的值，会作为标签上报，不受 `CaptureContent` 控制。非空的 `UserID` 和 `DeviceID` 同样不受该配置控制。
 
 关闭内容采集时仍保留运行元数据：span 层级、run/session/node 标识、model/tool 名称、tool call ID、token 用量、finish reason、错误状态、耗时和 application 显式提供的 tags。原始 error 仍会返回给 application。
 
@@ -71,9 +71,9 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 如果 target 的动态类型实现了 `agent.StreamingAgent`，`Use` 会保留 `InvokeStream`；当 target 的静态类型就是 `agent.StreamingAgent` 时，可直接使用 `UseStreaming`。两种入口都会持续追踪到流正常结束、失败或被消费者取消。
 
-`AK` 和 `SK` 是 Fornax 空间凭据。`Region` 可选，会显式用于 Fornax 鉴权和 trace endpoint 选择，不依赖 `FORNAX_CUSTOM_REGION`。`SpaceID` 可选；传入时必须与 AK/SK 鉴权得到的空间一致。`Endpoint` 是高级覆盖项，用于指定完整 Fornax trace ingest URL。`PSM` 会写入 Fornax 鉴权 body，并作为 span `service_name` 和 tag `psm` 上报；未传时默认 `unknown_psm`，与 Fornax SDK 的兜底行为一致。`UserID`、`DeviceID` 和 `Metadata` 会作为字符串 tag 附加到所有上报 span，也可以通过 `WithUserID`、`WithDeviceID` 和 `WithMetadata` 按请求覆盖。
+`AK` 和 `SK` 是 Fornax 空间凭据。`Region` 可选，用于选择鉴权地址和默认 trace ingest URL；支持 `CN`、`BOE`、`SG`、`BOEI18N`、`US`、`Asia-SouthEastBD` 和 `I18N-DEV`，空值或未知值按 `CN` 处理。`SpaceID` 可选；传入时必须与 AK/SK 鉴权得到的空间一致。`Endpoint` 是完整 Fornax trace ingest URL 的高级覆盖项，鉴权地址仍由 `Region` 决定。`PSM` 会写入 Fornax 鉴权请求，并作为 span `service_name` 和标签 `psm` 上报；未传时默认 `unknown_psm`，与 Fornax SDK 的兜底行为一致。`UserID`、`DeviceID` 和被接受的 `Metadata` 条目会作为字符串标签附加到所有上报 span，也可以通过 `WithUserID`、`WithDeviceID` 和 `WithMetadata` 按请求覆盖。
 
-Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。Workflow RunID 和 SessionID 分别映射为 Fornax `message_id` 和 `thread_id`；嵌套 Workflow run 上报为 `Agent`；名为 `model` 和 `tool` 的节点分别使用对应的 Fornax span type，其他节点使用 `graph`。传给 `Invoke` 的已有 event sink 会继续生效。应用退出时调用 `Close`，以刷新尚未上报的 span。
+Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。通过 `RunOptions` 传入的调用 RunID 和 SessionID 会成为 Fornax `message_id` 和 `thread_id`；Workflow 生命周期事件还会在各自的 Workflow span 上写入 `gopact.run_id`。嵌套 Workflow run 上报为 `Agent`；名为 `model` 和 `tool` 的节点分别使用对应的 Fornax span type，其他节点使用 `graph`。传给 `Invoke` 的已有事件接收器会继续生效。应用退出时调用 `Close`，刷新尚未上报的 span。
 
 ## ID 对应关系
 
@@ -95,6 +95,6 @@ Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。Workflo
 
 本模块发送的是 Fornax trace-ingest JSON，不是 OTLP。内部的 `cozeloop.span_type`、`cozeloop.input`、`cozeloop.output` 和 `cozeloop.status_code` attribute 会分别转换为顶层 `span_type`、`input`、`output` 和 `status_code` 字段；其他 attribute 按类型写入 `tags_string`、`tags_long`、`tags_double` 或 `tags_bool`。
 
-开启内容采集时，每个编码后的 input 或 output 字段最多为 4 MiB（4,194,304 bytes）。超限字段会被省略；调用级截断记录在 root span 的 `cut_off` 中，model 和 tool 节点 span 分别记录自身的截断。流式 chunk 仍会完整转发给应用。关闭内容采集时，middleware 不会为 trace 聚合流式内容。
+开启内容采集时，每个编码后的 input 或 output 字段最多为 4 MiB（4,194,304 字节）。非流式字段超限时会被省略。流式输出会在下一个 chunk 超出预算前停止聚合；已经聚合的前缀只有在编码后仍未超限时才会上报。调用级截断记录在根 span 的 `tags_string["cut_off"]` 中，model 和 tool 节点 span 分别记录自身的截断。所有流式 chunk 仍会完整转发给应用。关闭内容采集时，中间件不会为 trace 聚合流式内容。
 
-核心 Workflow event 契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型与工具结果。存在活动 Workflow 节点时，typed model 或 tool observation 会富化该节点 span。没有活动节点时，model observation 会生成独立的 model span，tool observation 则被忽略。只有开启 `CaptureContent` 后才会上报内容 payload；adapter 没有发出的字段不会被虚构。
+核心 Workflow 事件契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型与工具结果。存在活动 Workflow 节点时，typed model 或 tool observation 会补充该节点 span。没有活动节点时，model observation 会生成独立的 model span，tool observation 则被忽略。只有开启 `CaptureContent` 后才会上报内容；适配器没有发出的字段不会被虚构。
