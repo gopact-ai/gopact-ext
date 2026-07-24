@@ -105,6 +105,7 @@ func TestAuthenticateUsesAKSKAndResolvedSpaceID(t *testing.T) {
 }
 
 func TestExporterRefreshesTokenAndRetriesUnauthorizedRequest(t *testing.T) {
+	setTestTraceEnvironment(t)
 	initialToken := fakeJWT(67890)
 	refreshedToken := initialToken + ".refreshed"
 	var authCalls atomic.Int64
@@ -169,6 +170,7 @@ func TestExporterRefreshesTokenAndRetriesUnauthorizedRequest(t *testing.T) {
 }
 
 func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
+	setTestTraceEnvironment(t)
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:1/ambient")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "Authorization=ambient,cozeloop-workspace-id=999")
 
@@ -1242,10 +1244,19 @@ func assertStringAttributes(t *testing.T, span tracetest.SpanStub, values map[st
 func newTestTracerProvider(exporter sdktrace.SpanExporter) *sdktrace.TracerProvider {
 	limits := sdktrace.NewSpanLimits()
 	limits.AttributeCountLimit = sdktrace.DefaultAttributeCountLimit
+	limits.AttributeValueLengthLimit = sdktrace.DefaultAttributeValueLengthLimit
 	return sdktrace.NewTracerProvider(
 		sdktrace.WithSyncer(exporter),
 		sdktrace.WithRawSpanLimits(limits),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	)
+}
+
+func setTestTraceEnvironment(t *testing.T) {
+	t.Helper()
+	t.Setenv("OTEL_TRACES_SAMPLER", "always_on")
+	t.Setenv("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", "128")
+	t.Setenv("OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT", "-1")
 }
 
 func int64Attribute(attributes []attribute.KeyValue, key string) (int64, bool) {
