@@ -836,7 +836,8 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	tags := requestTags(ctx, a.middleware.tags, request.Metadata, gopact.ResolveRunOptions(options...))
+	runConfig := gopact.ResolveRunOptions(options...)
+	tags := requestTags(ctx, a.middleware.tags, request.Metadata, runConfig)
 	identity := a.target.Identity()
 	name := identity.Name
 	if name == "" {
@@ -868,7 +869,14 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 	if a.middleware.captureContent {
 		setTraceJSON(agentSpan, inputAttribute, agentInput(request), new(bool))
 	}
-	return agentCtx, root, agentSpan, newEventSink(a.middleware, agentCtx, root, agentSpan, tags), inputCutOff, nil
+	return agentCtx, root, agentSpan, newEventSink(
+		a.middleware,
+		agentCtx,
+		root,
+		agentSpan,
+		tags,
+		runConfig,
+	), inputCutOff, nil
 }
 
 func finishRoot(root trace.Span, output any, err error, inputCutOff, capture bool) {
@@ -1332,6 +1340,8 @@ type eventSink struct {
 	agent          trace.Span
 	tags           []attribute.KeyValue
 	captureContent bool
+	hasRunID       bool
+	hasSessionID   bool
 
 	mu          sync.Mutex
 	rootRunID   string
@@ -1340,10 +1350,18 @@ type eventSink struct {
 	nodes       map[string]nodeSpanState
 }
 
-func newEventSink(m *Middleware, rootCtx context.Context, root, agent trace.Span, tags []attribute.KeyValue) *eventSink {
+func newEventSink(
+	m *Middleware,
+	rootCtx context.Context,
+	root, agent trace.Span,
+	tags []attribute.KeyValue,
+	runConfig gopact.RunConfig,
+) *eventSink {
 	return &eventSink{
 		tracer: m.tracer, rootCtx: rootCtx, root: root, agent: agent, tags: tags,
 		captureContent: m.captureContent,
+		hasRunID:       runConfig.RunID != "",
+		hasSessionID:   runConfig.SessionID != "",
 		runs:           make(map[string]spanState), nodes: make(map[string]nodeSpanState),
 	}
 }
@@ -1381,10 +1399,8 @@ func (s *eventSink) startRun(event gopact.Event) {
 	}
 	if s.rootRunID == "" && event.ParentRunID == "" {
 		s.rootRunID = event.RunID
+		s.backfillInvocationIDs(event)
 		s.root.SetAttributes(runAttributes(event, rootSpanType)...)
-		if event.SessionID != "" {
-			s.agent.SetAttributes(attribute.String(threadIDAttribute, event.SessionID))
-		}
 		s.runs[event.RunID] = spanState{ctx: s.rootCtx, span: s.root, root: true}
 		return
 	}
@@ -1401,6 +1417,24 @@ func (s *eventSink) startRun(event gopact.Event) {
 		trace.WithAttributes(append(runAttributes(event, agentSpanType), s.tags...)...),
 	)
 	s.runs[event.RunID] = spanState{ctx: ctx, span: span}
+}
+
+func (s *eventSink) backfillInvocationIDs(event gopact.Event) {
+	var attributes []attribute.KeyValue
+	if !s.hasRunID {
+		attributes = append(attributes, attribute.String(messageIDAttribute, event.RunID))
+		s.hasRunID = true
+	}
+	if !s.hasSessionID && event.SessionID != "" {
+		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
+		s.hasSessionID = true
+	}
+	if len(attributes) == 0 {
+		return
+	}
+	s.tags = append(s.tags, attributes...)
+	s.root.SetAttributes(attributes...)
+	s.agent.SetAttributes(attributes...)
 }
 
 func (s *eventSink) finishRun(event gopact.Event) {
@@ -1695,12 +1729,6 @@ func runAttributes(event gopact.Event, spanType string) []attribute.KeyValue {
 	if event.DefinitionID != "" {
 		attributes = append(attributes, attribute.String(agentNameAttribute, event.DefinitionID))
 	}
-	if event.SessionID != "" {
-		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
-	}
-	if spanType == rootSpanType {
-		attributes = append(attributes, attribute.String(messageIDAttribute, event.RunID))
-	}
 	if event.ParentRunID != "" {
 		attributes = append(attributes, attribute.String(parentRunIDAttribute, event.ParentRunID))
 	}
@@ -1714,9 +1742,6 @@ func nodeAttributes(event gopact.Event) []attribute.KeyValue {
 		attribute.String(nodeIDAttribute, event.NodeID),
 		attribute.String(activationIDAttribute, event.ActivationID),
 		attribute.String(attemptIDAttribute, event.AttemptID),
-	}
-	if event.SessionID != "" {
-		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
 	}
 	if nodeSpanType(event.NodeID) == "tool" {
 		attributes = append(attributes, attribute.String(toolNameAttribute, event.NodeID))

@@ -367,17 +367,23 @@ func TestMetadataCannotOverrideTraceProtocolAttributes(t *testing.T) {
 		if got := stringAttribute(span.Attributes, errorAttribute); got != "" {
 			t.Fatalf("%s error = %q, want empty", span.Name, got)
 		}
+		if got := stringAttribute(span.Attributes, messageIDAttribute); got != "option-run" {
+			t.Fatalf("%s message_id = %q, want option-run", span.Name, got)
+		}
+		if got := stringAttribute(span.Attributes, threadIDAttribute); got != "option-session" {
+			t.Fatalf("%s thread_id = %q, want option-session", span.Name, got)
+		}
 	}
 
 	root := spanNamedType(t, spans, "react", rootSpanType)
 	if got := stringAttribute(root.Attributes, runIDAttribute); got != "run-1" {
 		t.Fatalf("root run_id = %q, want run-1", got)
 	}
-	if got := stringAttribute(root.Attributes, messageIDAttribute); got != "run-1" {
-		t.Fatalf("root message_id = %q, want run-1", got)
+	if got := stringAttribute(root.Attributes, messageIDAttribute); got != "option-run" {
+		t.Fatalf("root message_id = %q, want option-run", got)
 	}
-	if got := stringAttribute(root.Attributes, threadIDAttribute); got != "session-1" {
-		t.Fatalf("root thread_id = %q, want session-1", got)
+	if got := stringAttribute(root.Attributes, threadIDAttribute); got != "option-session" {
+		t.Fatalf("root thread_id = %q, want option-session", got)
 	}
 	if got := stringAttribute(root.Attributes, agentNameAttribute); got != "react" {
 		t.Fatalf("root agent_name = %q, want react", got)
@@ -547,6 +553,9 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	child := spanNamed(t, spans, "child")
 	tool := spanNamed(t, spans, "tool")
 	for _, span := range spans {
+		if got := stringAttribute(span.Attributes, messageIDAttribute); got != "run-1" {
+			t.Fatalf("%s message_id = %q, want run-1", span.Name, got)
+		}
 		if got := stringAttribute(span.Attributes, threadIDAttribute); got != "session-1" {
 			t.Fatalf("%s thread_id = %q, want session-1", span.Name, got)
 		}
