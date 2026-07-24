@@ -71,7 +71,7 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 Metadata keys owned by the trace protocol are ignored. This includes keys beginning with `cozeloop.`, `gopact.`, or `fornax_`, as well as unprefixed identity, component, usage, truncation, and error keys. Use `Config`, `WithUserID`, and `WithDeviceID` for service and end-user identity, and `gopact.WithRunID` or `gopact.WithSessionID` for invocation IDs. Component, usage, truncation, and error fields come from runtime events instead of custom metadata. Existing integrations must move reserved values to those inputs or rename custom tags to application-owned keys.
 
-Each invocation exports at most 64 distinct custom metadata keys on a span. If the combined sources exceed that budget, context metadata is selected before `agent.Request.Metadata`, which is selected before `Config.Metadata`; selection within one source is stable by key.
+Each invocation exports at most 64 distinct custom metadata keys on a span. If the combined sources exceed that budget, context metadata is selected before `agent.Request.Metadata`, which is selected before `Config.Metadata`; selection within one source is stable by key. This budget does not raise the OpenTelemetry provider's total attribute limit, so an explicitly lower `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT` can reduce the number exported.
 
 `Use` preserves `InvokeStream` when the target's dynamic type implements `agent.StreamingAgent`; use `UseStreaming` when the target is statically typed as `agent.StreamingAgent`. Streaming is traced through completion, failure, or consumer cancellation.
 

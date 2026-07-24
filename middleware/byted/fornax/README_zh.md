@@ -71,7 +71,7 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 链路协议使用的元数据键会被忽略，包括以 `cozeloop.`、`gopact.`、`fornax_` 开头的键，以及没有前缀的身份、组件、用量、截断和错误字段。服务与用户身份请通过 `Config`、`WithUserID`、`WithDeviceID` 传入，调用标识请使用 `gopact.WithRunID` 或 `gopact.WithSessionID`。组件、用量、截断和错误字段由中间件根据运行事件填写，不从自定义元数据读取。旧代码需要把保留字段迁到这些入口；如果只是自定义标签与保留字段重名，请换成应用自己的键名。
 
-每次调用的每个 span 最多上报 64 个不同的自定义元数据键。三处来源合计超出上限时，优先保留 `WithMetadata`，其次是 `agent.Request.Metadata`，最后是 `Config.Metadata`；同一来源按键名稳定选择。
+每次调用的每个 span 最多上报 64 个不同的自定义元数据键。三处来源合计超出上限时，优先保留 `WithMetadata`，其次是 `agent.Request.Metadata`，最后是 `Config.Metadata`；同一来源按键名稳定选择。这项预算不会改写 OpenTelemetry 的总属性上限；如果显式把 `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT` 设得更低，实际上报数量也会随之减少。
 
 如果 target 的动态类型实现了 `agent.StreamingAgent`，`Use` 会保留 `InvokeStream`；当 target 的静态类型就是 `agent.StreamingAgent` 时，可直接使用 `UseStreaming`。两种入口都会持续追踪到流正常结束、失败或被消费者取消。
 

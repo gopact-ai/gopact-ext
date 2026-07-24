@@ -69,9 +69,7 @@ const (
 	authTTLSeconds        = 3600
 	maxTraceFieldBytes    = 4 << 20
 	traceTagDefaultCount  = 3
-	runOptionTagCount     = 2
 	maxMetadataTagCount   = 64
-	minSpanAttributeCount = 128
 	decimalBase           = 10
 	spaceIDBitSize        = 64
 	jwtMinParts           = 2
@@ -213,23 +211,11 @@ func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
 		spaceID:        spaceID,
 		serviceName:    effectivePSM(config.psm),
 	}
-	limits := fornaxSpanLimits()
 	return newMiddleware(
-		sdktrace.NewTracerProvider(
-			sdktrace.WithBatcher(exporter),
-			sdktrace.WithRawSpanLimits(limits),
-		),
+		sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter)),
 		traceTags(config),
 		config.captureContent,
 	), nil
-}
-
-func fornaxSpanLimits() sdktrace.SpanLimits {
-	limits := sdktrace.NewSpanLimits()
-	if limits.AttributeCountLimit >= 0 && limits.AttributeCountLimit < minSpanAttributeCount {
-		limits.AttributeCountLimit = minSpanAttributeCount
-	}
-	return limits
 }
 
 func authenticate(ctx context.Context, config Config) (authConfig, error) {
@@ -629,7 +615,7 @@ func requestTags(ctx context.Context, defaults []attribute.KeyValue, metadata ma
 	add(tagAttributes("", "", "", metadata), requestPriority)
 	config := traceContext(ctx)
 	add(tagAttributes("", config.userID, config.deviceID, config.metadata), contextPriority)
-	options := make([]attribute.KeyValue, 0, runOptionTagCount)
+	var options []attribute.KeyValue
 	if runConfig.SessionID != "" {
 		options = append(options, attribute.String(threadIDAttribute, runConfig.SessionID))
 	}

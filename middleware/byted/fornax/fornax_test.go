@@ -25,6 +25,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
+const metadataStressTagCount = sdktrace.DefaultAttributeCountLimit * 2
+
 func TestNewRequiresAKSK(t *testing.T) {
 	if _, err := New(t.Context(), Config{}); err == nil || err.Error() != "fornax: AK is required" {
 		t.Fatalf("New() error = %v, want AK required", err)
@@ -280,13 +282,6 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	}
 }
 
-func TestFornaxSpanLimitsKeepProtocolCapacity(t *testing.T) {
-	t.Setenv("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", "8")
-	if got := fornaxSpanLimits().AttributeCountLimit; got != minSpanAttributeCount {
-		t.Fatalf("attribute count limit = %d, want %d", got, minSpanAttributeCount)
-	}
-}
-
 func TestMetadataCannotOverrideTraceProtocolAttributes(t *testing.T) {
 	reserved := []string{
 		agentNameAttribute, cutOffAttribute, deviceIDAttribute, durationTag, errorAttribute,
@@ -415,8 +410,8 @@ func TestMetadataCannotOverrideTraceProtocolAttributes(t *testing.T) {
 }
 
 func TestMetadataBudgetPreservesLateProtocolAttributes(t *testing.T) {
-	requestMetadata := make(map[string]string, minSpanAttributeCount*2)
-	for index := range minSpanAttributeCount * 2 {
+	requestMetadata := make(map[string]string, metadataStressTagCount)
+	for index := range metadataStressTagCount {
 		requestMetadata[fmt.Sprintf("custom.%03d", index)] = "request-value"
 	}
 
@@ -711,8 +706,15 @@ func TestMiddlewareReportsDirectModelSpan(t *testing.T) {
 	}
 
 	spans := exporter.GetSpans()
+	root := spanNamedType(t, spans, "direct", rootSpanType)
 	model := spanNamedType(t, spans, "model", modelSpanType)
 	agentSpan := spanNamedType(t, spans, "direct", agentSpanType)
+	if got := stringAttribute(root.Attributes, messageIDAttribute); got != "message-1" {
+		t.Fatalf("root message_id = %q, want message-1", got)
+	}
+	if got := stringAttribute(root.Attributes, threadIDAttribute); got != "thread-1" {
+		t.Fatalf("root thread_id = %q, want thread-1", got)
+	}
 	if model.Parent.SpanID() != agentSpan.SpanContext.SpanID() {
 		t.Fatal("model span is not a child of the direct Agent span")
 	}
@@ -917,8 +919,8 @@ func TestUnaryTracePayloadsAreBounded(t *testing.T) {
 	request := agent.Request{Messages: []gopact.Message{{
 		Role:  gopact.MessageRoleUser,
 		Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: largeText}},
-	}}, Metadata: make(map[string]string, minSpanAttributeCount*2)}
-	for index := range minSpanAttributeCount * 2 {
+	}}, Metadata: make(map[string]string, metadataStressTagCount)}
+	for index := range metadataStressTagCount {
 		request.Metadata[fmt.Sprintf("custom.%03d", index)] = "value"
 	}
 	if _, err := middleware.Use(largeTestAgent{output: largeText}).Invoke(t.Context(), request); err != nil {
@@ -1238,9 +1240,11 @@ func assertStringAttributes(t *testing.T, span tracetest.SpanStub, values map[st
 }
 
 func newTestTracerProvider(exporter sdktrace.SpanExporter) *sdktrace.TracerProvider {
+	limits := sdktrace.NewSpanLimits()
+	limits.AttributeCountLimit = sdktrace.DefaultAttributeCountLimit
 	return sdktrace.NewTracerProvider(
 		sdktrace.WithSyncer(exporter),
-		sdktrace.WithRawSpanLimits(fornaxSpanLimits()),
+		sdktrace.WithRawSpanLimits(limits),
 	)
 }
 
