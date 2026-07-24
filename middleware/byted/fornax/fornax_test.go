@@ -361,16 +361,12 @@ func TestMetadataCannotOverrideTraceProtocolAttributes(t *testing.T) {
 		if got := stringAttribute(span.Attributes, deviceIDAttribute); got != "context-device" {
 			t.Fatalf("%s device_id = %q, want context-device", span.Name, got)
 		}
-		for key, want := range map[string]string{
+		assertStringAttributes(t, span, map[string]string{
 			"config_tag":  "config-value",
 			"request_tag": "request-value",
 			"context_tag": "context-value",
 			"shared":      "context-value",
-		} {
-			if got := stringAttribute(span.Attributes, key); got != want {
-				t.Fatalf("%s %s = %q, want %q", span.Name, key, got, want)
-			}
-		}
+		})
 		if got := stringAttribute(span.Attributes, errorAttribute); got != "" {
 			t.Fatalf("%s error = %q, want empty", span.Name, got)
 		}
@@ -1230,6 +1226,15 @@ func stringAttribute(attributes []attribute.KeyValue, key string) string {
 		}
 	}
 	return ""
+}
+
+func assertStringAttributes(t *testing.T, span tracetest.SpanStub, values map[string]string) {
+	t.Helper()
+	for key, want := range values {
+		if got := stringAttribute(span.Attributes, key); got != want {
+			t.Fatalf("%s %s = %q, want %q", span.Name, key, got, want)
+		}
+	}
 }
 
 func newTestTracerProvider(exporter sdktrace.SpanExporter) *sdktrace.TracerProvider {
