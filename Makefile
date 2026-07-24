@@ -36,8 +36,8 @@ TIDY_MODULES := \
 	stores
 SECURITY_MODULES := . $(filter-out tests/workflow,$(WORKSPACE_MODULES))
 WORKSPACE_PACKAGES := ./... $(addprefix ./,$(addsuffix /...,$(WORKSPACE_MODULES)))
-# Advance only after the next manifest version is available from the public proxy.
-PUBLISHED_PREFIX := 18
+# Longest leading manifest sequence available from the public proxy.
+PUBLISHED_PREFIX := 1
 
 .PHONY: test integration capability fmt-check print-workspace-modules module-contract published tidy standalone race vet security dbintegration benchmark
 
