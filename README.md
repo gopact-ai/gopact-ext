@@ -6,7 +6,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 Official extensions for the redesigned `gopact` core.
 
-> **Go 1.27+ only.** This project is built around generic methods and celebrates what we see as one of Go's most consequential language changes of the past decade.
+> **Go 1.27+ only.** Until Go 1.27.0 is released, use the Go 1.27 RC 2 toolchain. gopact-ext now publishes stable versions only.
 
 The committed `go.work` joins every module in this repository. Cross-repository CI also
 tests the extension sources against the current `gopact` and example sources without
@@ -23,7 +23,7 @@ go get github.com/gopact-ai/gopact-ext/stores@v0.2.0
 
 The root module is no longer an umbrella that installs every extension. The
 [release manifest](./scripts/release-versions.txt) lists every domain module and
-its current version.
+its declared release version.
 
 ## Release verification
 
@@ -31,8 +31,10 @@ The manifest defines the release order. Each row names a module, its exact stabl
 version, and a package to compile from a clean consumer. Every row must name a real
 package. The verifier uses a controlled module path below the extension Agent namespace,
 so it can compile the repository's `internal` release anchors without making them public.
-Increase the prefix only after the next exact version is available through the configured
-proxy; omitting it checks the full manifest:
+`PUBLISHED_PREFIX` is the longest leading sequence of manifest rows whose exact versions
+are already available through the configured module proxy. When changing an earlier row,
+lower the prefix to the preceding row in the release-preparation commit. Advance it only
+after the new exact version is available; omitting the prefix checks the full manifest:
 
 ```bash
 ./scripts/clean-consumer.sh --validate-only scripts/release-versions.txt
