@@ -69,7 +69,9 @@ ctx = fornax.WithMetadata(ctx, map[string]string{"request_id": "req-1"})
 response, err := tracedAgent.Invoke(ctx, request)
 ```
 
-Metadata keys owned by the trace protocol are ignored. This includes keys beginning with `cozeloop.`, `gopact.`, or `fornax_`, as well as unprefixed identity, component, usage, truncation, and error keys. Use `Config`, `WithUserID`, `WithDeviceID`, and `RunOptions` for those values instead. Integrations that previously supplied `user_id`, `device_id`, run or session identifiers, component names, token usage, or errors through `Metadata` must move them to the corresponding typed input.
+Metadata keys owned by the trace protocol are ignored. This includes keys beginning with `cozeloop.`, `gopact.`, or `fornax_`, as well as unprefixed identity, component, usage, truncation, and error keys. Use `Config`, `WithUserID`, and `WithDeviceID` for service and end-user identity, and `gopact.WithRunID` or `gopact.WithSessionID` for invocation IDs. Component, usage, truncation, and error fields come from runtime events instead of custom metadata. Existing integrations must move reserved values to those inputs or rename custom tags to application-owned keys.
+
+Each invocation exports at most 64 distinct custom metadata keys on a span. If the combined sources exceed that budget, context metadata is selected before `agent.Request.Metadata`, which is selected before `Config.Metadata`; selection within one source is stable by key.
 
 `Use` preserves `InvokeStream` when the target's dynamic type implements `agent.StreamingAgent`; use `UseStreaming` when the target is statically typed as `agent.StreamingAgent`. Streaming is traced through completion, failure, or consumer cancellation.
 
@@ -82,9 +84,10 @@ The Agent invocation is reported as `fornax_query`, with an `Agent` span under i
 | Source value | Exported value | Meaning in Fornax |
 | --- | --- | --- |
 | AK/SK authenticated workspace | trace ingest `workspace_id` | Target workspace; it is not a trace or span ID. |
-| Invocation `RunID` from `RunOptions` | `tags_string["message_id"]` on the root query span | Fornax message ID. |
+| Invocation `RunID` from `gopact.WithRunID` | `tags_string["message_id"]` on the root query span | Fornax message ID. |
+| Invocation `SessionID` from `gopact.WithSessionID` | `tags_string["thread_id"]` on the root query span | Groups related invocations. |
 | Workflow `RunID` emitted by lifecycle events | `tags_string["gopact.run_id"]`; the root Workflow also writes `tags_string["message_id"]` | Identifies the root or child Workflow run; a child run never replaces the root message ID. |
-| Workflow `SessionID` | `tags_string["thread_id"]` | Groups the reported spans for related messages. |
+| Workflow `SessionID` emitted by lifecycle events | `tags_string["thread_id"]` | Groups the reported spans and updates the root query span for the root Workflow. |
 | `Config.PSM` | Authentication `psm`, span `service_name`, and span tag `psm` | Reporting service identity; defaults to `unknown_psm`. |
 | `Config.UserID` / `Config.DeviceID`, or context `WithUserID` / `WithDeviceID` | Span tags `user_id` / `device_id` | End-user dimensions; context values override Config defaults for one invocation. |
 | `Config.Metadata`, or context `WithMetadata` | Span string tags | Custom searchable metadata; context tags add to Config defaults, and reserved trace protocol keys are ignored. |

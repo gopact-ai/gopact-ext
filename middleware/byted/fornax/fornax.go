@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +69,8 @@ const (
 	authTTLSeconds        = 3600
 	maxTraceFieldBytes    = 4 << 20
 	traceTagDefaultCount  = 3
+	maxMetadataTagCount   = 64
+	minSpanAttributeCount = 128
 	decimalBase           = 10
 	spaceIDBitSize        = 64
 	jwtMinParts           = 2
@@ -97,7 +100,8 @@ type Config struct {
 	UserID string
 	// DeviceID optionally attaches the end-user device identity to exported spans.
 	DeviceID string
-	// Metadata attaches custom string tags to exported spans.
+	// Metadata attaches custom string tags to exported spans. Protocol-owned
+	// keys are ignored, and at most 64 custom keys are exported per invocation.
 	Metadata map[string]string
 	// CaptureContent enables trace input/output payloads, including messages,
 	// model and tool arguments, responses, result previews, and verbose error details.
@@ -128,6 +132,8 @@ func WithDeviceID(ctx context.Context, deviceID string) context.Context {
 }
 
 // WithMetadata attaches request-scoped custom string tags to Fornax spans.
+// Protocol-owned keys are ignored, and at most 64 custom keys are exported
+// per invocation.
 func WithMetadata(ctx context.Context, metadata map[string]string) context.Context {
 	config := traceContext(ctx)
 	config.metadata = copyMetadata(metadata)
@@ -206,11 +212,23 @@ func newWithAuth(ctx context.Context, config authConfig) (*Middleware, error) {
 		spaceID:        spaceID,
 		serviceName:    effectivePSM(config.psm),
 	}
+	limits := fornaxSpanLimits()
 	return newMiddleware(
-		sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter)),
+		sdktrace.NewTracerProvider(
+			sdktrace.WithBatcher(exporter),
+			sdktrace.WithRawSpanLimits(limits),
+		),
 		traceTags(config),
 		config.captureContent,
 	), nil
+}
+
+func fornaxSpanLimits() sdktrace.SpanLimits {
+	limits := sdktrace.NewSpanLimits()
+	if limits.AttributeCountLimit >= 0 && limits.AttributeCountLimit < minSpanAttributeCount {
+		limits.AttributeCountLimit = minSpanAttributeCount
+	}
+	return limits
 }
 
 func authenticate(ctx context.Context, config Config) (authConfig, error) {
@@ -554,12 +572,17 @@ func traceTags(config authConfig) []attribute.KeyValue {
 
 func tagAttributes(psm, userID, deviceID string, metadata map[string]string) []attribute.KeyValue {
 	tags := make([]attribute.KeyValue, 0, len(metadata)+traceTagDefaultCount)
-	for key, value := range metadata {
-		key = strings.TrimSpace(key)
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, rawKey := range keys {
+		key := strings.TrimSpace(rawKey)
 		if key == "" || reservedMetadataKey(key) {
 			continue
 		}
-		tags = append(tags, attribute.String(key, value))
+		tags = append(tags, attribute.String(key, metadata[rawKey]))
 	}
 	if psm := strings.TrimSpace(psm); psm != "" {
 		tags = append(tags, attribute.String(psmAttribute, psm))
@@ -574,15 +597,71 @@ func tagAttributes(psm, userID, deviceID string, metadata map[string]string) []a
 }
 
 func requestTags(ctx context.Context, defaults []attribute.KeyValue, metadata map[string]string, runConfig gopact.RunConfig) []attribute.KeyValue {
-	tags := append([]attribute.KeyValue{}, defaults...)
-	tags = append(tags, tagAttributes("", "", "", metadata)...)
+	const (
+		configPriority = iota
+		requestPriority
+		contextPriority
+		optionPriority
+	)
+	type prioritizedTag struct {
+		value    attribute.KeyValue
+		priority int
+	}
+
+	protocol := make(map[string]attribute.KeyValue)
+	custom := make(map[string]prioritizedTag)
+	add := func(tags []attribute.KeyValue, priority int) {
+		for _, tag := range tags {
+			key := string(tag.Key)
+			if reservedMetadataKey(key) {
+				protocol[key] = tag
+				continue
+			}
+			current, ok := custom[key]
+			if !ok || priority >= current.priority {
+				custom[key] = prioritizedTag{value: tag, priority: priority}
+			}
+		}
+	}
+
+	add(defaults, configPriority)
+	add(tagAttributes("", "", "", metadata), requestPriority)
 	config := traceContext(ctx)
-	tags = append(tags, tagAttributes("", config.userID, config.deviceID, config.metadata)...)
+	add(tagAttributes("", config.userID, config.deviceID, config.metadata), contextPriority)
+	options := make([]attribute.KeyValue, 0, 2)
 	if runConfig.SessionID != "" {
-		tags = append(tags, attribute.String(threadIDAttribute, runConfig.SessionID))
+		options = append(options, attribute.String(threadIDAttribute, runConfig.SessionID))
 	}
 	if runConfig.RunID != "" {
-		tags = append(tags, attribute.String(messageIDAttribute, runConfig.RunID))
+		options = append(options, attribute.String(messageIDAttribute, runConfig.RunID))
+	}
+	add(options, optionPriority)
+
+	protocolKeys := make([]string, 0, len(protocol))
+	for key := range protocol {
+		protocolKeys = append(protocolKeys, key)
+	}
+	sort.Strings(protocolKeys)
+	tags := make([]attribute.KeyValue, 0, len(protocol)+min(len(custom), maxMetadataTagCount))
+	for _, key := range protocolKeys {
+		tags = append(tags, protocol[key])
+	}
+
+	customTags := make([]prioritizedTag, 0, len(custom))
+	for _, tag := range custom {
+		customTags = append(customTags, tag)
+	}
+	sort.Slice(customTags, func(i, j int) bool {
+		if customTags[i].priority != customTags[j].priority {
+			return customTags[i].priority > customTags[j].priority
+		}
+		return customTags[i].value.Key < customTags[j].value.Key
+	})
+	if len(customTags) > maxMetadataTagCount {
+		customTags = customTags[:maxMetadataTagCount]
+	}
+	for _, tag := range customTags {
+		tags = append(tags, tag.value)
 	}
 	return tags
 }
