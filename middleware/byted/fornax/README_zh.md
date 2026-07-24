@@ -52,13 +52,15 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 ## 内容采集
 
-只有 application 明确批准把请求与响应内容导出到 Fornax 时，才设置 `CaptureContent: true`。开启后，root、Agent、model 与 tool span 会包含 `cozeloop.input` 和 `cozeloop.output`，其中可能有消息、tool schema 与 arguments、结果 preview，以及聚合后的流式输出。它还会开启原始 error attribute，因为 provider error 可能包含响应 payload。零值为 `false`；本模块不提供单次请求覆盖，避免因 context 传播错误意外开启采集。
+只有应用明确批准把请求与响应内容导出到 Fornax 时，才设置 `CaptureContent: true`。开启后，exporter 可能填充 root 和 Agent span 的顶层 `input`、`output` 字段；收到相应组件事件时，也会填充 model 或 tool span。内容可能包括消息、工具定义与参数、结果预览，以及聚合后的流式输出。原始错误会写入 `tags_string["error"]`。该配置的零值为 `false`，不支持按单次请求覆盖。
+
+应用主动放入 `Config.Metadata`、`agent.Request.Metadata` 或 `WithMetadata` 的值始终会作为 tag 上报，不受 `CaptureContent` 控制。
 
 关闭内容采集时仍保留运行元数据：span 层级、run/session/node 标识、model/tool 名称、tool call ID、token 用量、finish reason、错误状态、耗时和 application 显式提供的 tags。原始 error 仍会返回给 application。
 
 ## 单次请求标签
 
-`Config` 里的 `UserID`、`DeviceID`、`Metadata` 是默认值。如果这些值每次请求不同，使用 context helper：
+`Config` 中的 `UserID`、`DeviceID` 和 `Metadata` 是默认值。`agent.Request.Metadata` 也会作为本次调用的字符串 tag 上报。身份或元数据随请求变化时，使用 context helper：
 
 ```go
 ctx = fornax.WithUserID(ctx, "user-456")
@@ -78,9 +80,9 @@ Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。Workflo
 | 来源 | 上报值 | 在 Fornax 中的含义 |
 | --- | --- | --- |
 | AK/SK 鉴权得到的 workspace | trace ingest `workspace_id` | 目标工作空间，不是 trace ID 或 span ID。 |
-| 根 Workflow `RunID` | `messaging.message.id` 和 `gopact.run_id` | 分别作为 Fornax `message_id` 和 gopact run 标识。 |
-| 嵌套 Workflow `RunID` | `gopact.run_id` | 子 Agent run 标识，不会替换根 `message_id`。 |
-| Workflow `SessionID` | 根 span 上的 `session.id` | Fornax `thread_id`，用于归组相关消息。 |
+| 通过 `RunOptions` 传入的调用 `RunID` | root query span 上的 `tags_string["message_id"]` | Fornax message ID。 |
+| Workflow 生命周期事件中的 `RunID` | `tags_string["gopact.run_id"]`；根 Workflow 还会写入 `tags_string["message_id"]` | 标识根或子 Workflow run；子 run 不会替换根 message ID。 |
+| Workflow `SessionID` | `tags_string["thread_id"]` | 用于归组相关消息的上报 span。 |
 | `Config.PSM` | 鉴权 `psm`、span `service_name` 和 span tag `psm` | 上报服务身份；默认 `unknown_psm`。 |
 | `Config.UserID` / `Config.DeviceID`，或 context `WithUserID` / `WithDeviceID` | span tags `user_id` / `device_id` | 终端用户维度；context 值会覆盖单次调用中的 Config 默认值。 |
 | `Config.Metadata`，或 context `WithMetadata` | span string tags | 自定义可检索元数据；context tags 会叠加 Config 默认值，保留的 trace 协议字段会被忽略。 |
@@ -89,8 +91,10 @@ Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。Workflo
 | 节点 `NodeID` | 节点 span 名称和 `gopact.node_id` | `model`、`tool` 使用对应 span type，其他值使用 `graph`。 |
 | 节点 `ActivationID` / `AttemptID` | `gopact.activation_id` / `gopact.attempt_id` | 分别标识一次节点激活及其中一次执行尝试。 |
 | `ToolCall.ID` | typed tool span 上的 `tool_call_id` | 标识模型请求的工具调用，不是 OTel Span ID。 |
-| OTel Trace ID / Span ID | OTLP 原生 ID | 从输入 context 继承或由 OTel 生成，不从 RunID、SessionID 派生。 |
+| OTel trace、span 和 parent ID | 顶层 `trace_id`、`span_id` 和 `parent_id` | 从输入 context 继承或由 OTel 生成，不从 RunID、SessionID 派生。 |
 
-开启内容采集时，Trace input/output 遵循 Fornax 的 4 MB 字段限制；超限值不再附加到 span，并在 `cut_off` 中标记。流式 chunk 仍会完整转发给应用，不受该上报限制影响。关闭内容采集时，middleware 不会为 trace 聚合流式内容。
+本模块发送的是 Fornax trace-ingest JSON，不是 OTLP。内部的 `cozeloop.span_type`、`cozeloop.input`、`cozeloop.output` 和 `cozeloop.status_code` attribute 会分别转换为顶层 `span_type`、`input`、`output` 和 `status_code` 字段；其他 attribute 按类型写入 `tags_string`、`tags_long`、`tags_double` 或 `tags_bool`。
 
-核心 Workflow event 契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型/工具结果。支持 component observation 的 Agent 可以额外发出实时 typed model/tool observation；middleware 始终用其中的运行元数据富化同一个节点 span，只有开启内容采集后才上报请求、响应和工具结果 payload。模型或工具 adapter 没有发出的字段不会被虚构。
+开启内容采集时，每个编码后的 input 或 output 字段最多为 4 MiB（4,194,304 bytes）。超限字段会被省略；调用级截断记录在 root span 的 `cut_off` 中，model 和 tool 节点 span 分别记录自身的截断。流式 chunk 仍会完整转发给应用。关闭内容采集时，middleware 不会为 trace 聚合流式内容。
+
+核心 Workflow event 契约只包含生命周期元数据，不包含 provider 请求体、token 用量或模型与工具结果。存在活动 Workflow 节点时，typed model 或 tool observation 会富化该节点 span。没有活动节点时，model observation 会生成独立的 model span，tool observation 则被忽略。只有开启 `CaptureContent` 后才会上报内容 payload；adapter 没有发出的字段不会被虚构。

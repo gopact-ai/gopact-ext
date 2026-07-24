@@ -74,12 +74,14 @@ type Config struct {
 	AK string
 	// SK is the Fornax space secret key.
 	SK string
-	// Region optionally selects the Fornax region, for example CN, SG, US,
-	// Asia-SouthEastBD, or I18N-DEV.
+	// Region optionally selects the Fornax authentication host and default
+	// trace ingest URL. Supported values are CN, BOE, SG, BOEI18N, US,
+	// Asia-SouthEastBD, and I18N-DEV. Empty or unrecognized values use CN.
 	Region string
 	// SpaceID optionally verifies the workspace resolved from AK/SK.
 	SpaceID string
-	// Endpoint optionally overrides the complete OTLP/HTTP trace URL.
+	// Endpoint optionally overrides the complete Fornax trace ingest URL.
+	// It must be an absolute HTTP or HTTPS URL. Authentication still uses Region.
 	Endpoint string
 	// PSM optionally identifies the reporting service. It is sent to Fornax
 	// authentication and attached to exported spans.
