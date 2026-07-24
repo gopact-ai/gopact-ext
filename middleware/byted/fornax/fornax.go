@@ -37,6 +37,7 @@ const (
 	cutOffAttribute       = "cut_off"
 	messageIDAttribute    = "message_id"
 	threadIDAttribute     = "thread_id"
+	agentNameAttribute    = "agent_name"
 	modelNameAttribute    = "model_name"
 	inputTokensAttribute  = "input_tokens"
 	outputTokensAttribute = "output_tokens"
@@ -47,6 +48,12 @@ const (
 	userIDAttribute       = "user_id"
 	deviceIDAttribute     = "device_id"
 	psmAttribute          = "psm"
+	runIDAttribute        = "gopact.run_id"
+	parentRunIDAttribute  = "gopact.parent_run_id"
+	nodeIDAttribute       = "gopact.node_id"
+	activationIDAttribute = "gopact.activation_id"
+	attemptIDAttribute    = "gopact.attempt_id"
+	errorAttribute        = "error"
 	spaceIDTag            = "fornax_space_id"
 	durationTag           = "duration"
 	psmFirstSpanTag       = "fornax_psm_first_span"
@@ -549,7 +556,7 @@ func tagAttributes(psm, userID, deviceID string, metadata map[string]string) []a
 	tags := make([]attribute.KeyValue, 0, len(metadata)+traceTagDefaultCount)
 	for key, value := range metadata {
 		key = strings.TrimSpace(key)
-		if key == "" || reservedTraceAttribute(key) {
+		if key == "" || reservedMetadataKey(key) {
 			continue
 		}
 		tags = append(tags, attribute.String(key, value))
@@ -580,10 +587,17 @@ func requestTags(ctx context.Context, defaults []attribute.KeyValue, metadata ma
 	return tags
 }
 
-func reservedTraceAttribute(key string) bool {
+func reservedMetadataKey(key string) bool {
+	if strings.HasPrefix(key, "cozeloop.") ||
+		strings.HasPrefix(key, "gopact.") ||
+		strings.HasPrefix(key, "fornax_") {
+		return true
+	}
 	switch key {
-	case spanTypeAttribute, inputAttribute, outputAttribute, statusAttribute, cutOffAttribute,
-		messageIDAttribute, threadIDAttribute:
+	case agentNameAttribute, cutOffAttribute, deviceIDAttribute, durationTag, errorAttribute,
+		finishReasonAttribute, inputTokensAttribute, languageSystemTag, messageIDAttribute,
+		modelNameAttribute, outputTokensAttribute, psmAttribute, threadIDAttribute,
+		totalTokensAttribute, toolCallIDAttribute, toolNameAttribute, userIDAttribute:
 		return true
 	default:
 		return false
@@ -764,7 +778,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 	}
 	attributes := []attribute.KeyValue{
 		attribute.String(spanTypeAttribute, rootSpanType),
-		attribute.String("agent_name", name),
+		attribute.String(agentNameAttribute, name),
 	}
 	attributes = append(attributes, tags...)
 	inputCutOff := false
@@ -782,7 +796,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 	agentCtx, agentSpan := a.middleware.tracer.Start(rootCtx, name, trace.WithAttributes(
 		append([]attribute.KeyValue{
 			attribute.String(spanTypeAttribute, agentSpanType),
-			attribute.String("agent_name", name),
+			attribute.String(agentNameAttribute, name),
 		}, tags...)...,
 	))
 	if a.middleware.captureContent {
@@ -1610,10 +1624,10 @@ func setTraceJSON(span trace.Span, key string, value any, cutOff *bool) {
 func runAttributes(event gopact.Event, spanType string) []attribute.KeyValue {
 	attributes := []attribute.KeyValue{
 		attribute.String(spanTypeAttribute, spanType),
-		attribute.String("gopact.run_id", event.RunID),
+		attribute.String(runIDAttribute, event.RunID),
 	}
 	if event.DefinitionID != "" {
-		attributes = append(attributes, attribute.String("agent_name", event.DefinitionID))
+		attributes = append(attributes, attribute.String(agentNameAttribute, event.DefinitionID))
 	}
 	if event.SessionID != "" {
 		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
@@ -1622,7 +1636,7 @@ func runAttributes(event gopact.Event, spanType string) []attribute.KeyValue {
 		attributes = append(attributes, attribute.String(messageIDAttribute, event.RunID))
 	}
 	if event.ParentRunID != "" {
-		attributes = append(attributes, attribute.String("gopact.parent_run_id", event.ParentRunID))
+		attributes = append(attributes, attribute.String(parentRunIDAttribute, event.ParentRunID))
 	}
 	return attributes
 }
@@ -1630,10 +1644,10 @@ func runAttributes(event gopact.Event, spanType string) []attribute.KeyValue {
 func nodeAttributes(event gopact.Event) []attribute.KeyValue {
 	attributes := []attribute.KeyValue{
 		attribute.String(spanTypeAttribute, nodeSpanType(event.NodeID)),
-		attribute.String("gopact.run_id", event.RunID),
-		attribute.String("gopact.node_id", event.NodeID),
-		attribute.String("gopact.activation_id", event.ActivationID),
-		attribute.String("gopact.attempt_id", event.AttemptID),
+		attribute.String(runIDAttribute, event.RunID),
+		attribute.String(nodeIDAttribute, event.NodeID),
+		attribute.String(activationIDAttribute, event.ActivationID),
+		attribute.String(attemptIDAttribute, event.AttemptID),
 	}
 	if event.SessionID != "" {
 		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
@@ -1678,5 +1692,5 @@ func markError(span trace.Span, err error, detail bool) {
 	if !detail {
 		return
 	}
-	span.SetAttributes(attribute.String("error", err.Error()))
+	span.SetAttributes(attribute.String(errorAttribute, err.Error()))
 }

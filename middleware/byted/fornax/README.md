@@ -69,11 +69,13 @@ ctx = fornax.WithMetadata(ctx, map[string]string{"request_id": "req-1"})
 response, err := tracedAgent.Invoke(ctx, request)
 ```
 
+Metadata keys owned by the trace protocol are ignored. This includes keys beginning with `cozeloop.`, `gopact.`, or `fornax_`, as well as unprefixed identity, component, usage, truncation, and error keys. Use `Config`, `WithUserID`, `WithDeviceID`, and `RunOptions` for those values instead. Integrations that previously supplied `user_id`, `device_id`, run or session identifiers, component names, token usage, or errors through `Metadata` must move them to the corresponding typed input.
+
 `Use` preserves `InvokeStream` when the target's dynamic type implements `agent.StreamingAgent`; use `UseStreaming` when the target is statically typed as `agent.StreamingAgent`. Streaming is traced through completion, failure, or consumer cancellation.
 
 `AK` and `SK` are the Fornax space credentials. `Region` is optional and selects the authentication host and default trace ingest URL; supported values are `CN`, `BOE`, `SG`, `BOEI18N`, `US`, `Asia-SouthEastBD`, and `I18N-DEV`, while empty or unrecognized values use `CN`. `SpaceID` is optional; when provided, it must match the workspace resolved from AK/SK. `Endpoint` is an advanced override for the complete Fornax trace ingest URL; authentication still uses `Region`. `PSM` is sent in the Fornax authentication body and exported as span `service_name` plus the `psm` tag; when omitted it defaults to `unknown_psm`, matching the Fornax SDK fallback. `UserID`, `DeviceID`, and accepted `Metadata` entries are exported as string tags on every reported span, and can be overridden per request with `WithUserID`, `WithDeviceID`, and `WithMetadata`.
 
-The Agent invocation is reported as `fornax_query`, with an `Agent` span under it. Invocation RunID and SessionID from `RunOptions` become Fornax `message_id` and `thread_id`; Workflow lifecycle events additionally attach `gopact.run_id` to each Workflow span. Nested Workflow runs are reported as `Agent`; nodes named `model` and `tool` use their corresponding Fornax span types, and other nodes use `graph`. Existing event sinks passed to `Invoke` remain attached. Call `Close` during application shutdown to flush pending spans.
+The Agent invocation is reported as `fornax_query`, with an `Agent` span under it. Invocation options and Workflow lifecycle events supply the IDs described below; when both provide a RunID or SessionID, the root Workflow lifecycle value updates the root span. Nested Workflow runs are reported as `Agent`; nodes named `model` and `tool` use their corresponding Fornax span types, and other nodes use `graph`. Existing event sinks passed to `Invoke` remain attached. Call `Close` during application shutdown to flush pending spans.
 
 ## ID correspondence
 

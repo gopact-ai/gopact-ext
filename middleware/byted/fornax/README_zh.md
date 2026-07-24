@@ -69,11 +69,13 @@ ctx = fornax.WithMetadata(ctx, map[string]string{"request_id": "req-1"})
 response, err := tracedAgent.Invoke(ctx, request)
 ```
 
+链路协议自己管理的元数据键会被忽略，包括以 `cozeloop.`、`gopact.`、`fornax_` 开头的键，以及没有前缀的身份、组件、用量、截断和错误字段。请改用 `Config`、`WithUserID`、`WithDeviceID` 和 `RunOptions` 传入这些值。旧版本如果通过 `Metadata` 写入 `user_id`、`device_id`、运行或会话标识、组件名称、token 用量或错误信息，需要迁移到对应的类型化入口。
+
 如果 target 的动态类型实现了 `agent.StreamingAgent`，`Use` 会保留 `InvokeStream`；当 target 的静态类型就是 `agent.StreamingAgent` 时，可直接使用 `UseStreaming`。两种入口都会持续追踪到流正常结束、失败或被消费者取消。
 
 `AK` 和 `SK` 是 Fornax 空间凭据。`Region` 可选，用于选择鉴权地址和默认 trace ingest URL；支持 `CN`、`BOE`、`SG`、`BOEI18N`、`US`、`Asia-SouthEastBD` 和 `I18N-DEV`，空值或未知值按 `CN` 处理。`SpaceID` 可选；传入时必须与 AK/SK 鉴权得到的空间一致。`Endpoint` 是完整 Fornax trace ingest URL 的高级覆盖项，鉴权地址仍由 `Region` 决定。`PSM` 会写入 Fornax 鉴权请求，并作为 span `service_name` 和标签 `psm` 上报；未传时默认 `unknown_psm`，与 Fornax SDK 的兜底行为一致。`UserID`、`DeviceID` 和被接受的 `Metadata` 条目会作为字符串标签附加到所有上报 span，也可以通过 `WithUserID`、`WithDeviceID` 和 `WithMetadata` 按请求覆盖。
 
-Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。通过 `RunOptions` 传入的调用 RunID 和 SessionID 会成为 Fornax `message_id` 和 `thread_id`；Workflow 生命周期事件还会在各自的 Workflow span 上写入 `gopact.run_id`。嵌套 Workflow run 上报为 `Agent`；名为 `model` 和 `tool` 的节点分别使用对应的 Fornax span type，其他节点使用 `graph`。传给 `Invoke` 的已有事件接收器会继续生效。应用退出时调用 `Close`，刷新尚未上报的 span。
+Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。调用选项和 Workflow 生命周期事件会提供下表中的标识；两者同时提供 RunID 或 SessionID 时，根 Workflow 的生命周期值会更新根 span。嵌套 Workflow run 上报为 `Agent`；名为 `model` 和 `tool` 的节点分别使用对应的 Fornax span type，其他节点使用 `graph`。传给 `Invoke` 的已有事件接收器会继续生效。应用退出时调用 `Close`，刷新尚未上报的 span。
 
 ## ID 对应关系
 

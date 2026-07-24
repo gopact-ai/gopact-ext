@@ -280,6 +280,132 @@ func TestNewWithAuthUsesExplicitFornaxConfiguration(t *testing.T) {
 	}
 }
 
+func TestMetadataCannotOverrideTraceProtocolAttributes(t *testing.T) {
+	reserved := []string{
+		agentNameAttribute, cutOffAttribute, deviceIDAttribute, durationTag, errorAttribute,
+		finishReasonAttribute, inputTokensAttribute, languageSystemTag, messageIDAttribute,
+		modelNameAttribute, outputTokensAttribute, psmAttribute, threadIDAttribute,
+		totalTokensAttribute, toolCallIDAttribute, toolNameAttribute, userIDAttribute,
+		spanTypeAttribute, inputAttribute, outputAttribute, statusAttribute,
+		runIDAttribute, parentRunIDAttribute, nodeIDAttribute, activationIDAttribute,
+		attemptIDAttribute, spaceIDTag, psmFirstSpanTag,
+		"cozeloop.future", "gopact.future", "fornax_future",
+	}
+	for _, key := range reserved {
+		if !reservedMetadataKey(key) {
+			t.Fatalf("reservedMetadataKey(%q) = false", key)
+		}
+	}
+	for _, key := range []string{
+		"tenant", "app.run_id", "cozeloopx.input", "gopactx.run_id", "fornaxx_space_id",
+	} {
+		if reservedMetadataKey(key) {
+			t.Fatalf("reservedMetadataKey(%q) = true", key)
+		}
+	}
+
+	configMetadata := map[string]string{
+		"config_tag": "config-value",
+		"shared":     "config-value",
+	}
+	requestMetadata := map[string]string{
+		"request_tag": "request-value",
+		"shared":      "request-value",
+	}
+	contextMetadata := map[string]string{
+		"context_tag": "context-value",
+		"shared":      "context-value",
+	}
+	for _, key := range reserved {
+		configMetadata[key] = "config-override"
+		requestMetadata[key] = "request-override"
+		contextMetadata[key] = "context-override"
+	}
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	middleware := newMiddleware(provider, traceTags(authConfig{
+		psm:      "demo.psm",
+		userID:   "default-user",
+		deviceID: "default-device",
+		metadata: configMetadata,
+	}), false)
+	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+
+	ctx := WithMetadata(t.Context(), contextMetadata)
+	ctx = WithUserID(ctx, "context-user")
+	ctx = WithDeviceID(ctx, "context-device")
+	if _, err := middleware.Use(testAgent{}).Invoke(ctx, agent.Request{Metadata: requestMetadata}); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+
+	spans := exporter.GetSpans()
+	for _, span := range spans {
+		if got := stringAttribute(span.Attributes, psmAttribute); got != "demo.psm" {
+			t.Fatalf("%s psm = %q, want demo.psm", span.Name, got)
+		}
+		if got := stringAttribute(span.Attributes, userIDAttribute); got != "context-user" {
+			t.Fatalf("%s user_id = %q, want context-user", span.Name, got)
+		}
+		if got := stringAttribute(span.Attributes, deviceIDAttribute); got != "context-device" {
+			t.Fatalf("%s device_id = %q, want context-device", span.Name, got)
+		}
+		for key, want := range map[string]string{
+			"config_tag":  "config-value",
+			"request_tag": "request-value",
+			"context_tag": "context-value",
+			"shared":      "context-value",
+		} {
+			if got := stringAttribute(span.Attributes, key); got != want {
+				t.Fatalf("%s %s = %q, want %q", span.Name, key, got, want)
+			}
+		}
+		if got := stringAttribute(span.Attributes, errorAttribute); got != "" {
+			t.Fatalf("%s error = %q, want empty", span.Name, got)
+		}
+	}
+
+	root := spanNamedType(t, spans, "react", rootSpanType)
+	if got := stringAttribute(root.Attributes, runIDAttribute); got != "run-1" {
+		t.Fatalf("root run_id = %q, want run-1", got)
+	}
+	if got := stringAttribute(root.Attributes, messageIDAttribute); got != "run-1" {
+		t.Fatalf("root message_id = %q, want run-1", got)
+	}
+	if got := stringAttribute(root.Attributes, threadIDAttribute); got != "session-1" {
+		t.Fatalf("root thread_id = %q, want session-1", got)
+	}
+	if got := stringAttribute(root.Attributes, agentNameAttribute); got != "react" {
+		t.Fatalf("root agent_name = %q, want react", got)
+	}
+
+	child := spanNamed(t, spans, "child")
+	if got := stringAttribute(child.Attributes, runIDAttribute); got != "run-2" {
+		t.Fatalf("child run_id = %q, want run-2", got)
+	}
+	if got := stringAttribute(child.Attributes, parentRunIDAttribute); got != "run-1" {
+		t.Fatalf("child parent_run_id = %q, want run-1", got)
+	}
+
+	model := spanNamed(t, spans, "model")
+	if got := stringAttribute(model.Attributes, nodeIDAttribute); got != "model" {
+		t.Fatalf("model node_id = %q, want model", got)
+	}
+	if got := stringAttribute(model.Attributes, activationIDAttribute); got != "act-1" {
+		t.Fatalf("model activation_id = %q, want act-1", got)
+	}
+	if got := stringAttribute(model.Attributes, attemptIDAttribute); got != "act-1/attempt-1" {
+		t.Fatalf("model attempt_id = %q, want act-1/attempt-1", got)
+	}
+
+	tool := spanNamed(t, spans, "tool")
+	if got := stringAttribute(tool.Attributes, toolNameAttribute); got != "tool" {
+		t.Fatalf("tool name = %q, want tool", got)
+	}
+	if got := stringAttribute(tool.Attributes, toolCallIDAttribute); got != "" {
+		t.Fatalf("tool call ID = %q, want empty", got)
+	}
+}
+
 func rootUploadSpan(t *testing.T, span uploadSpan) bool {
 	t.Helper()
 	if span.SpanType == rootSpanType {
@@ -402,6 +528,13 @@ func TestMiddlewareDefaultsToMetadataOnly(t *testing.T) {
 
 	if _, err := middleware.Use(componentEventAgent{}).Invoke(t.Context(), agent.Request{
 		Messages: []gopact.Message{gopact.UserMessage("private-message")},
+		Metadata: map[string]string{
+			modelNameAttribute:    "metadata-model",
+			totalTokensAttribute:  "999",
+			finishReasonAttribute: "metadata-finish",
+			toolNameAttribute:     "metadata-tool",
+			toolCallIDAttribute:   "metadata-call",
+		},
 	}); err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
@@ -414,6 +547,9 @@ func TestMiddlewareDefaultsToMetadataOnly(t *testing.T) {
 	}
 	if got, ok := int64Attribute(model.Attributes, totalTokensAttribute); !ok || got != 3 {
 		t.Fatalf("tokens = %d, want 3", got)
+	}
+	if got := stringAttribute(model.Attributes, finishReasonAttribute); got != "tool_calls" {
+		t.Fatalf("finish_reason = %q, want tool_calls", got)
 	}
 	if got := stringAttribute(tool.Attributes, toolNameAttribute); got != "lookup" {
 		t.Fatalf("tool_name = %q, want lookup", got)
@@ -570,11 +706,11 @@ func TestUseStreamingReportsOutput(t *testing.T) {
 	}
 	var chunks []agent.Chunk
 	request := agent.Request{Metadata: map[string]string{
-		"user_id": "user-1",
 		"chat_id": "chat-1",
 	}}
+	ctx := WithUserID(t.Context(), "user-1")
 	for chunk, err := range target.InvokeStream(
-		t.Context(),
+		ctx,
 		request,
 		gopact.WithSessionID("thread-1"),
 		gopact.WithRunID("message-1"),
@@ -735,7 +871,8 @@ func TestMiddlewareReportsErrors(t *testing.T) {
 			middleware := newMiddleware(provider, nil, test.capture)
 			t.Cleanup(func() { _ = middleware.Close(t.Context()) })
 
-			if _, err := middleware.Use(failingTestAgent{}).Invoke(t.Context(), agent.Request{}); !errors.Is(err, errTestAgent) {
+			request := agent.Request{Metadata: map[string]string{errorAttribute: "metadata-override"}}
+			if _, err := middleware.Use(failingTestAgent{}).Invoke(t.Context(), request); !errors.Is(err, errTestAgent) {
 				t.Fatalf("Invoke() error = %v, want test error", err)
 			}
 			spans := exporter.GetSpans()
