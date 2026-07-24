@@ -99,8 +99,14 @@ type Config struct {
 	UserID string
 	// DeviceID optionally attaches the end-user device identity to exported spans.
 	DeviceID string
-	// Metadata attaches custom string tags to exported spans. Protocol-owned
-	// keys are ignored, and at most 64 custom keys are exported per invocation.
+	// Metadata provides default custom string tags for exported spans. It is
+	// combined with agent.Request.Metadata and WithMetadata for each invocation.
+	// For duplicate keys, WithMetadata takes precedence over
+	// agent.Request.Metadata, which takes precedence over Metadata. Protocol-owned
+	// keys are ignored. At most 64 custom keys are selected across all three
+	// sources, in precedence order and then lexicographically within one source.
+	// This budget does not change the OpenTelemetry provider's total attribute
+	// limit, which also counts protocol and runtime attributes.
 	Metadata map[string]string
 	// CaptureContent enables trace input/output payloads, including messages,
 	// model and tool arguments, responses, result previews, and verbose error details.
@@ -131,8 +137,9 @@ func WithDeviceID(ctx context.Context, deviceID string) context.Context {
 }
 
 // WithMetadata attaches request-scoped custom string tags to Fornax spans.
-// Protocol-owned keys are ignored, and at most 64 custom keys are exported
-// per invocation.
+// It replaces metadata from an earlier WithMetadata call in ctx. The values
+// take precedence over agent.Request.Metadata and Config.Metadata; the
+// selection rules and limits are documented on Config.Metadata.
 func WithMetadata(ctx context.Context, metadata map[string]string) context.Context {
 	config := traceContext(ctx)
 	config.metadata = copyMetadata(metadata)
@@ -869,14 +876,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 	if a.middleware.captureContent {
 		setTraceJSON(agentSpan, inputAttribute, agentInput(request), new(bool))
 	}
-	return agentCtx, root, agentSpan, newEventSink(
-		a.middleware,
-		agentCtx,
-		root,
-		agentSpan,
-		tags,
-		runConfig,
-	), inputCutOff, nil
+	return agentCtx, root, agentSpan, newEventSink(a.middleware, agentCtx, root, agentSpan, tags), inputCutOff, nil
 }
 
 func finishRoot(root trace.Span, output any, err error, inputCutOff, capture bool) {
@@ -1350,20 +1350,23 @@ type eventSink struct {
 	nodes       map[string]nodeSpanState
 }
 
-func newEventSink(
-	m *Middleware,
-	rootCtx context.Context,
-	root, agent trace.Span,
-	tags []attribute.KeyValue,
-	runConfig gopact.RunConfig,
-) *eventSink {
+func newEventSink(m *Middleware, rootCtx context.Context, root, agent trace.Span, tags []attribute.KeyValue) *eventSink {
 	return &eventSink{
 		tracer: m.tracer, rootCtx: rootCtx, root: root, agent: agent, tags: tags,
 		captureContent:         m.captureContent,
-		hasInvocationRunID:     runConfig.RunID != "",
-		hasInvocationSessionID: runConfig.SessionID != "",
+		hasInvocationRunID:     containsAttribute(tags, messageIDAttribute),
+		hasInvocationSessionID: containsAttribute(tags, threadIDAttribute),
 		runs:                   make(map[string]spanState), nodes: make(map[string]nodeSpanState),
 	}
+}
+
+func containsAttribute(attributes []attribute.KeyValue, key string) bool {
+	for _, value := range attributes {
+		if string(value.Key) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *eventSink) Emit(_ context.Context, event gopact.Event) error {
