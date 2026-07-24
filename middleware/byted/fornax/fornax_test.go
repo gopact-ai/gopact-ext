@@ -767,17 +767,16 @@ func TestMiddlewareReportsDirectModelSpan(t *testing.T) {
 	root := spanNamedType(t, spans, "direct", rootSpanType)
 	model := spanNamedType(t, spans, "model", modelSpanType)
 	agentSpan := spanNamedType(t, spans, "direct", agentSpanType)
-	if got := stringAttribute(root.Attributes, messageIDAttribute); got != "message-1" {
-		t.Fatalf("root message_id = %q, want message-1", got)
-	}
-	if got := stringAttribute(root.Attributes, threadIDAttribute); got != "thread-1" {
-		t.Fatalf("root thread_id = %q, want thread-1", got)
+	for _, span := range []tracetest.SpanStub{root, agentSpan, model} {
+		if got := stringAttribute(span.Attributes, messageIDAttribute); got != "message-1" {
+			t.Fatalf("%s message_id = %q, want message-1", span.Name, got)
+		}
+		if got := stringAttribute(span.Attributes, threadIDAttribute); got != "thread-1" {
+			t.Fatalf("%s thread_id = %q, want thread-1", span.Name, got)
+		}
 	}
 	if model.Parent.SpanID() != agentSpan.SpanContext.SpanID() {
 		t.Fatal("model span is not a child of the direct Agent span")
-	}
-	if got := stringAttribute(model.Attributes, threadIDAttribute); got != "thread-1" {
-		t.Fatalf("model thread_id = %q, want thread-1", got)
 	}
 	if got := stringAttribute(model.Attributes, modelNameAttribute); got != "demo-model" {
 		t.Fatalf("model_name = %q, want demo-model", got)
