@@ -639,7 +639,11 @@ func TestInvocationIDsFallbackIndependently(t *testing.T) {
 				t.Fatalf("Invoke() error = %v", err)
 			}
 
-			for _, span := range exporter.GetSpans() {
+			spans := exporter.GetSpans()
+			if len(spans) != 5 {
+				t.Fatalf("reported %d spans, want 5", len(spans))
+			}
+			for _, span := range spans {
 				if got := stringAttribute(span.Attributes, messageIDAttribute); got != tt.wantMessage {
 					t.Fatalf("%s message_id = %q, want %q", span.Name, got, tt.wantMessage)
 				}
