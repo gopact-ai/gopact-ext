@@ -6,7 +6,7 @@ Chinese documentation: [README_zh.md](README_zh.md)
 
 Official extensions for the redesigned `gopact` core.
 
-> **Go 1.27+ only.** Until Go 1.27.0 is released, use the Go 1.27 RC 2 toolchain. gopact-ext now publishes stable versions only.
+> **Requires Go 1.27 or newer.**
 
 The committed `go.work` joins every module in this repository. Cross-repository CI also
 tests the extension sources against the current `gopact` and example sources without
