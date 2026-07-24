@@ -162,6 +162,70 @@ func TestAgentExecutesMultipleToolsAndReturnsStableFeedback(t *testing.T) {
 	}
 }
 
+func TestAgentTranscriptFollowsDeclarationOrderNotCompletion(t *testing.T) {
+	// The model declares three tool calls in the order a, b, c. We force the
+	// tools to *complete* in the reverse order c, b, a. A lossless transcript
+	// must feed the tool outcomes back in declaration order (a, b, c) regardless
+	// of completion timing, so replay and prompt-cache keys stay deterministic.
+	model := &scriptedModel{responses: []gopact.ModelResponse{
+		{
+			Message: gopact.Message{Role: "assistant", ToolCalls: []gopact.ToolCall{
+				{ID: "call-a", Name: "slow"},
+				{ID: "call-b", Name: "mid"},
+				{ID: "call-c", Name: "fast"},
+			}},
+			Intent: gopact.ToolCallIntent{},
+		},
+		finalResponse("done"),
+	}}
+	cDone := make(chan struct{})
+	bDone := make(chan struct{})
+	fast := directTool("fast", func(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
+		close(cDone)
+		return resultOutcome(call, "fast-result"), nil
+	})
+	mid := directTool("mid", func(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
+		<-cDone
+		close(bDone)
+		return resultOutcome(call, "mid-result"), nil
+	})
+	slow := directTool("slow", func(_ context.Context, call gopact.ToolCall) (gopact.ToolOutcome, error) {
+		<-bDone
+		return resultOutcome(call, "slow-result"), nil
+	})
+	target, err := New(testIdentity(), model, WithTools(slow, mid, fast))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := target.Invoke(context.Background(), agent.Request{
+		Messages: []gopact.Message{gopact.UserMessage("work")},
+	}); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	requests := model.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("model requests = %d, want 2", len(requests))
+	}
+	var toolOrder []string
+	previews := make(map[string]string)
+	for _, message := range requests[1].Messages {
+		if message.Role == gopact.MessageRoleTool {
+			toolOrder = append(toolOrder, message.ToolCallID)
+			previews[message.ToolCallID] = message.Parts[0].Text
+		}
+	}
+	if want := []string{"call-a", "call-b", "call-c"}; !reflect.DeepEqual(toolOrder, want) {
+		t.Fatalf("tool message order = %v, want declaration order %v", toolOrder, want)
+	}
+	if want := map[string]string{
+		"call-a": "slow-result",
+		"call-b": "mid-result",
+		"call-c": "fast-result",
+	}; !reflect.DeepEqual(previews, want) {
+		t.Fatalf("tool feedback = %+v, want CallID associations %+v", previews, want)
+	}
+}
+
 func TestAgentFeedsUnknownToolAsTypedRejection(t *testing.T) {
 	model := &scriptedModel{responses: []gopact.ModelResponse{
 		{
