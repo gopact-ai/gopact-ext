@@ -936,6 +936,15 @@ func TestStreamingConsumerStopEndsTrace(t *testing.T) {
 	if got, ok := int64Attribute(root.Attributes, "cozeloop.status_code"); !ok || got != failedStatusCode {
 		t.Fatalf("root status code = %d, want %d", got, failedStatusCode)
 	}
+	// Even on the consumer-stop cleanup path, and with CaptureContent disabled,
+	// the failure classification must reach the wire.
+	kind := stringAttribute(root.Attributes, errorKindAttribute)
+	if kind == "" {
+		t.Fatalf("root error.kind is empty, want a classification")
+	}
+	if got := uploadSpanFrom(root.Snapshot(), "space", "service").TagsString[errorKindAttribute]; got != kind {
+		t.Fatalf("root error.kind on wire = %q, want %q", got, kind)
+	}
 }
 
 func TestStreamingTraceOutputIsBounded(t *testing.T) {
@@ -1042,6 +1051,19 @@ func assertErrorMetadata(t *testing.T, span tracetest.SpanStub) {
 	}
 	if got, ok := int64Attribute(span.Attributes, statusAttribute); !ok || got != failedStatusCode {
 		t.Fatalf("%s status code = %d, want %d", span.Name, got, failedStatusCode)
+	}
+	// The safe failure classification must always reach the wire, even when
+	// CaptureContent is disabled, so failures stay diagnosable.
+	kind := stringAttribute(span.Attributes, errorKindAttribute)
+	if kind == "" {
+		t.Fatalf("%s error.kind attribute is empty, want a classification", span.Name)
+	}
+	uploaded := uploadSpanFrom(span.Snapshot(), "space", "service")
+	if got := uploaded.TagsString[errorKindAttribute]; got != kind {
+		t.Fatalf("%s error.kind on wire = %q, want %q", span.Name, got, kind)
+	}
+	if span.Status.Description != kind {
+		t.Fatalf("%s status description = %q, want %q", span.Name, span.Status.Description, kind)
 	}
 }
 
