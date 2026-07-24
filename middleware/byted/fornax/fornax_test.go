@@ -604,6 +604,53 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	}
 }
 
+func TestInvocationIDsFallbackIndependently(t *testing.T) {
+	tests := []struct {
+		name        string
+		options     []gopact.RunOption
+		wantMessage string
+		wantThread  string
+	}{
+		{
+			name:        "explicit run ID",
+			options:     []gopact.RunOption{gopact.WithRunID("option-run")},
+			wantMessage: "option-run",
+			wantThread:  "session-1",
+		},
+		{
+			name:        "explicit session ID",
+			options:     []gopact.RunOption{gopact.WithSessionID("option-session")},
+			wantMessage: "run-1",
+			wantThread:  "option-session",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exporter := tracetest.NewInMemoryExporter()
+			provider := newTestTracerProvider(exporter)
+			middleware := newMiddleware(provider, nil, false)
+			t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+
+			if _, err := middleware.Use(testAgent{}).Invoke(
+				t.Context(),
+				agent.Request{},
+				tt.options...,
+			); err != nil {
+				t.Fatalf("Invoke() error = %v", err)
+			}
+
+			for _, span := range exporter.GetSpans() {
+				if got := stringAttribute(span.Attributes, messageIDAttribute); got != tt.wantMessage {
+					t.Fatalf("%s message_id = %q, want %q", span.Name, got, tt.wantMessage)
+				}
+				if got := stringAttribute(span.Attributes, threadIDAttribute); got != tt.wantThread {
+					t.Fatalf("%s thread_id = %q, want %q", span.Name, got, tt.wantThread)
+				}
+			}
+		})
+	}
+}
+
 func TestMiddlewareDefaultsToMetadataOnly(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := newTestTracerProvider(exporter)

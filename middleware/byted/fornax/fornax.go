@@ -1334,14 +1334,14 @@ type nodeSpanState struct {
 }
 
 type eventSink struct {
-	tracer         trace.Tracer
-	rootCtx        context.Context
-	root           trace.Span
-	agent          trace.Span
-	tags           []attribute.KeyValue
-	captureContent bool
-	hasRunID       bool
-	hasSessionID   bool
+	tracer                 trace.Tracer
+	rootCtx                context.Context
+	root                   trace.Span
+	agent                  trace.Span
+	tags                   []attribute.KeyValue
+	captureContent         bool
+	hasInvocationRunID     bool
+	hasInvocationSessionID bool
 
 	mu          sync.Mutex
 	rootRunID   string
@@ -1359,10 +1359,10 @@ func newEventSink(
 ) *eventSink {
 	return &eventSink{
 		tracer: m.tracer, rootCtx: rootCtx, root: root, agent: agent, tags: tags,
-		captureContent: m.captureContent,
-		hasRunID:       runConfig.RunID != "",
-		hasSessionID:   runConfig.SessionID != "",
-		runs:           make(map[string]spanState), nodes: make(map[string]nodeSpanState),
+		captureContent:         m.captureContent,
+		hasInvocationRunID:     runConfig.RunID != "",
+		hasInvocationSessionID: runConfig.SessionID != "",
+		runs:                   make(map[string]spanState), nodes: make(map[string]nodeSpanState),
 	}
 }
 
@@ -1421,13 +1421,13 @@ func (s *eventSink) startRun(event gopact.Event) {
 
 func (s *eventSink) backfillInvocationIDs(event gopact.Event) {
 	var attributes []attribute.KeyValue
-	if !s.hasRunID {
+	if !s.hasInvocationRunID {
 		attributes = append(attributes, attribute.String(messageIDAttribute, event.RunID))
-		s.hasRunID = true
+		s.hasInvocationRunID = true
 	}
-	if !s.hasSessionID && event.SessionID != "" {
+	if !s.hasInvocationSessionID && event.SessionID != "" {
 		attributes = append(attributes, attribute.String(threadIDAttribute, event.SessionID))
-		s.hasSessionID = true
+		s.hasInvocationSessionID = true
 	}
 	if len(attributes) == 0 {
 		return
