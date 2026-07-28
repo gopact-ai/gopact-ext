@@ -333,6 +333,7 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, maxTextBytes), maxStreamFrameBytes)
 		terminal := false
+		toolIDs := make(map[int]string)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, ":") {
@@ -350,13 +351,12 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 				yield(gopact.ModelOutputChunk{}, fmt.Errorf("openai: decode stream chunk: %w", err))
 				return
 			}
-			if len(chunk.Choices) == 0 {
-				continue
+			text, finished, err := c.emitStreamChunk(callCtx, cfg.ModelEventSinks, chunk, toolIDs)
+			if err != nil {
+				yield(gopact.ModelOutputChunk{}, err)
+				return
 			}
-			if chunk.Choices[0].FinishReason != "" {
-				terminal = true
-			}
-			text := chunk.Choices[0].Delta.Content
+			terminal = terminal || finished
 			if text == "" {
 				continue
 			}
@@ -365,9 +365,6 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 				return
 			}
 			if !yield(gopact.ModelOutputChunk{Text: text}, nil) {
-				return
-			}
-			if terminal {
 				return
 			}
 		}
@@ -379,9 +376,61 @@ func (c *Model) InvokeStream(ctx context.Context, req gopact.ModelRequest, opts 
 	}
 }
 
+func (c *Model) emitStreamChunk(ctx context.Context, sinks []gopact.ModelEventSink, chunk chatStreamChunk, toolIDs map[int]string) (string, bool, error) {
+	if chunk.Usage != (chatUsage{}) {
+		usage, err := json.Marshal(chunk.Usage.toGopact())
+		if err != nil {
+			return "", false, fmt.Errorf("openai: encode usage event: %w", err)
+		}
+		if err := c.emitEvent(ctx, sinks, gopact.ModelEvent{Type: gopact.ModelEventUsage, Payload: usage}); err != nil {
+			return "", false, err
+		}
+	}
+	if len(chunk.Choices) == 0 {
+		return "", false, nil
+	}
+	choice := chunk.Choices[0]
+	if choice.FinishReason != "" {
+		if err := c.emitEvent(ctx, sinks, gopact.ModelEvent{
+			Type: gopact.ModelEventFinish, Summary: choice.FinishReason,
+		}); err != nil {
+			return "", false, err
+		}
+	}
+	for _, call := range choice.Delta.ToolCalls {
+		if err := c.emitToolCallDelta(ctx, sinks, call, toolIDs); err != nil {
+			return "", false, err
+		}
+	}
+	return choice.Delta.Content, choice.FinishReason != "", nil
+}
+
+func (c *Model) emitToolCallDelta(ctx context.Context, sinks []gopact.ModelEventSink, call chatStreamToolCall, toolIDs map[int]string) error {
+	if call.ID != "" {
+		toolIDs[call.Index] = call.ID
+	}
+	id := toolIDs[call.Index]
+	if id == "" {
+		id = strconv.Itoa(call.Index)
+	}
+	payload, err := json.Marshal(call)
+	if err != nil {
+		return fmt.Errorf("openai: encode tool call delta: %w", err)
+	}
+	return c.emitEvent(ctx, sinks, gopact.ModelEvent{
+		Type: gopact.ModelEventToolCallDelta, Bytes: []byte(call.Function.Arguments),
+		Summary: bounded(id), Payload: payload,
+	})
+}
+
 func (c *Model) emitDelta(ctx context.Context, sinks []gopact.ModelEventSink, text string) error {
+	return c.emitEvent(ctx, sinks, gopact.ModelEvent{Type: gopact.ModelEventMessageDelta, Summary: bounded(text)})
+}
+
+func (c *Model) emitEvent(ctx context.Context, sinks []gopact.ModelEventSink, event gopact.ModelEvent) error {
+	event.Source = c.provider
 	for _, sink := range sinks {
-		if err := sink.EmitModelEvent(ctx, gopact.ModelEvent{Type: gopact.ModelEventMessageDelta, Source: c.provider, Summary: bounded(text)}); err != nil {
+		if err := sink.EmitModelEvent(ctx, event); err != nil {
 			return err
 		}
 	}
@@ -556,6 +605,9 @@ func (c *Model) newChatRequest(req gopact.ModelRequest, stream bool) (chatReques
 		Stop:        req.Stop,
 		Seed:        req.Seed,
 		Stream:      stream,
+	}
+	if stream {
+		body.StreamOptions = &chatStreamOptions{IncludeUsage: true}
 	}
 	if req.Reasoning.Effort != "" {
 		body.ReasoningEffort = req.Reasoning.Effort
@@ -912,18 +964,23 @@ func cloneInt64(value *int64) *int64 {
 }
 
 type chatRequest struct {
-	Model           string        `json:"model"`
-	Messages        []chatMessage `json:"messages"`
-	Temperature     *float64      `json:"temperature,omitempty"`
-	TopP            *float64      `json:"top_p,omitempty"`
-	MaxTokens       int           `json:"max_tokens,omitempty"`
-	Seed            *int64        `json:"seed,omitempty"`
-	Stop            []string      `json:"stop,omitempty"`
-	Tools           []chatTool    `json:"tools,omitempty"`
-	ToolChoice      any           `json:"tool_choice,omitempty"`
-	ResponseFormat  any           `json:"response_format,omitempty"`
-	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
-	Stream          bool          `json:"stream,omitempty"`
+	Model           string             `json:"model"`
+	Messages        []chatMessage      `json:"messages"`
+	Temperature     *float64           `json:"temperature,omitempty"`
+	TopP            *float64           `json:"top_p,omitempty"`
+	MaxTokens       int                `json:"max_tokens,omitempty"`
+	Seed            *int64             `json:"seed,omitempty"`
+	Stop            []string           `json:"stop,omitempty"`
+	Tools           []chatTool         `json:"tools,omitempty"`
+	ToolChoice      any                `json:"tool_choice,omitempty"`
+	ResponseFormat  any                `json:"response_format,omitempty"`
+	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
+	Stream          bool               `json:"stream,omitempty"`
+	StreamOptions   *chatStreamOptions `json:"stream_options,omitempty"`
+}
+
+type chatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type chatMessage struct {
@@ -980,9 +1037,20 @@ type chatJSONSchema struct {
 
 type chatStreamChunk struct {
 	Choices []struct {
-		Delta        chatMessage `json:"delta"`
-		FinishReason string      `json:"finish_reason"`
+		Delta struct {
+			Content   string               `json:"content"`
+			ToolCalls []chatStreamToolCall `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage chatUsage `json:"usage"`
+}
+
+type chatStreamToolCall struct {
+	Index    int              `json:"index"`
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function chatToolFunction `json:"function"`
 }
 
 type chatUsage struct {
