@@ -511,8 +511,76 @@ func TestModelInvokeStream(t *testing.T) {
 	if !got.Stream {
 		t.Fatal("stream = false, want true")
 	}
+	if got.StreamOptions == nil || !got.StreamOptions.IncludeUsage {
+		t.Fatal("stream_options.include_usage = false, want true")
+	}
 	if !slices.Equal(chunks, []string{"po", "ng"}) || !slices.Equal(events, chunks) {
 		t.Fatalf("chunks/events = %+v/%+v, want streamed chunks", chunks, events)
+	}
+}
+
+func TestModelInvokeStreamEmitsToolUsageAndFinishEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\"}}]},\"finish_reason\":null}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"x\\\"}\"}}]},\"finish_reason\":null}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	model, err := New("test", server.URL, "test-key", "test-model", WithInsecureHTTP())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []gopact.ModelEvent
+	for _, err := range model.InvokeStream(
+		t.Context(),
+		model.NewRequest(gopact.UserMessage("lookup")),
+		gopact.WithModelEventHandler(func(_ context.Context, event gopact.ModelEvent) error {
+			events = append(events, event)
+			return nil
+		}),
+	) {
+		if err != nil {
+			t.Fatalf("InvokeStream() error = %v", err)
+		}
+	}
+	gotTypes := make([]gopact.ModelEventType, len(events))
+	for i := range events {
+		gotTypes[i] = events[i].Type
+	}
+	if !slices.Equal(gotTypes, []gopact.ModelEventType{
+		gopact.ModelEventToolCallDelta,
+		gopact.ModelEventToolCallDelta,
+		gopact.ModelEventFinish,
+		gopact.ModelEventUsage,
+	}) {
+		t.Fatalf("event types = %v", gotTypes)
+	}
+	if string(events[0].Bytes)+string(events[1].Bytes) != `{"q":"x"}` {
+		t.Fatalf("tool arguments = %q%q", events[0].Bytes, events[1].Bytes)
+	}
+	if events[0].Summary != "call_1" || events[1].Summary != "call_1" {
+		t.Fatalf("tool identities = %q, %q", events[0].Summary, events[1].Summary)
+	}
+	var firstCall chatStreamToolCall
+	if err := json.Unmarshal(events[0].Payload, &firstCall); err != nil {
+		t.Fatalf("decode tool call delta: %v", err)
+	}
+	if firstCall.Index != 0 || firstCall.ID != "call_1" || firstCall.Function.Name != "lookup" {
+		t.Fatalf("tool call delta = %+v", firstCall)
+	}
+	if events[2].Summary != "tool_calls" {
+		t.Fatalf("finish reason = %q", events[2].Summary)
+	}
+	var usage gopact.Usage
+	if err := json.Unmarshal(events[3].Payload, &usage); err != nil {
+		t.Fatalf("decode usage event: %v", err)
+	}
+	if usage != (gopact.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}) {
+		t.Fatalf("usage = %+v", usage)
 	}
 }
 
@@ -549,11 +617,10 @@ func TestModelInvokeStreamRequiresTerminalMarker(t *testing.T) {
 	}
 }
 
-func TestModelInvokeStreamReturnsImmediatelyAfterFinishReason(t *testing.T) {
+func TestModelInvokeStreamReadsUntilDoneAfterFinishReason(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"},\"finish_reason\":\"stop\"}]}\n\n")
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
 
@@ -585,7 +652,7 @@ func TestModelInvokeStreamReturnsImmediatelyAfterFinishReason(t *testing.T) {
 			t.Fatalf("InvokeStream() = %v, %v", result.chunks, result.err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("InvokeStream() did not return after terminal frame")
+		t.Fatal("InvokeStream() did not return after [DONE]")
 	}
 }
 
