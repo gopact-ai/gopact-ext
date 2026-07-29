@@ -397,7 +397,7 @@ func TestMetadataCannotOverrideTraceProtocolAttributes(t *testing.T) {
 		t.Fatalf("child parent_run_id = %q, want run-1", got)
 	}
 
-	model := spanNamed(t, spans, "model")
+	model := spanNamedType(t, spans, "model", "graph")
 	if got := stringAttribute(model.Attributes, nodeIDAttribute); got != "model" {
 		t.Fatalf("model node_id = %q, want model", got)
 	}
@@ -408,9 +408,9 @@ func TestMetadataCannotOverrideTraceProtocolAttributes(t *testing.T) {
 		t.Fatalf("model attempt_id = %q, want act-1/attempt-1", got)
 	}
 
-	tool := spanNamed(t, spans, "tool")
-	if got := stringAttribute(tool.Attributes, toolNameAttribute); got != "tool" {
-		t.Fatalf("tool name = %q, want tool", got)
+	tool := spanNamedType(t, spans, "tool", "graph")
+	if got := stringAttribute(tool.Attributes, toolNameAttribute); got != "" {
+		t.Fatalf("tool name = %q, want empty", got)
 	}
 	if got := stringAttribute(tool.Attributes, toolCallIDAttribute); got != "" {
 		t.Fatalf("tool call ID = %q, want empty", got)
@@ -458,7 +458,7 @@ func TestMetadataBudgetPreservesLateProtocolAttributes(t *testing.T) {
 		}
 	}
 
-	model := spanNamed(t, spans, "model")
+	model := spanNamedType(t, spans, "model", modelSpanType)
 	if got := stringAttribute(model.Attributes, modelNameAttribute); got != "demo-model" {
 		t.Fatalf("model_name = %q, want demo-model", got)
 	}
@@ -468,7 +468,7 @@ func TestMetadataBudgetPreservesLateProtocolAttributes(t *testing.T) {
 	if got := stringAttribute(model.Attributes, finishReasonAttribute); got != "tool_calls" {
 		t.Fatalf("finish_reason = %q, want tool_calls", got)
 	}
-	tool := spanNamed(t, spans, "tool")
+	tool := spanNamedType(t, spans, "lookup", toolSpanType)
 	if got := stringAttribute(tool.Attributes, toolNameAttribute); got != "lookup" {
 		t.Fatalf("tool_name = %q, want lookup", got)
 	}
@@ -584,14 +584,14 @@ func TestMiddlewareReportsAgentAndWorkflowSpans(t *testing.T) {
 	if got := stringAttribute(root.Attributes, "thread_id"); got != "session-1" {
 		t.Fatalf("thread_id = %q, want session-1", got)
 	}
-	if got := stringAttribute(model.Attributes, "cozeloop.span_type"); got != "model" {
-		t.Fatalf("model span type = %q, want model", got)
+	if got := stringAttribute(model.Attributes, "cozeloop.span_type"); got != "graph" {
+		t.Fatalf("model span type = %q, want graph", got)
 	}
 	if got := stringAttribute(child.Attributes, "cozeloop.span_type"); got != "agent" {
 		t.Fatalf("nested span type = %q, want agent", got)
 	}
-	if got := stringAttribute(tool.Attributes, "cozeloop.span_type"); got != "tool" {
-		t.Fatalf("tool span type = %q, want tool", got)
+	if got := stringAttribute(tool.Attributes, "cozeloop.span_type"); got != "graph" {
+		t.Fatalf("tool span type = %q, want graph", got)
 	}
 	if got := stringAttribute(root.Attributes, "cozeloop.input"); got == "" {
 		t.Fatal("root input is empty")
@@ -675,8 +675,8 @@ func TestMiddlewareDefaultsToMetadataOnly(t *testing.T) {
 	}
 
 	spans := exporter.GetSpans()
-	model := spanNamed(t, spans, "model")
-	tool := spanNamed(t, spans, "tool")
+	model := spanNamedType(t, spans, "model", modelSpanType)
+	tool := spanNamedType(t, spans, "lookup", toolSpanType)
 	if got := stringAttribute(model.Attributes, modelNameAttribute); got != "demo-model" {
 		t.Fatalf("model_name = %q, want demo-model", got)
 	}
@@ -710,8 +710,8 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	}
 
 	spans := exporter.GetSpans()
-	model := spanNamed(t, spans, "model")
-	tool := spanNamed(t, spans, "tool")
+	model := spanNamedType(t, spans, "model", modelSpanType)
+	tool := spanNamedType(t, spans, "lookup", toolSpanType)
 	if got := stringAttribute(model.Attributes, spanTypeAttribute); got != "model" {
 		t.Fatalf("model span type = %q, want model", got)
 	}
@@ -745,6 +745,33 @@ func TestMiddlewareEnrichesNodeSpansWithComponentEvents(t *testing.T) {
 	}
 	if got := stringAttribute(tool.Attributes, outputAttribute); !strings.Contains(got, "tool-result") {
 		t.Fatalf("tool output = %q, want outcome payload", got)
+	}
+}
+
+func TestMiddlewareCreatesChildSpansForWorkflowComponents(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := newTestTracerProvider(exporter)
+	middleware := newMiddleware(provider, nil, true)
+	t.Cleanup(func() { _ = middleware.Close(t.Context()) })
+
+	if _, err := middleware.Use(multiRoundComponentAgent{}).Invoke(t.Context(), agent.Request{}); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+
+	spans := exporter.GetSpans()
+	graph := spanNamedType(t, spans, "rounds", "graph")
+	models := spansNamedType(spans, "model", modelSpanType)
+	tool := spanNamedType(t, spans, "lookup", toolSpanType)
+	if len(models) != 2 {
+		t.Fatalf("model spans = %d, want 2", len(models))
+	}
+	for _, model := range models {
+		if model.Parent.SpanID() != graph.SpanContext.SpanID() {
+			t.Fatal("model span is not a child of the graph span")
+		}
+	}
+	if tool.Parent.SpanID() != models[0].SpanContext.SpanID() {
+		t.Fatal("tool span is not a child of the first model round")
 	}
 }
 
@@ -1170,6 +1197,61 @@ func (componentEventAgent) Identity() agent.Identity {
 	return agent.Identity{Name: "component", Description: "component events", Version: "test"}
 }
 
+type multiRoundComponentAgent struct{}
+
+func (multiRoundComponentAgent) Identity() agent.Identity {
+	return agent.Identity{Name: "multi-round", Description: "multiple component rounds", Version: "test"}
+}
+
+func (multiRoundComponentAgent) Invoke(ctx context.Context, request agent.Request, options ...gopact.RunOption) (agent.Response, error) {
+	wf := workflow.New[agent.Request, agent.Response]("multi-round")
+	rounds := wf.Node("rounds", func(ctx context.Context, _ agent.Request) (agent.Response, error) {
+		message := gopact.Message{
+			Role:  gopact.MessageRoleAssistant,
+			Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeText, Text: "done"}},
+		}
+		for round := range 2 {
+			modelRequest := gopact.ModelRequest{Model: fmt.Sprintf("model-%d", round+1)}
+			modelResponse := gopact.ModelResponse{Message: message}
+			if err := workflow.EmitModelEvent(ctx, gopact.ModelEvent{
+				Type: gopact.ModelEventCallStarted, Request: &modelRequest,
+			}); err != nil {
+				return agent.Response{}, err
+			}
+			if err := workflow.EmitModelEvent(ctx, gopact.ModelEvent{
+				Type: gopact.ModelEventCallFinished, Response: &modelResponse,
+			}); err != nil {
+				return agent.Response{}, err
+			}
+			if round != 0 {
+				continue
+			}
+			if err := emitTestToolCall(ctx); err != nil {
+				return agent.Response{}, err
+			}
+		}
+		return agent.Response{Message: message}, nil
+	})
+	wf.Entry(rounds)
+	wf.Exit(rounds)
+	target, err := agent.NewWorkflowAgent(multiRoundComponentAgent{}.Identity(), wf)
+	if err != nil {
+		return agent.Response{}, err
+	}
+	return target.Invoke(ctx, request, options...)
+}
+
+func emitTestToolCall(ctx context.Context) error {
+	call := gopact.ToolCall{ID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{}`)}
+	if err := workflow.EmitToolEvent(ctx, gopact.ToolEvent{Type: gopact.ToolEventCallStarted, Call: call}); err != nil {
+		return err
+	}
+	return workflow.EmitToolEvent(ctx, gopact.ToolEvent{
+		Type: gopact.ToolEventCallFinished, Call: call,
+		Outcome: gopact.ToolResultOutcome{CallID: call.ID, Name: call.Name},
+	})
+}
+
 type directModelEventAgent struct{}
 
 func (directModelEventAgent) Identity() agent.Identity {
@@ -1280,6 +1362,16 @@ func spanNamedType(t *testing.T, spans tracetest.SpanStubs, name, spanType strin
 	}
 	t.Fatalf("span %q with span_type %q not found", name, spanType)
 	return tracetest.SpanStub{}
+}
+
+func spansNamedType(spans tracetest.SpanStubs, name, spanType string) tracetest.SpanStubs {
+	var matched tracetest.SpanStubs
+	for _, span := range spans {
+		if span.Name == name && stringAttribute(span.Attributes, spanTypeAttribute) == spanType {
+			matched = append(matched, span)
+		}
+	}
+	return matched
 }
 
 func stringAttribute(attributes []attribute.KeyValue, key string) string {
