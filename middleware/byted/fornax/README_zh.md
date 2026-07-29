@@ -77,7 +77,7 @@ response, err := tracedAgent.Invoke(ctx, request)
 
 `AK` 和 `SK` 是 Fornax 空间凭据。`Region` 可选，用于选择鉴权地址和默认链路接收地址；支持 `CN`、`BOE`、`SG`、`BOEI18N`、`US`、`Asia-SouthEastBD` 和 `I18N-DEV`，空值或未知值按 `CN` 处理。`SpaceID` 可选；传入时必须与 AK/SK 鉴权得到的空间一致。`Endpoint` 用于完整覆盖 Fornax 链路接收地址，鉴权地址仍由 `Region` 决定。`PSM` 会写入 Fornax 鉴权请求，并作为 span 的 `service_name` 和标签 `psm` 上报；未传时默认 `unknown_psm`，与 Fornax SDK 的兜底行为一致。`UserID`、`DeviceID` 和被接受的 `Metadata` 条目会作为字符串标签附加到所有上报 span，也可以通过 `WithUserID`、`WithDeviceID` 和 `WithMetadata` 按请求覆盖。
 
-Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。非空的 `gopact.WithRunID` 会把 `message_id` 写入所有上报 span；非空的 `gopact.WithSessionID` 会把 `thread_id` 写入所有上报 span。两者都优先于生命周期事件。如果调用方没有传入其中一项，首个根 Workflow 生命周期事件会在对应值非空时，为根 span、Agent span 和后续 span 补齐这项标识。每个 Workflow 的实际运行标识始终单独写入 `gopact.run_id`。嵌套 Workflow 运行上报为 `Agent`；名为 `model` 和 `tool` 的节点分别使用对应的 Fornax span 类型，其他节点使用 `graph`。传给 `Invoke` 的已有事件接收器会继续生效。应用退出时调用 `Close`，刷新尚未上报的 span。
+Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。非空的 `gopact.WithRunID` 会把 `message_id` 写入所有上报 span；非空的 `gopact.WithSessionID` 会把 `thread_id` 写入所有上报 span。两者都优先于生命周期事件。如果调用方没有传入其中一项，首个根 Workflow 生命周期事件会在对应值非空时，为根 span、Agent span 和后续 span 补齐这项标识。每个 Workflow 的实际运行标识始终单独写入 `gopact.run_id`。嵌套 Workflow 运行上报为 `Agent`，Workflow 节点统一上报为 `graph`；类型化组件事件会创建独立的模型和工具子 span。传给 `Invoke` 的已有事件接收器会继续生效。应用退出时调用 `Close`，刷新尚未上报的 span。
 
 ## ID 对应关系
 
@@ -93,13 +93,13 @@ Agent 调用上报为 `fornax_query`，其下包含一个 `Agent` span。非空�
 | `Config.Metadata`、`agent.Request.Metadata`，或上下文中的 `WithMetadata` | span 字符串标签 | 可检索的自定义元数据；优先级依次为 `WithMetadata`、`agent.Request.Metadata`、`Config.Metadata`，链路协议保留键会被忽略。 |
 | Workflow `ParentRunID` | OpenTelemetry 父子关系和 `gopact.parent_run_id` | 将嵌套 Agent span 关联到父运行。 |
 | Workflow `DefinitionID` | `agent_name`；嵌套 Agent span 名称 | 标识 Workflow/Agent 定义。 |
-| 节点 `NodeID` | 节点 span 名称和 `gopact.node_id` | `model`、`tool` 使用对应 span 类型，其他值使用 `graph`。 |
+| 节点 `NodeID` | graph span 名称和 `gopact.node_id` | 标识 Workflow 节点，不决定组件 span 类型。 |
 | 节点 `ActivationID` / `AttemptID` | `gopact.activation_id` / `gopact.attempt_id` | 分别标识一次节点激活及其中一次执行尝试。 |
 | `ToolCall.ID` | `tool` 类型 span 上的 `tool_call_id` | 标识模型请求的工具调用，不是 OpenTelemetry span ID。 |
 | OpenTelemetry trace、span 和父 span ID | 顶层 `trace_id`、`span_id` 和 `parent_id` | 从输入上下文继承或由 OpenTelemetry 生成，不从 RunID、SessionID 派生。 |
 
 本模块发送的是 Fornax trace-ingest JSON，不是 OTLP。内部的 `cozeloop.span_type`、`cozeloop.input`、`cozeloop.output` 和 `cozeloop.status_code` 属性会分别转换为顶层 `span_type`、`input`、`output` 和 `status_code` 字段；其他属性按类型写入 `tags_string`、`tags_long`、`tags_double` 或 `tags_bool`。
 
-开启内容采集时，每个编码后的 `input` 或 `output` 字段最多为 4 MiB（4,194,304 字节）。非流式字段超限时会被省略。流式输出会在下一个数据块超出预算前停止聚合；已经聚合的前缀只有在编码后仍未超限时才会上报。调用级截断记录在根 span 的 `tags_string["cut_off"]` 中，模型和工具节点 span 分别记录自身的截断。所有流式数据块仍会完整转发给应用。关闭内容采集时，中间件不会为了链路上报而聚合流式内容。
+开启内容采集时，每个编码后的 `input` 或 `output` 字段最多为 4 MiB（4,194,304 字节）。非流式字段超限时会被省略。流式输出会在下一个数据块超出预算前停止聚合；已经聚合的前缀只有在编码后仍未超限时才会上报。调用级截断记录在根 span 的 `tags_string["cut_off"]` 中，模型和工具 span 分别记录自身的截断。所有流式数据块仍会完整转发给应用。关闭内容采集时，中间件不会为了链路上报而聚合流式内容。
 
-核心 Workflow 事件契约只包含生命周期元数据，不包含模型服务请求体、令牌用量或模型与工具结果。存在活动 Workflow 节点时，类型化的模型或工具观测事件会补充该节点 span。没有活动节点时，模型观测事件会生成独立的模型 span，工具观测事件则被忽略。只有开启 `CaptureContent` 后才会上报内容；适配器没有发出的字段不会被虚构。
+核心 Workflow 事件契约只包含生命周期元数据，不包含节点业务输入与输出，因此 graph span 不上报这两个字段。存在活动 Workflow 节点时，每次类型化模型调用会创建一个模型子 span；每次工具调用会创建一个工具子 span，并挂到请求它的模型轮次下；无法确定模型轮次时则挂到 graph span 下。没有活动节点时，模型观测事件会生成独立的模型 span，工具观测事件则被忽略。只有开启 `CaptureContent` 后才会上报内容；适配器没有发出的字段不会被虚构。

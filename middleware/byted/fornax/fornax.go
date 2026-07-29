@@ -1326,11 +1326,20 @@ type spanState struct {
 	root bool
 }
 
-type nodeSpanState struct {
+type componentSpanState struct {
 	span         trace.Span
 	inputCutOff  bool
 	outputCutOff bool
 	failed       bool
+}
+
+type nodeSpanState struct {
+	ctx      context.Context
+	span     trace.Span
+	model    *componentSpanState
+	modelCtx context.Context
+	tools    map[string]*componentSpanState
+	failed   bool
 }
 
 type eventSink struct {
@@ -1345,7 +1354,7 @@ type eventSink struct {
 
 	mu          sync.Mutex
 	rootRunID   string
-	directModel *nodeSpanState
+	directModel *componentSpanState
 	runs        map[string]spanState
 	nodes       map[string]nodeSpanState
 }
@@ -1473,11 +1482,11 @@ func (s *eventSink) startNode(event gopact.Event) {
 	if name == "" {
 		name = "node"
 	}
-	_, span := s.tracer.Start(parent, name,
+	ctx, span := s.tracer.Start(parent, name,
 		trace.WithTimestamp(eventTime(event)),
 		trace.WithAttributes(append(nodeAttributes(event), s.tags...)...),
 	)
-	s.nodes[key] = nodeSpanState{span: span}
+	s.nodes[key] = nodeSpanState{ctx: ctx, span: span, tools: make(map[string]*componentSpanState)}
 }
 
 func (s *eventSink) finishNode(event gopact.Event) {
@@ -1486,6 +1495,7 @@ func (s *eventSink) finishNode(event gopact.Event) {
 	if !exists {
 		return
 	}
+	s.finishNodeComponents(&state)
 	if (event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped) && !state.failed {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
@@ -1505,6 +1515,7 @@ func (s *eventSink) finish(err error) {
 		if err != nil {
 			markError(state.span, err, s.captureContent)
 		}
+		s.finishNodeComponents(&state)
 		state.span.End()
 		delete(s.nodes, key)
 	}
@@ -1538,13 +1549,42 @@ func (s *eventSink) EmitModelEvent(ctx context.Context, event gopact.ModelEvent)
 		s.emitDirectModelEvent(event)
 		return nil
 	}
-	updateModelSpan(&state, event, s.captureContent)
-	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
+	if event.Type == gopact.ModelEventCallStarted {
+		s.startNodeModel(&state, event)
+		s.nodes[key] = state
+		return nil
+	}
+	if state.model == nil {
+		return nil
+	}
+	updateModelSpan(state.model, event, s.captureContent)
+	setCutOff(state.model.span, state.model.inputCutOff, state.model.outputCutOff)
+	if event.Type == gopact.ModelEventCallFinished {
+		if !state.model.failed {
+			state.model.span.SetAttributes(attribute.Int(statusAttribute, 0))
+		}
+		state.failed = state.failed || state.model.failed
+		state.model.span.End()
+		state.model = nil
+	}
 	s.nodes[key] = state
 	return nil
 }
 
-func updateModelSpan(state *nodeSpanState, event gopact.ModelEvent, capture bool) {
+func (s *eventSink) startNodeModel(state *nodeSpanState, event gopact.ModelEvent) {
+	if state.model != nil {
+		state.model.span.End()
+	}
+	ctx, span := s.tracer.Start(state.ctx, "model", trace.WithAttributes(
+		append([]attribute.KeyValue{attribute.String(spanTypeAttribute, modelSpanType)}, s.tags...)...,
+	))
+	model := &componentSpanState{span: span}
+	updateModelSpan(model, event, s.captureContent)
+	state.model = model
+	state.modelCtx = ctx
+}
+
+func updateModelSpan(state *componentSpanState, event gopact.ModelEvent, capture bool) {
 	switch event.Type {
 	case gopact.ModelEventCallStarted:
 		startModelSpan(state.span, event.Request, &state.inputCutOff, capture)
@@ -1569,7 +1609,7 @@ func (s *eventSink) emitDirectModelEvent(event gopact.ModelEvent) {
 		_, span := s.tracer.Start(s.rootCtx, "model", trace.WithAttributes(
 			append([]attribute.KeyValue{attribute.String(spanTypeAttribute, modelSpanType)}, s.tags...)...,
 		))
-		state := &nodeSpanState{span: span}
+		state := &componentSpanState{span: span}
 		updateModelSpan(state, event, s.captureContent)
 		s.directModel = state
 		return
@@ -1625,32 +1665,80 @@ func (s *eventSink) EmitToolEvent(ctx context.Context, event gopact.ToolEvent) e
 	}
 	switch event.Type {
 	case gopact.ToolEventCallStarted:
-		state.span.SetAttributes(
-			attribute.String(spanTypeAttribute, toolSpanType),
-			attribute.String(toolNameAttribute, event.Call.Name),
-			attribute.String(toolCallIDAttribute, event.Call.ID),
-		)
-		if s.captureContent {
-			setTraceJSON(state.span, inputAttribute, toolInput(event.Call), &state.inputCutOff)
-		}
+		s.startNodeTool(&state, event.Call)
 	case gopact.ToolEventCallFinished:
-		if s.captureContent {
-			setTraceJSON(state.span, outputAttribute, toolOutput(event.Outcome), &state.outputCutOff)
-		}
-		if event.Err != nil {
-			markError(state.span, event.Err, s.captureContent)
-			state.failed = true
-		} else if _, failed := event.Outcome.(gopact.ToolErrorOutcome); failed {
-			markError(state.span, errors.New("tool error outcome"), s.captureContent)
-			state.failed = true
-		} else if value, failed := event.Outcome.(*gopact.ToolErrorOutcome); failed && value != nil {
-			markError(state.span, errors.New("tool error outcome"), s.captureContent)
-			state.failed = true
-		}
+		s.finishNodeTool(&state, event)
 	}
-	setCutOff(state.span, state.inputCutOff, state.outputCutOff)
 	s.nodes[key] = state
 	return nil
+}
+
+func (s *eventSink) startNodeTool(state *nodeSpanState, call gopact.ToolCall) {
+	parent := state.ctx
+	if state.modelCtx != nil {
+		parent = state.modelCtx
+	}
+	name := call.Name
+	if name == "" {
+		name = "tool"
+	}
+	_, span := s.tracer.Start(parent, name, trace.WithAttributes(
+		append([]attribute.KeyValue{attribute.String(spanTypeAttribute, toolSpanType)}, s.tags...)...,
+	))
+	tool := &componentSpanState{span: span}
+	span.SetAttributes(
+		attribute.String(toolNameAttribute, call.Name),
+		attribute.String(toolCallIDAttribute, call.ID),
+	)
+	if s.captureContent {
+		setTraceJSON(span, inputAttribute, toolInput(call), &tool.inputCutOff)
+	}
+	state.tools[toolEventKey(call)] = tool
+}
+
+func (s *eventSink) finishNodeTool(state *nodeSpanState, event gopact.ToolEvent) {
+	tool := state.tools[toolEventKey(event.Call)]
+	if tool == nil {
+		return
+	}
+	if s.captureContent {
+		setTraceJSON(tool.span, outputAttribute, toolOutput(event.Outcome), &tool.outputCutOff)
+	}
+	if event.Err != nil {
+		markError(tool.span, event.Err, s.captureContent)
+		tool.failed = true
+	} else if _, failed := event.Outcome.(gopact.ToolErrorOutcome); failed {
+		markError(tool.span, errors.New("tool error outcome"), s.captureContent)
+		tool.failed = true
+	} else if value, failed := event.Outcome.(*gopact.ToolErrorOutcome); failed && value != nil {
+		markError(tool.span, errors.New("tool error outcome"), s.captureContent)
+		tool.failed = true
+	}
+	setCutOff(tool.span, tool.inputCutOff, tool.outputCutOff)
+	if !tool.failed {
+		tool.span.SetAttributes(attribute.Int(statusAttribute, 0))
+	}
+	state.failed = state.failed || tool.failed
+	tool.span.End()
+	delete(state.tools, toolEventKey(event.Call))
+}
+
+func toolEventKey(call gopact.ToolCall) string {
+	if call.ID != "" {
+		return call.ID
+	}
+	return call.Name
+}
+
+func (s *eventSink) finishNodeComponents(state *nodeSpanState) {
+	if state.model != nil {
+		state.model.span.End()
+		state.model = nil
+	}
+	for key, tool := range state.tools {
+		tool.span.End()
+		delete(state.tools, key)
+	}
 }
 
 func (s *eventSink) activeNode(ctx context.Context) (string, nodeSpanState, bool) {
@@ -1739,27 +1827,12 @@ func runAttributes(event gopact.Event, spanType string) []attribute.KeyValue {
 }
 
 func nodeAttributes(event gopact.Event) []attribute.KeyValue {
-	attributes := []attribute.KeyValue{
-		attribute.String(spanTypeAttribute, nodeSpanType(event.NodeID)),
+	return []attribute.KeyValue{
+		attribute.String(spanTypeAttribute, "graph"),
 		attribute.String(runIDAttribute, event.RunID),
 		attribute.String(nodeIDAttribute, event.NodeID),
 		attribute.String(activationIDAttribute, event.ActivationID),
 		attribute.String(attemptIDAttribute, event.AttemptID),
-	}
-	if nodeSpanType(event.NodeID) == "tool" {
-		attributes = append(attributes, attribute.String(toolNameAttribute, event.NodeID))
-	}
-	return attributes
-}
-
-func nodeSpanType(nodeID string) string {
-	switch strings.ToLower(nodeID) {
-	case "model":
-		return "model"
-	case "tool":
-		return "tool"
-	default:
-		return "graph"
 	}
 }
 
