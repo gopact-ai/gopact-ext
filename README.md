@@ -78,6 +78,7 @@ OpenAI organization usage is API-platform metering and is not the same thing as 
 
 | Package | Use it for |
 | --- | --- |
+| [`agents/acp`](./agents/acp) | Invoke a remote Agent Client Protocol Agent as a gopact Agent |
 | [`agents/agenttool`](./agents/agenttool) | Expose a child Agent as a typed tool |
 | [`agents/react`](./agents/react) | Run a model-tool-model reasoning loop |
 | [`agents/sequential`](./agents/sequential) | Pass work through ordered child Agents |

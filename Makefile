@@ -1,6 +1,7 @@
 # Every extension domain is independently versioned. TIDY_MODULES grows only
 # after a module's same-repository dependencies are available from the proxy.
 WORKSPACE_MODULES := \
+	agents/acp \
 	agents/agenttool \
 	agents/internal \
 	agents/loop \
@@ -19,6 +20,7 @@ WORKSPACE_MODULES := \
 	tests/workflow
 TIDY_MODULES := \
 	. \
+	agents/acp \
 	agents/internal \
 	agents/agenttool \
 	agents/loop \
