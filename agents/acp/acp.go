@@ -276,7 +276,11 @@ func promptContent(request agent.Request) ([]protocol.ContentBlock, error) {
 		if _, exists := seen[artifact]; exists {
 			continue
 		}
-		content = append(content, protocol.ResourceLinkContentBlock(artifact.Kind, artifact.URI))
+		block, err := artifactContent(artifact)
+		if err != nil {
+			return nil, err
+		}
+		content = append(content, block)
 	}
 	return content, nil
 }
@@ -303,8 +307,20 @@ func messagePartContent(part gopact.MessagePart) (protocol.ContentBlock, []gopac
 	case part.Type == gopact.MessagePartTypeText && part.Ref == nil:
 		return protocol.TextContentBlock(part.Text), nil, nil
 	case part.Type == gopact.MessagePartTypeArtifact && part.Ref != nil:
-		return protocol.ResourceLinkContentBlock(part.Ref.Kind, part.Ref.URI), []gopact.ArtifactRef{*part.Ref}, nil
+		block, err := artifactContent(*part.Ref)
+		return block, []gopact.ArtifactRef{*part.Ref}, err
 	default:
 		return protocol.ContentBlock{}, nil, fmt.Errorf("unsupported message part %q", part.Type)
 	}
+}
+
+func artifactContent(artifact gopact.ArtifactRef) (protocol.ContentBlock, error) {
+	if artifact.URI == "" {
+		return protocol.ContentBlock{}, errors.New("artifact URI is required")
+	}
+	name := artifact.Kind
+	if name == "" {
+		name = artifact.URI
+	}
+	return protocol.ResourceLinkContentBlock(name, artifact.URI), nil
 }

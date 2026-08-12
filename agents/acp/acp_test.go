@@ -161,6 +161,21 @@ func TestAgentRequiresSessionIDAndRejectsUnsupportedContent(t *testing.T) {
 	}}}); err == nil {
 		t.Fatal("promptContent() unsupported part error = nil")
 	}
+	for _, request := range []agent.Request{
+		{Artifacts: []gopact.ArtifactRef{{Kind: "spec"}}},
+		{Messages: []gopact.Message{{Parts: []gopact.MessagePart{{Type: gopact.MessagePartTypeArtifact, Ref: &gopact.ArtifactRef{Kind: "spec"}}}}}},
+	} {
+		if _, err := promptContent(request); err == nil {
+			t.Fatal("promptContent() empty artifact URI error = nil")
+		}
+	}
+	content, err := promptContent(agent.Request{Artifacts: []gopact.ArtifactRef{{URI: "artifact://unnamed"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 1 || content[0].Name != "artifact://unnamed" {
+		t.Fatalf("promptContent() unnamed artifact = %+v", content)
+	}
 }
 
 func TestAgentHandlesNonTerminalStopReason(t *testing.T) {
