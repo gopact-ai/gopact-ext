@@ -175,6 +175,9 @@ fi
 require_exact agents/internal github.com/gopact-ai/gopact v0.2.1
 require_exact agents/internal github.com/gopact-ai/gopact-ext v0.7.0
 require_carveout_import agents/internal/contract/carveout_test.go
+require_exact agents/acp github.com/gopact-ai/gopact v0.3.0
+require_exact agents/acp github.com/gopact-ai/gopact-ext v0.7.0
+require_carveout_import agents/acp/carveout_test.go
 
 for module_dir in \
 	agents/agenttool \

@@ -73,6 +73,7 @@ OpenAI 组织用量属于 API 平台计量，不等同于 ChatGPT/Codex 订阅�
 
 | 包 | 适用场景 |
 | --- | --- |
+| [`agents/acp`](./agents/acp) | 把远端 Agent Client Protocol Agent 作为 gopact Agent 调用 |
 | [`agents/agenttool`](./agents/agenttool) | 把 child Agent 暴露为 typed tool |
 | [`agents/react`](./agents/react) | 运行 model-tool-model 推理循环 |
 | [`agents/sequential`](./agents/sequential) | 让任务按顺序流经多个 child Agent |
