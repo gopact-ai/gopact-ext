@@ -55,6 +55,13 @@ const (
 	activationIDAttribute = "gopact.activation_id"
 	attemptIDAttribute    = "gopact.attempt_id"
 	errorAttribute        = "error"
+	errorKindAttribute    = "error.kind"
+	errorKindAgent        = "agent_error"
+	errorKindModel        = "model_error"
+	errorKindNode         = "node_error"
+	errorKindRun          = "run_error"
+	errorKindTool         = "tool_error"
+	errorKindToolOutcome  = "tool_error_outcome"
 	spaceIDTag            = "fornax_space_id"
 	durationTag           = "duration"
 	psmFirstSpanTag       = "fornax_psm_first_span"
@@ -668,6 +675,7 @@ func reservedMetadataKey(key string) bool {
 	}
 	switch key {
 	case agentNameAttribute, cutOffAttribute, deviceIDAttribute, durationTag, errorAttribute,
+		errorKindAttribute,
 		finishReasonAttribute, inputTokensAttribute, languageSystemTag, messageIDAttribute,
 		modelNameAttribute, outputTokensAttribute, psmAttribute, threadIDAttribute,
 		totalTokensAttribute, toolCallIDAttribute, toolNameAttribute, userIDAttribute:
@@ -881,7 +889,7 @@ func (a *tracedAgent) startTrace(ctx context.Context, request agent.Request, opt
 
 func finishRoot(root trace.Span, output any, err error, inputCutOff, capture bool) {
 	if err != nil {
-		markError(root, err, capture)
+		markError(root, err, errorKindAgent, capture)
 		return
 	}
 	root.SetAttributes(attribute.Int(statusAttribute, 0))
@@ -906,7 +914,7 @@ func finishRoot(root trace.Span, output any, err error, inputCutOff, capture boo
 
 func finishAgent(span trace.Span, response agent.Response, err error, capture bool) {
 	if err != nil {
-		markError(span, err, capture)
+		markError(span, err, errorKindAgent, capture)
 		return
 	}
 	span.SetAttributes(attribute.Int(statusAttribute, 0))
@@ -1457,7 +1465,7 @@ func (s *eventSink) finishRun(event gopact.Event) {
 	if event.Type == workflow.EventWorkflowCompleted {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, errors.New(event.Type), s.captureContent)
+		markError(state.span, nil, errorKindRun, s.captureContent)
 	}
 	if state.root {
 		return
@@ -1499,7 +1507,7 @@ func (s *eventSink) finishNode(event gopact.Event) {
 	if (event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped) && !state.failed {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, errors.New(event.Type), s.captureContent)
+		markError(state.span, nil, errorKindNode, s.captureContent)
 	}
 	state.span.End(trace.WithTimestamp(eventTime(event)))
 	delete(s.nodes, key)
@@ -1513,7 +1521,7 @@ func (s *eventSink) finish(err error) {
 	defer s.mu.Unlock()
 	for key, state := range s.nodes {
 		if err != nil {
-			markError(state.span, err, s.captureContent)
+			markError(state.span, err, errorKindNode, s.captureContent)
 		}
 		s.finishNodeComponents(&state)
 		state.span.End()
@@ -1524,14 +1532,14 @@ func (s *eventSink) finish(err error) {
 			continue
 		}
 		if err != nil {
-			markError(state.span, err, s.captureContent)
+			markError(state.span, err, errorKindRun, s.captureContent)
 		}
 		state.span.End()
 		delete(s.runs, runID)
 	}
 	if s.directModel != nil {
 		if err != nil {
-			markError(s.directModel.span, err, s.captureContent)
+			markError(s.directModel.span, err, errorKindModel, s.captureContent)
 		}
 		s.directModel.span.End()
 		s.directModel = nil
@@ -1649,7 +1657,7 @@ func finishModelSpan(span trace.Span, event gopact.ModelEvent, outputCutOff *boo
 	if event.Err == nil {
 		return false
 	}
-	markError(span, event.Err, capture)
+	markError(span, event.Err, errorKindModel, capture)
 	return true
 }
 
@@ -1705,13 +1713,13 @@ func (s *eventSink) finishNodeTool(state *nodeSpanState, event gopact.ToolEvent)
 		setTraceJSON(tool.span, outputAttribute, toolOutput(event.Outcome), &tool.outputCutOff)
 	}
 	if event.Err != nil {
-		markError(tool.span, event.Err, s.captureContent)
+		markError(tool.span, event.Err, errorKindTool, s.captureContent)
 		tool.failed = true
 	} else if _, failed := event.Outcome.(gopact.ToolErrorOutcome); failed {
-		markError(tool.span, errors.New("tool error outcome"), s.captureContent)
+		markError(tool.span, nil, errorKindToolOutcome, s.captureContent)
 		tool.failed = true
 	} else if value, failed := event.Outcome.(*gopact.ToolErrorOutcome); failed && value != nil {
-		markError(tool.span, errors.New("tool error outcome"), s.captureContent)
+		markError(tool.span, nil, errorKindToolOutcome, s.captureContent)
 		tool.failed = true
 	}
 	setCutOff(tool.span, tool.inputCutOff, tool.outputCutOff)
@@ -1853,11 +1861,20 @@ func eventTime(event gopact.Event) time.Time {
 	return event.Timestamp
 }
 
-func markError(span trace.Span, err error, detail bool) {
-	span.SetStatus(codes.Error, "")
+// markError records a failure on span. kind is a safe, callsite-supplied
+// classification (never user content) and is always reported, so failures stay
+// diagnosable even when CaptureContent is disabled. The full error text may
+// contain user data and is only attached when detail is true.
+func markError(span trace.Span, err error, kind string, detail bool) {
+	span.SetStatus(codes.Error, kind)
 	span.SetAttributes(attribute.Int(statusAttribute, failedStatusCode))
+	if kind != "" {
+		span.SetAttributes(attribute.String(errorKindAttribute, kind))
+	}
 	if !detail {
 		return
 	}
-	span.SetAttributes(attribute.String(errorAttribute, err.Error()))
+	if err != nil {
+		span.SetAttributes(attribute.String(errorAttribute, err.Error()))
+	}
 }
