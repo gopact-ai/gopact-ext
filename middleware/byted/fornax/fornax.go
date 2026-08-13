@@ -1465,7 +1465,7 @@ func (s *eventSink) finishRun(event gopact.Event) {
 	if event.Type == workflow.EventWorkflowCompleted {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, nil, event.Type, s.captureContent)
+		markError(state.span, nil, errorKindRun, s.captureContent)
 	}
 	if state.root {
 		return
@@ -1507,7 +1507,7 @@ func (s *eventSink) finishNode(event gopact.Event) {
 	if (event.Type == workflow.EventNodeCompleted || event.Type == workflow.EventNodeSkipped) && !state.failed {
 		state.span.SetAttributes(attribute.Int(statusAttribute, 0))
 	} else {
-		markError(state.span, nil, event.Type, s.captureContent)
+		markError(state.span, nil, errorKindNode, s.captureContent)
 	}
 	state.span.End(trace.WithTimestamp(eventTime(event)))
 	delete(s.nodes, key)
