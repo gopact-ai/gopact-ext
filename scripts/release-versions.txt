@@ -1,5 +1,5 @@
 # Module, exact tag, and package checked from a clean consumer. Publish in order.
-github.com/gopact-ai/gopact v0.3.1 github.com/gopact-ai/gopact
+github.com/gopact-ai/gopact v0.3.2 github.com/gopact-ai/gopact
 github.com/gopact-ai/gopact-ext/middleware/byted/fornax v0.2.1 github.com/gopact-ai/gopact-ext/middleware/byted/fornax
 github.com/gopact-ai/gopact-ext/models/openai v0.6.1 github.com/gopact-ai/gopact-ext/models/openai/codex
 github.com/gopact-ai/gopact-ext v0.7.1 github.com/gopact-ai/gopact-ext/internal/carveout
