@@ -403,7 +403,8 @@ func TestSQLiteRunLogRetentionUsesSubsecondDatabaseClock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if now.Nanosecond() >= int(100*time.Millisecond) {
+		subsecond := time.Duration(now.Nanosecond())
+		if subsecond >= 100*time.Millisecond && subsecond < 500*time.Millisecond {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
