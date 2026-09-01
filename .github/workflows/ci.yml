@@ -108,7 +108,7 @@ jobs:
         working-directory: source/gopact-ext
 
   source-compatibility:
-    uses: gopact-ai/gopact-examples/.github/workflows/source-compatibility.yml@165bf0e3bee874c61e4fd762786f2c2adf5a0e17
+    uses: gopact-ai/gopact-examples/.github/workflows/source-compatibility.yml@2fabd74f00030b3ac7045d1717d2a6dce60f1da9
     with:
       core_ref: main
       ext_ref: ${{ github.sha }}
