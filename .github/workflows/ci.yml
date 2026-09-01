@@ -30,7 +30,7 @@ jobs:
           }
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.27.0-rc.2'
+          go-version: '1.27.0'
           cache-dependency-path: |
             source/gopact-ext/**/go.sum
             source/gopact-ext/go.work.sum
@@ -102,14 +102,15 @@ jobs:
           path: source/gopact-ext
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.27.0-rc.2'
+          go-version: '1.27.0'
           cache-dependency-path: source/gopact-ext/stores/go.sum
       - run: make dbintegration
         working-directory: source/gopact-ext
 
   source-compatibility:
-    uses: gopact-ai/gopact-examples/.github/workflows/source-compatibility.yml@d310f8a87fd29bd606524ecb5fbb7b5a51100054
+    uses: gopact-ai/gopact-examples/.github/workflows/source-compatibility.yml@2fabd74f00030b3ac7045d1717d2a6dce60f1da9
     with:
       core_ref: main
       ext_ref: ${{ github.sha }}
       examples_ref: main
+      allow_main_refs: true
